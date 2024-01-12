@@ -1,119 +1,64 @@
-/**
- * This is the main Node.js server script for your project
- * Check out the two endpoints this back-end API provides in fastify.get and fastify.post below
- */
-
-const path = require("path");
-
-// Require the fastify framework and instantiate it
-const fastify = require("fastify")({
-  // Set this to true for detailed logging:
-  logger: false,
+const http = require("http");
+const { Client, GatewayIntentBits } = require("discord.js");
+const client = new Client({
+  intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
 });
 
-// ADD FAVORITES ARRAY VARIABLE FROM TODO HERE
+const CHANNEL_ID = 1181411208419606640;
+const CHANNEL = client.channels.cache.get(CHANNEL_ID);
 
-// Setup our static files
-fastify.register(require("@fastify/static"), {
-  root: path.join(__dirname, "public"),
-  prefix: "/", // optional: default '/'
-});
+http
+  .createServer((request, response) => {
+    console.log("post from gas");
 
-// Formbody lets us parse incoming forms
-fastify.register(require("@fastify/formbody"));
+    // リクエストヘッダーのコンテンツタイプをチェック
+    if (request.headers["content-type"] === "application/json") {
+      let requestBody = "";
 
-// View is a templating manager for fastify
-fastify.register(require("@fastify/view"), {
-  engine: {
-    handlebars: require("handlebars"),
-  },
-});
+      // リクエストデータを受信する際に発生する 'data' イベントのハンドラを設定
+      request.on("data", (chunk) => {
+        requestBody += chunk.toString();
+      });
 
-// Load and parse SEO data
-const seo = require("./src/seo.json");
-if (seo.url === "glitch-default") {
-  seo.url = `https://${process.env.PROJECT_DOMAIN}.glitch.me`;
-}
+      // リクエストデータの受信が完了した際に発生する 'end' イベントのハンドラを設定
+      request.on("end", () => {
+        const data = JSON.parse(requestBody);
+        const userData = data.postData;
+        
+        for(let i = 0; i < userData.length; i++){
+          let userId = userData[i].userId;
+          let works = userData[i].works;
+          let numPoint = userData[i].numPoint;
+          let totalPoint = userData[i].totalPoint;
+          let addMessage = userData[i].addMessage;
+          
+          let message =`${userId}さん\n本日のMetaGreenSeedsポイントを配布します。\n\n内訳：\n`;
+          for(let j = 0; j < works.length; j++){
+            message = message + `${works[j]}\n`
+          } 
+          message = message + `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
+          message = message + `\n${addMessage}`;
+          CHANNEL.send(message);
+        }
+      });
 
-/**
- * Our home page route
- *
- * Returns src/pages/index.hbs with data built into it
- */
-fastify.get("/", function (request, reply) {
-  // params is an object we'll pass to our handlebars template
-  let params = { seo: seo };
-
-  // If someone clicked the option for a random color it'll be passed in the querystring
-  if (request.query.randomize) {
-    // We need to load our color data file, pick one at random, and add it to the params
-    const colors = require("./src/colors.json");
-    const allColors = Object.keys(colors);
-    let currentColor = allColors[(allColors.length * Math.random()) << 0];
-
-    // Add the color properties to the params object
-    params = {
-      color: colors[currentColor],
-      colorError: null,
-      seo: seo,
-    };
-  }
-
-  // The Handlebars code will be able to access the parameter values and build them into the page
-  return reply.view("/src/pages/index.hbs", params);
-});
-
-/**
- * Our POST route to handle and react to form submissions
- *
- * Accepts body data indicating the user choice
- */
-fastify.post("/", function (request, reply) {
-  // Build the params object to pass to the template
-  let params = { seo: seo };
-
-  // If the user submitted a color through the form it'll be passed here in the request body
-  let color = request.body.color;
-
-  // If it's not empty, let's try to find the color
-  if (color) {
-    // ADD CODE FROM TODO HERE TO SAVE SUBMITTED FAVORITES
-
-    // Load our color data file
-    const colors = require("./src/colors.json");
-
-    // Take our form submission, remove whitespace, and convert to lowercase
-    color = color.toLowerCase().replace(/\s/g, "");
-
-    // Now we see if that color is a key in our colors object
-    if (colors[color]) {
-      // Found one!
-      params = {
-        color: colors[color],
-        colorError: null,
-        seo: seo,
-      };
+      // レスポンスを設定して200 OKを返す
+      response.setHeader("Content-Type", "application/json; charset=utf-8");
+      response.statusCode = 200;
+      const responseBody = { message: "Data received and API is active now." };
+      response.write(JSON.stringify(responseBody));
+      response.end();
     } else {
-      // No luck! Return the user value as the error property
-      params = {
-        colorError: request.body.color,
-        seo: seo,
+      // リクエストのコンテンツタイプが不正な場合、400 Bad Requestを返す
+      response.setHeader("Content-Type", "application/json; charset=utf-8");
+      response.statusCode = 400; // Bad Request
+      const responseBody = {
+        error: "Invalid content type. Expected application/json.",
       };
+      response.write(JSON.stringify(responseBody));
+      response.end();
     }
-  }
+  })
+  .listen(3000);
 
-  // The Handlebars template will use the parameter values to update the page with the chosen color
-  return reply.view("/src/pages/index.hbs", params);
-});
-
-// Run the server and report out to the logs
-fastify.listen(
-  { port: process.env.PORT, host: "0.0.0.0" },
-  function (err, address) {
-    if (err) {
-      console.error(err);
-      process.exit(1);
-    }
-    console.log(`Your app is listening on ${address}`);
-  }
-);
+require("./main.js");
