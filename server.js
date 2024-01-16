@@ -49,7 +49,7 @@ http
           message = message + `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
           if(overPoint == 30){
             guild.members.fetch();
-            guild.members.cache.get("1135750225802317925").roles.add(ROLES[0]);
+            guild.members.cache.get(userId).roles.add(ROLES[0]);
             message = message + `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${PER_30_URL} をご確認ください。`;
           }
           if(overPoint == 60){
