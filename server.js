@@ -1,15 +1,21 @@
 const http = require("http");
 const { Client, GatewayIntentBits } = require("discord.js");
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const client = new Client({
   intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
 });
-
-const CHANNEL_ID = "1189073026164203610";
-const ROLES = ["30","60","100"];
-const PER_30_URL = "https://discord.com/channels/951780348465909820/1189073026164203610";
-const PER_60_URL = "https://discord.com/channels/951780348465909820/1189073026164203610";
-const PER_100_URL = "https://discord.com/channels/951780348465909820/1189073026164203610";
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const GUILD_ID = process.env.GUILD_ID;
+const MSG_SEND_CHANNEL_ID = process.env.MSG_SEND_CHANNEL_ID;
+const ROLES = [
+  process.env.PER_30_ROLE_ID,
+  process.env.PER_60_ROLE_ID,
+  process.env.PER_100_ROLE_ID 
+];
+const URLS = [
+  process.env.PER_30_URL,
+  process.env.PER_60_URL,
+  process.env.PER_100_URL 
+];
 
 client.once("ready", () => {
   console.log('Bot is ready!');
@@ -31,8 +37,8 @@ http
 
       // リクエストデータの受信が完了した際に発生する 'end' イベントのハンドラを設定
       request.on("end", () => {
-        const guild = client.guilds.cache.get("1107480974343815299");
-        const channel = client.channels.cache.get(CHANNEL_ID);
+        const guild = client.guilds.cache.get(GUILD_ID);
+        const channel = client.channels.cache.get(MSG_SEND_CHANNEL_ID);
         const data = JSON.parse(requestBody);
         const userData = data.postData;
         
@@ -50,17 +56,17 @@ http
           if(overPoint == 30){
             guild.members.fetch();
             guild.members.cache.get(userId).roles.add(ROLES[0]);
-            message = message + `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${PER_30_URL} をご確認ください。`;
+            message = message + `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${URLS[0]} をご確認ください。`;
           }
           if(overPoint == 60){
             guild.members.fetch();
             guild.members.cache.get(userId).roles.add(ROLES[1]);
-            message = message + `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${PER_60_URL} をご確認ください。`;
+            message = message + `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${URLS[1]} をご確認ください。`;
           }
           if(overPoint == 100){
             guild.members.fetch();
             guild.members.cache.get(userId).roles.add(ROLES[2]);
-            message = message + `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${PER_100_URL} をご確認ください。`;
+            message = message + `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${URLS[2]} をご確認ください。`;
           }
           channel.send(message);
         }

@@ -1,13 +1,22 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const axios = require("axios");
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-const GAS_API_URL = process.env.GAS_API_URL;
 const client = new Client({
   intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
 });
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const GAS_API_URL = process.env.GAS_API_URL;
+const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 
-const TARGET_ROLE_ID = "1144596048803791019";
-const TARGET_CHANNEL_IDS = [1144601492570001488,952209559802507264,1163368521808490676,952206763539714088,1155062710808096839,1179240392047202315,9,10]
+const TARGET_CHANNEL_IDS = [
+  process.env.GREETING_CHANNEL_ID,
+  process.env.TALK_CHANNEL_ID,
+  process.env.FOOD_CHANNEL_ID,
+  process.env.NEWS_CHANNEL_ID,
+  process.env.BOOK_CHANNEL_ID,
+  process.env.SNS_CHANNEL_ID,
+  process.env.SEMINAR_CHANNEL_ID,
+  process.env.OFF_LINE_MEETING_CHANNEL_ID
+]
 
 client.once("ready", () => {
   console.log('Bot is ready!');
@@ -16,14 +25,24 @@ client.login(DISCORD_BOT_TOKEN);
 
 client.on("messageCreate", async message => {
   if(message.author.bot) return;
-  if (!message.member.roles.cache.has(TARGET_ROLE_ID)) return;
+  if(message.member.roles.cache.has(BIGNER_ROLE_ID)){
+    auto(message);
+  }
+  else if(message.member.roles.cache.has(BIGNER_ROLE_ID)){
+    manual(message);
+  }
+});
+
+const auto = (message) =>{
   let workNum = 0;
   const userId = message.author.id;
   const userName = message.author.tag;
   const content = message.content;
   const channelId = message.channel.id;
   const file = message.attachments.first();
-  let isInImageFile = false; 
+  const isAuto = true;
+  let isInImageFile = false;
+
   
   // 添付ファイルの有無を調べる
   if(file){
@@ -80,7 +99,7 @@ client.on("messageCreate", async message => {
   else{
     return;
   }
-  let isAuto = true;
+    
   const data={
     workNum: workNum,
     userId: userId,
@@ -89,6 +108,32 @@ client.on("messageCreate", async message => {
     isAuto: isAuto
   }
   
+  post(data);
+}
+
+const manual = (message) =>{
+  const userId = message.author.id;
+  const userName = message.author.tag;
+  const content = message.content;
+  const isAuto = false;
+  
+  if (!message.mentions.has(BOT_ID) || message.mentions.everyone) {
+    return;
+  }
+  message.mentions.users.forEach(user => console.log(user.username));
+  
+  client.channels.cache.get(message.channel).send("MetaGreenSeedsポイントがnumポイント配布されました");
+  
+  const data={
+    userId: userId,
+    userName: userName,
+    numPoint: numPoint,
+    content: content,
+    isAuto: isAuto
+  }
+}
+
+const post = (data) =>{
   axios
     .post(GAS_API_URL, data)
     .then((response) => {
@@ -97,4 +142,4 @@ client.on("messageCreate", async message => {
     .catch((err) => {
       console.error("err:" + err);
     });
-});
+}
