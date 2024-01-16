@@ -6,6 +6,7 @@ const client = new Client({
 });
 
 const CHANNEL_ID = "1181411208419606640";
+const ROLES = ["1196610825092354200","1196610899918725171","1196610942256025620"];
 const PER_30_URL = "https://discord.com/channels/1107480974343815299/1195272027460874353";
 const PER_60_URL = "https://discord.com/channels/1107480974343815299/1195272027460874353";
 const PER_100_URL = "https://discord.com/channels/1107480974343815299/1195272027460874353";
@@ -30,6 +31,7 @@ http
 
       // リクエストデータの受信が完了した際に発生する 'end' イベントのハンドラを設定
       request.on("end", () => {
+        const guild = client.guilds.cache.get("1107480974343815299");
         const channel = client.channels.cache.get(CHANNEL_ID);
         const data = JSON.parse(requestBody);
         const userData = data.postData;
@@ -46,12 +48,18 @@ http
           } 
           message = message + `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
           if(overPoint == 30){
+            guild.members.fetch();
+            guild.members.cache.get("1135750225802317925").roles.add(ROLES[0]);
             message = message + `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${PER_30_URL} をご確認ください。`;
           }
           if(overPoint == 60){
+            guild.members.fetch();
+            guild.members.cache.get(userId).roles.add(ROLES[1]);
             message = message + `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${PER_60_URL} をご確認ください。`;
           }
           if(overPoint == 100){
+            guild.members.fetch();
+            guild.members.cache.get(userId).roles.add(ROLES[2]);
             message = message + `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${PER_100_URL} をご確認ください。`;
           }
           channel.send(message);
