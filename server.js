@@ -5,7 +5,7 @@ const client = new Client({
   intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
 });
 
-const CHANNEL_ID = "1181411208419606640";
+const CHANNEL_ID = "1189073026164203610";
 const ROLES = ["1196610825092354200","1196610899918725171","1196610942256025620"];
 const PER_30_URL = "https://discord.com/channels/1107480974343815299/1195272027460874353";
 const PER_60_URL = "https://discord.com/channels/1107480974343815299/1195272027460874353";
