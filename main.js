@@ -6,7 +6,7 @@ const client = new Client({
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GAS_API_URL = process.env.GAS_API_URL;
 const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
-
+const MANAGER_ID = process.env.MANAGER_ID;
 const TARGET_CHANNEL_IDS = [
   process.env.GREETING_CHANNEL_ID,
   process.env.TALK_CHANNEL_ID,
@@ -17,6 +17,9 @@ const TARGET_CHANNEL_IDS = [
   process.env.SEMINAR_CHANNEL_ID,
   process.env.OFF_LINE_MEETING_CHANNEL_ID
 ]
+const BOT_ID = process.env.BOT_ID;
+const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID
+let pretimeDict = new Map();
 
 client.once("ready", () => {
   console.log('Bot is ready!');
@@ -28,7 +31,7 @@ client.on("messageCreate", async message => {
   if(message.member.roles.cache.has(BIGNER_ROLE_ID)){
     auto(message);
   }
-  else if(message.member.roles.cache.has(BIGNER_ROLE_ID)){
+  else if(message.member.roles.cache.has(MANAGER_ID)){
     manual(message);
   }
 });
@@ -112,26 +115,62 @@ const auto = (message) =>{
 }
 
 const manual = (message) =>{
-  const userId = message.author.id;
-  const userName = message.author.tag;
-  const content = message.content;
-  const isAuto = false;
-  
-  if (!message.mentions.has(BOT_ID) || message.mentions.everyone) {
+  if(!message.mentions.has(BOT_ID) || message.mentions.everyone) {
     return;
   }
-  message.mentions.users.forEach(user => console.log(user.username));
-  
-  client.channels.cache.get(message.channel).send("MetaGreenSeedsポイントがnumポイント配布されました");
-  
-  const data={
-    userId: userId,
-    userName: userName,
-    numPoint: numPoint,
-    content: content,
-    isAuto: isAuto
+  const isAuto = false;
+  const users = message.mentions.users;
+  const userIds = [];
+  users.forEach(user => userIds.push(user.id));
+  const targetIds = userIds.filter(function(x){return x != BOT_ID});
+  //正規表現で発行枚数を取得
+  const regex = /(\d+)ポイント/; // 「枚」の直前の数字の1回以上の繰り返しを表す正規表現
+  const matches = message.content.match(regex);
+  const integerPart = matches ? parseInt(matches[0]) : null;//最初に検出された数字
+  let issue = integerPart || 1;//発行枚数が検出されなければ１
+  for(let i = 0; i < targetIds.length; i++){
+  //client.channels.cache.get(message.channelId).send(`${targetIds[i]}さんにMetaGreenSeedsポイントが${issue}ポイント配布されました`);
+    let data={
+      userId: targetIds[i],
+      userName: client.users.cache.get(targetIds[i]).username,
+      numPoint: issue,
+      content: message.content,
+      isAuto: isAuto
+    }
+    console.log(data);
+    post(data);
   }
 }
+
+client.on('voiceStateUpdate', (oldState, newState) => {
+  // 入室検知
+  if (!oldState.channelId && newState.channelId === VOICE_CHANNEL_ID) {
+    pretimeDict.set(newState.member.id, Date.now());
+  }
+  // 退室検知
+  if (oldState.channelId === VOICE_CHANNEL_ID && !newState.channelId) {
+    const joinTime = pretimeDict.get(newState.member.id);
+    if (joinTime) {
+      const durationTime = Date.now() - joinTime;
+      pretimeDict.delete(newState.member.id);
+      // ロールのチェック
+      const hasRole = (member, roleId) => member.roles.cache.has(roleId);
+      if (!hasRole(newState.member, BIGNER_ROLE_ID)) return;
+      // 長時間滞在用メッセージ送信
+      const durationSeconds = Math.floor(durationTime / 1000);
+      if (durationSeconds >= 2) {
+        const data={
+          workNum: 11,
+          userId: newState.member.id,
+          userName: client.users.cache.get(newState.member.id).username,
+          content: "",
+          isAuto: true
+        }
+        post(data);
+      }
+    }
+  }
+});
 
 const post = (data) =>{
   axios
