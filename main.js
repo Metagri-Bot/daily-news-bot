@@ -158,7 +158,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
       if (!hasRole(newState.member, BIGNER_ROLE_ID)) return;
       // 長時間滞在用メッセージ送信
       const durationSeconds = Math.floor(durationTime / 1000);
-      if (durationSeconds >= 2) {
+      if (durationSeconds >= 1800) {
         const data={
           workNum: 11,
           userId: newState.member.id,
