@@ -19,7 +19,7 @@ const TARGET_CHANNEL_IDS = [
 ]
 const BOT_ID = process.env.BOT_ID;
 const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
-const TEST_ROLE_ID = process.env.TEST_ROLE_ID;
+const METAGRIST_ROLE_ID = process.env.METAGRIST_ROLE_ID;
 let pretimeDict = new Map();
 
 client.once("ready", () => {
@@ -29,7 +29,7 @@ client.login(DISCORD_BOT_TOKEN);
 
 client.on("messageCreate", async message => {
   if(message.author.bot) return;
-  if(message.member.roles.cache.has(BIGNER_ROLE_ID) || message.member.roles.cache.has(TEST_ROLE_ID)){
+  if(message.member.roles.cache.has(BIGNER_ROLE_ID) || message.member.roles.cache.has(METAGRIST_ROLE_ID)){
     auto(message);
   }
   else if(message.member.roles.cache.has(MANAGER_ID)){
