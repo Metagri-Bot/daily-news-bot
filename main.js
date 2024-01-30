@@ -178,6 +178,9 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 });
 
 client.on('guildMemberAdd', member => {
+  const guild = client.guilds.cache.get(GUILD_ID)
+  const newRole = guild.roles.cache.get(BIGNER_ROLE_ID);
+  member.roles.add(newRole);
   
   const data={
     workNum: 12,
