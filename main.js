@@ -15,11 +15,13 @@ const TARGET_CHANNEL_IDS = [
   process.env.BOOK_CHANNEL_ID,
   process.env.SNS_CHANNEL_ID,
   process.env.SEMINAR_CHANNEL_ID,
-  process.env.OFF_LINE_MEETING_CHANNEL_ID
+  process.env.OFF_LINE_MEETING_CHANNEL_ID,
+  process.env.VOICE_CHANNEL_ID,
+  process.env.SELF_INTRODUCTION_CHANNEL_ID
 ]
 const BOT_ID = process.env.BOT_ID;
-const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
 const METAGRIST_ROLE_ID = process.env.METAGRIST_ROLE_ID;
+
 let pretimeDict = new Map();
 
 client.once("ready", () => {
@@ -100,6 +102,9 @@ const auto = (message) =>{
   else if(channelId == TARGET_CHANNEL_IDS[7]){
     workNum = 10;
   }
+  else if(channelId == TARGET_CHANNEL_IDS[9]){
+    workNum = 13;
+  }
   else{
     return;
   }
@@ -145,11 +150,11 @@ const manual = (message) =>{
 
 client.on('voiceStateUpdate', (oldState, newState) => {
   // 入室検知
-  if (!oldState.channelId && newState.channelId === VOICE_CHANNEL_ID) {
+  if (!oldState.channelId && newState.channelId === TARGET_CHANNEL_IDS[8]) {
     pretimeDict.set(newState.member.id, Date.now());
   }
   // 退室検知
-  if (oldState.channelId === VOICE_CHANNEL_ID && !newState.channelId) {
+  if (oldState.channelId === TARGET_CHANNEL_IDS[8] && !newState.channelId) {
     const joinTime = pretimeDict.get(newState.member.id);
     if (joinTime) {
       const durationTime = Date.now() - joinTime;
@@ -171,6 +176,18 @@ client.on('voiceStateUpdate', (oldState, newState) => {
       }
     }
   }
+});
+
+client.on('guildMemberAdd', member => {  
+  const data={
+    workNum: 12,
+    userId: member.id,
+    userName: client.users.cache.get(member.id).username,
+    content: "",
+    isAuto: true
+  }
+  console.log(data);
+  post(data);
 });
 
 const post = (data) =>{
