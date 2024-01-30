@@ -26,7 +26,8 @@ client.login(DISCORD_BOT_TOKEN);
 http
   .createServer((request, response) => {
     console.log("post from gas");
-  
+
+  //--会員ロール調査--
     // 付与対象から除外するロールIDを列挙
     const EXCLUDED_ROLES = [
       '1057168094671425546',
@@ -70,8 +71,9 @@ http
         }
       });
     }).catch(console.error);
-  
+    //--会員ロール調査終了--
 
+  
     // リクエストヘッダーのコンテンツタイプをチェック
     if (request.headers["content-type"] === "application/json") {
       let requestBody = "";
