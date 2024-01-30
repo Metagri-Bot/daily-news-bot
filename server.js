@@ -46,36 +46,21 @@ http
     ];
   
     const guild = client.guilds.cache.get(GUILD_ID);
-    const newRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
+    const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
 
     guild.members.fetch().then((members) => {
-      members.each(member => {
+      members.each((member) => {
         if (!member.user.bot) {
-          const joinedAt = new Date(member.joinedTimestamp);
-          const formattedJoinedAt = `${joinedAt.getFullYear()}/${joinedAt.getMonth() + 1}/${joinedAt.getDate()}`;
-
+          
           // メンバーのロールリストを取得
           const memberRoles = member.roles.cache;
 
           // メンバーのロールが除外ロールリストに含まれているかチェック
           const hasExcludedRole = memberRoles.some(role => EXCLUDED_ROLES.includes(role.id));
 
-          // メンバーが特定のロール（BIGNER_ROLE_ID）を持っていないことをチェック
-          const doesNotHaveSpecificRole = !memberRoles.has(BIGNER_ROLE_ID);
-
-          // メンバーが除外ロールを持っていなければ、新たにロールを付与
-          if (!hasExcludedRole && doesNotHaveSpecificRole) {
-            try {
-              member.roles.add(newRole);
-              console.log(`Added new role to ${member.user.username}`);
-            }
-            catch (error) {
-              console.error(`Failed to add role to ${member.user.username}: `, error);
-            }
-          }
           if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
             try {
-              member.roles.remove(newRole);
+              member.roles.remove(bignerRole);
               console.log(`Removed role from ${member.user.username}`);
             }
             catch (error) {
@@ -85,7 +70,6 @@ http
         }
       });
     }).catch(console.error);
-  
   
 
     // リクエストヘッダーのコンテンツタイプをチェック
