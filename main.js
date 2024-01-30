@@ -5,8 +5,7 @@ const client = new Client({
 });
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GAS_API_URL = process.env.GAS_API_URL;
-const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
-const MANAGER_ID = process.env.MANAGER_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const TARGET_CHANNEL_IDS = [
   process.env.GREETING_CHANNEL_ID,
   process.env.TALK_CHANNEL_ID,
@@ -19,14 +18,14 @@ const TARGET_CHANNEL_IDS = [
   process.env.VOICE_CHANNEL_ID,
   process.env.SELF_INTRODUCTION_CHANNEL_ID
 ]
+const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
+const MANAGER_ID = process.env.MANAGER_ID;
 const BOT_ID = process.env.BOT_ID;
 const METAGRIST_ROLE_ID = process.env.METAGRIST_ROLE_ID;
 
 let pretimeDict = new Map();
 
-client.once("ready", () => {
-  console.log('Bot is ready!');
-});
+client.once("ready", () => {});
 client.login(DISCORD_BOT_TOKEN);
 
 client.on("messageCreate", async message => {
