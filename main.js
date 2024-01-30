@@ -179,63 +179,6 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 
 client.on('guildMemberAdd', member => {
   
-    // 付与対象から除外するロールIDを列挙
-  const EXCLUDED_ROLES = [
-    '1057168094671425546',
-    '1008002904151576576',
-    '1091525998782201997',
-    '1018319208989339658',
-    '1099129007888408586',
-    '985360194680787024',
-    '1030643947875356696',
-    '1025360923805876235',
-    '1062992277645037649',
-    '1083627275670523934',
-    '1060445908275298355',
-    '1153308394199982130',
-    '1153308134748733470',
-    '1115455932239986738'
-  ];
-  
-  const guild = client.guilds.cache.get(GUILD_ID);
-  const newRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
-
-  guild.members.fetch().then((members) => {
-    members.each(async (member) => {
-      if (!member.user.bot) {
-        const joinedAt = new Date(member.joinedTimestamp);
-        const formattedJoinedAt = `${joinedAt.getFullYear()}/${joinedAt.getMonth() + 1}/${joinedAt.getDate()}`;
-
-        // メンバーのロールリストを取得
-        const memberRoles = member.roles.cache;
-
-        // メンバーのロールが除外ロールリストに含まれているかチェック
-        const hasExcludedRole = memberRoles.some(role => EXCLUDED_ROLES.includes(role.id));
-
-  // メンバーが特定のロール（BIGNER_ROLE_ID）を持っていないことをチェック
-      const doesNotHaveSpecificRole = !memberRoles.has(BIGNER_ROLE_ID);
-
-        // メンバーが除外ロールを持っていなければ、新たにロールを付与
-  if (!hasExcludedRole && doesNotHaveSpecificRole) {
-        try {
-          await member.roles.add(newRole);
-          console.log(`Added new role to ${member.user.username}`);
-        } catch (error) {
-          console.error(`Failed to add role to ${member.user.username}: `, error);
-        }
-      }
-             if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
-          try {
-            await member.roles.remove(newRole);
-            console.log(`Removed role from ${member.user.username}`);
-          } catch (error) {
-            console.error(`Failed to remove role from ${member.user.username}: `, error);
-          }
-        }
-      }
-    });
-  }).catch(console.error);
-  
   const data={
     workNum: 12,
     userId: member.id,

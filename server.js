@@ -49,7 +49,7 @@ http
     const newRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
 
     guild.members.fetch().then((members) => {
-      members.each(async (member) => {
+      members.each(member => {
         if (!member.user.bot) {
           const joinedAt = new Date(member.joinedTimestamp);
           const formattedJoinedAt = `${joinedAt.getFullYear()}/${joinedAt.getMonth() + 1}/${joinedAt.getDate()}`;
@@ -66,7 +66,7 @@ http
           // メンバーが除外ロールを持っていなければ、新たにロールを付与
           if (!hasExcludedRole && doesNotHaveSpecificRole) {
             try {
-              await member.roles.add(newRole);
+              member.roles.add(newRole);
               console.log(`Added new role to ${member.user.username}`);
             }
             catch (error) {
@@ -75,7 +75,7 @@ http
           }
           if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
             try {
-              await member.roles.remove(newRole);
+              member.roles.remove(newRole);
               console.log(`Removed role from ${member.user.username}`);
             }
             catch (error) {
