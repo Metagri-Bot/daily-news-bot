@@ -30,7 +30,7 @@ client.login(DISCORD_BOT_TOKEN);
 
 client.on("messageCreate", async message => {
   if(message.author.bot) return;
-  if(message.member.roles.cache.has(BIGNER_ROLE_ID) || message.member.roles.cache.has(METAGRIST_ROLE_ID)){
+  if(message.member.roles.cache.has(BIGNER_ROLE_ID)){
     auto(message);
   }
   else if(message.member.roles.cache.has(MANAGER_ID)){
