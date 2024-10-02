@@ -1,8 +1,9 @@
+// 必要なモジュールのインポート
 const http = require("http");
 const { Client, GatewayIntentBits } = require("discord.js");
-const client = new Client({
-  intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
-});
+require('dotenv').config(); // dotenv を使用している場合
+
+// 環境変数の取得
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const MSG_SEND_CHANNEL_ID = process.env.MSG_SEND_CHANNEL_ID;
@@ -17,11 +18,72 @@ const URLS = [
   process.env.PER_60_URL,
   process.env.PER_100_URL 
 ];
+const INVITE_CODE = process.env.INVITE_CODE;
+const ROBLOX_ROLE_ID = process.env.ROBLOX_ROLE_ID;
+const EXCLUDED_ROLES = [process.env.MANAGER_ID];
 
-client.once("ready", () => {
-  console.log('Bot is ready!');
+// Discordクライアントの設定
+const client = new Client({
+  intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
 });
-client.login(DISCORD_BOT_TOKEN);
+
+// 招待キャッシュを保持するMap
+const invitesCache = new Map();
+
+// ボットが準備完了したときの処理
+client.once("ready", async () => {
+  console.log('Bot is ready!');
+
+  // ギルドの招待リンクをフェッチしてキャッシュに保存
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) {
+    console.error(`Guild with ID ${GUILD_ID} not found.`);
+    return;
+  }
+
+  try {
+    const invites = await guild.invites.fetch();
+    invites.each(inv => invitesCache.set(inv.code, inv.uses));
+    console.log('Invite cache initialized.');
+  } catch (error) {
+    console.error('Error fetching invites:', error);
+  }
+});
+
+// 新規メンバーが参加したときの処理
+client.on('guildMemberAdd', async (member) => {
+  if (member.guild.id !== GUILD_ID) return;
+
+  const guild = member.guild;
+
+  try {
+    // 現在の招待リンクをフェッチ
+    const newInvites = await guild.invites.fetch();
+    // 招待キャッシュと比較して使用された招待リンクを特定
+    const usedInvite = newInvites.find(inv => {
+      const cachedUses = invitesCache.get(inv.code) || 0;
+      return inv.uses > cachedUses;
+    });
+
+    // キャッシュを更新
+    newInvites.each(inv => invitesCache.set(inv.code, inv.uses));
+
+    if (usedInvite && usedInvite.code === INVITE_CODE) {
+      const role = guild.roles.cache.get(ROBLOX_ROLE_ID);
+      if (role) {
+        await member.roles.add(role);
+        console.log(`Assigned ROBLOX_ROLE_ID to ${member.user.tag} via invite code ${INVITE_CODE}.`);
+      } else {
+        console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
+      }
+    } else {
+      console.log(`Member ${member.user.tag} joined using invite code: ${usedInvite ? usedInvite.code : 'Unknown'}`);
+    }
+  } catch (error) {
+    console.error(`Error processing guildMemberAdd for ${member.user.tag}:`, error);
+  }
+});
+
 
 http
   .createServer((request, response) => {
