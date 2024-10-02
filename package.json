@@ -12,6 +12,7 @@
     "@fastify/view": "^8.0.0",
     "axios": "^1.6.2",
     "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
     "fastify": "^4.19.2",
     "handlebars": "^4.7.7"
   },

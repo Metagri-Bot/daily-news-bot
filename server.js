@@ -1,7 +1,7 @@
 // 必要なモジュールのインポート
 const http = require("http");
 const { Client, GatewayIntentBits } = require("discord.js");
-require('dotenv').config(); // dotenv を使用している場合
+require('dotenv').config(); // dotenv を使用して環境変数をロード
 
 // 環境変数の取得
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -68,11 +68,29 @@ client.on('guildMemberAdd', async (member) => {
     // キャッシュを更新
     newInvites.each(inv => invitesCache.set(inv.code, inv.uses));
 
+    if (usedInvite) {
+      console.log(`Used invite code: ${usedInvite.code}`);
+      console.log(`Configured INVITE_CODE: ${INVITE_CODE}`);
+    } else {
+      console.log(`Used invite code: Unknown`);
+    }
+
     if (usedInvite && usedInvite.code === INVITE_CODE) {
-      const role = guild.roles.cache.get(ROBLOX_ROLE_ID);
-      if (role) {
-        await member.roles.add(role);
+      const robloxRole = guild.roles.cache.get(ROBLOX_ROLE_ID);
+      if (robloxRole) {
+        await member.roles.add(robloxRole);
         console.log(`Assigned ROBLOX_ROLE_ID to ${member.user.tag} via invite code ${INVITE_CODE}.`);
+
+        // 「BIGNER_ROLE_ID」を削除
+        if (member.roles.cache.has(BIGNER_ROLE_ID)) {
+          const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID);
+          if (bignerRole) {
+            await member.roles.remove(bignerRole);
+            console.log(`Removed BIGNER_ROLE_ID from ${member.user.tag} as they have ROBLOX_ROLE_ID.`);
+          } else {
+            console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
+          }
+        }
       } else {
         console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
       }
@@ -84,6 +102,37 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
+// メンバーのロールが更新されたときの処理
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  // 対象ギルドのみ処理
+  if (newMember.guild.id !== GUILD_ID) return;
+
+  // 「ROBLOX_ROLE_ID」が新しく付与されたか確認
+  const hadRobloxRole = oldMember.roles.cache.has(ROBLOX_ROLE_ID);
+  const hasRobloxRole = newMember.roles.cache.has(ROBLOX_ROLE_ID);
+
+  if (!hadRobloxRole && hasRobloxRole) {
+    console.log(`ROBLOX_ROLE_ID has been added to ${newMember.user.tag}.`);
+
+    // 「BIGNER_ROLE_ID」を削除
+    if (newMember.roles.cache.has(BIGNER_ROLE_ID)) {
+      const bignerRole = newMember.guild.roles.cache.get(BIGNER_ROLE_ID);
+      if (bignerRole) {
+        try {
+          await newMember.roles.remove(bignerRole);
+          console.log(`Removed BIGNER_ROLE_ID from ${newMember.user.tag} as they have ROBLOX_ROLE_ID.`);
+        } catch (error) {
+          console.error(`Failed to remove BIGNER_ROLE_ID from ${newMember.user.tag}:`, error);
+        }
+      } else {
+        console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
+      }
+    }
+  }
+});
+
+// Discordボットのログイン
+client.login(DISCORD_BOT_TOKEN);
 
 http
   .createServer((request, response) => {
