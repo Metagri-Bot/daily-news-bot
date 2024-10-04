@@ -20,6 +20,7 @@ const TARGET_CHANNEL_IDS = [
 ]
 const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const MANAGER_ID = process.env.MANAGER_ID;
+const INTERN_ROLE_ID = process.env.INTERN_ROLE_ID; //202410/4 インターンロール追加
 const BOT_ID = process.env.BOT_ID;
 const METAGRIST_ROLE_ID = process.env.METAGRIST_ROLE_ID;
 
@@ -28,12 +29,15 @@ let pretimeDict = new Map();
 client.once("ready", () => {});
 client.login(DISCORD_BOT_TOKEN);
 
+//202410/4 インターンロール追加
 client.on("messageCreate", async message => {
   if(message.author.bot) return;
-  if(message.member.roles.cache.has(BIGNER_ROLE_ID)){
+  const member = message.member;
+  
+  if(member.roles.cache.has(BIGNER_ROLE_ID)){
     auto(message);
   }
-  else if(message.member.roles.cache.has(MANAGER_ID)){
+  else if(member.roles.cache.has(MANAGER_ID) || member.roles.cache.has(INTERN_ROLE_ID)){
     manual(message);
   }
 });
