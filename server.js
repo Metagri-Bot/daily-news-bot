@@ -20,6 +20,7 @@ const URLS = [
 ];
 const INVITE_CODE = process.env.INVITE_CODE;
 const ROBLOX_ROLE_ID = process.env.ROBLOX_ROLE_ID;
+const ROBLOX_MEMBER_ROLE_ID = process.env.ROBLOX_MEMBER_ROLE_ID; // 2024/10/7 新規追加
 const EXCLUDED_ROLES = [process.env.MANAGER_ID];
 
 // Discordクライアントの設定
