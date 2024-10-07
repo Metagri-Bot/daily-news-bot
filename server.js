@@ -78,6 +78,7 @@ client.on('guildMemberAdd', async (member) => {
 
     if (usedInvite && usedInvite.code === INVITE_CODE) {
       const robloxRole = guild.roles.cache.get(ROBLOX_ROLE_ID);
+      // ROBLOX_MEMBER_ROLE_ID は別のBotで付与されているため、ここでは扱わない
       if (robloxRole) {
         await member.roles.add(robloxRole);
         console.log(`Assigned ROBLOX_ROLE_ID to ${member.user.tag} via invite code ${INVITE_CODE}.`);
@@ -98,6 +99,18 @@ client.on('guildMemberAdd', async (member) => {
     } else {
       console.log(`Member ${member.user.tag} joined using invite code: ${usedInvite ? usedInvite.code : 'Unknown'}`);
     }
+
+    // **追加部分: ROBLOX_MEMBER_ROLE_ID を持っている場合、ROBLOX_ROLE_ID を削除**
+    if (member.roles.cache.has(ROBLOX_MEMBER_ROLE_ID)) {
+      const robloxRole = guild.roles.cache.get(ROBLOX_ROLE_ID);
+      if (robloxRole) {
+        await member.roles.remove(robloxRole);
+        console.log(`Removed ROBLOX_ROLE_ID from ${member.user.tag} because they have ROBLOX_MEMBER_ROLE_ID.`);
+      } else {
+        console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
+      }
+    }
+
   } catch (error) {
     console.error(`Error processing guildMemberAdd for ${member.user.tag}:`, error);
   }
@@ -108,7 +121,30 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
   // 対象ギルドのみ処理
   if (newMember.guild.id !== GUILD_ID) return;
 
-  // 「ROBLOX_ROLE_ID」が新しく付与されたか確認
+  // **追加部分: ROBLOX_MEMBER_ROLE_ID が追加された場合、ROBLOX_ROLE_ID を削除**
+  const hadRobloxMemberRole = oldMember.roles.cache.has(ROBLOX_MEMBER_ROLE_ID);
+  const hasRobloxMemberRole = newMember.roles.cache.has(ROBLOX_MEMBER_ROLE_ID);
+
+  if (!hadRobloxMemberRole && hasRobloxMemberRole) {
+    console.log(`ROBLOX_MEMBER_ROLE_ID has been added to ${newMember.user.tag}.`);
+
+    // ROBLOX_ROLE_ID を削除
+    if (newMember.roles.cache.has(ROBLOX_ROLE_ID)) {
+      const robloxRole = newMember.guild.roles.cache.get(ROBLOX_ROLE_ID);
+      if (robloxRole) {
+        try {
+          await newMember.roles.remove(robloxRole);
+          console.log(`Removed ROBLOX_ROLE_ID from ${newMember.user.tag} after ROBLOX_MEMBER_ROLE_ID was added.`);
+        } catch (error) {
+          console.error(`Failed to remove ROBLOX_ROLE_ID from ${newMember.user.tag}:`, error);
+        }
+      } else {
+        console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
+      }
+    }
+  }
+
+  // **既存の処理: ROBLOX_ROLE_ID が追加された場合の処理を保持**
   const hadRobloxRole = oldMember.roles.cache.has(ROBLOX_ROLE_ID);
   const hasRobloxRole = newMember.roles.cache.has(ROBLOX_ROLE_ID);
 
