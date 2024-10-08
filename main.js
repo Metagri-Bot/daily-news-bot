@@ -65,10 +65,10 @@ const auto = (message) =>{
   const isReplay = message.reference;
   
   if(channelId == TARGET_CHANNEL_IDS[0]){
-    workNum = 0;
+    workNum = 0; // 初回参加
   }
   else if(channelId == TARGET_CHANNEL_IDS[1] && isReplay){
-    workNum = 1;
+    workNum = 1; // トーク返信
   }
   else if(channelId == TARGET_CHANNEL_IDS[2]){
     if(isInImageFile){
@@ -108,6 +108,9 @@ const auto = (message) =>{
   }
   else if(channelId == TARGET_CHANNEL_IDS[9]){
     workNum = 13;
+  }
+   else if(channelId == TARGET_CHANNEL_IDS[10]){
+    workNum = 14; // メタバースプレイ
   }
   else{
     return;
