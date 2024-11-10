@@ -51,8 +51,7 @@ client.once("ready", async () => {
   }
 
   // HTTPサーバーの起動
-  http
-    .createServer(async (request, response) => {
+  http.createServer(async (request, response) => {
       console.log("post from gas");
 
       //--会員ロール調査--
@@ -193,4 +192,6 @@ client.login(DISCORD_BOT_TOKEN)
     console.error('Failed to login:', error);
   });
 
+require("./code.js")
+require("./comand.js")
 require("./main.js");
