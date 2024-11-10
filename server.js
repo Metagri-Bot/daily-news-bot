@@ -31,6 +31,35 @@ const client = new Client({
 // 招待キャッシュを保持するMap
 const invitesCache = new Map();
 
+// ロール追加・削除の関数化
+async function addRole(member, roleId, logPrefix = '') {
+  const role = member.guild.roles.cache.get(roleId);
+  if (role) {
+    try {
+      await member.roles.add(role);
+      console.log(`${logPrefix} Added role ${roleId} to ${member.user.tag}`);
+    } catch (error) {
+      console.error(`${logPrefix} Failed to add role ${roleId} to ${member.user.tag}:`, error);
+    }
+  } else {
+    console.error(`${logPrefix} Role with ID ${roleId} not found.`);
+  }
+}
+
+async function removeRole(member, roleId, logPrefix = '') {
+  const role = member.guild.roles.cache.get(roleId);
+  if (role && member.roles.cache.has(roleId)) {
+    try {
+      await member.roles.remove(role);
+      console.log(`${logPrefix} Removed role ${roleId} from ${member.user.tag}`);
+    } catch (error) {
+      console.error(`${logPrefix} Failed to remove role ${roleId} from ${member.user.tag}:`, error);
+    }
+  } else {
+    console.error(`${logPrefix} Role with ID ${roleId} not found or member does not have the role.`);
+  }
+}
+
 // ボットが準備完了したときの処理
 client.once("ready", async () => {
   console.log('Bot is ready!');
@@ -80,19 +109,8 @@ client.on('guildMemberAdd', async (member) => {
       const robloxRole = guild.roles.cache.get(ROBLOX_ROLE_ID);
       // ROBLOX_MEMBER_ROLE_ID は別のBotで付与されているため、ここでは扱わない
       if (robloxRole) {
-        await member.roles.add(robloxRole);
-        console.log(`Assigned ROBLOX_ROLE_ID to ${member.user.tag} via invite code ${INVITE_CODE}.`);
-
-        // 「BIGNER_ROLE_ID」を削除
-        if (member.roles.cache.has(BIGNER_ROLE_ID)) {
-          const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID);
-          if (bignerRole) {
-            await member.roles.remove(bignerRole);
-            console.log(`Removed BIGNER_ROLE_ID from ${member.user.tag} as they have ROBLOX_ROLE_ID.`);
-          } else {
-            console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
-          }
-        }
+        await addRole(member, ROBLOX_ROLE_ID, '[guildMemberAdd]');
+        await removeRole(member, BIGNER_ROLE_ID, '[guildMemberAdd]');
       } else {
         console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
       }
@@ -100,15 +118,14 @@ client.on('guildMemberAdd', async (member) => {
       console.log(`Member ${member.user.tag} joined using invite code: ${usedInvite ? usedInvite.code : 'Unknown'}`);
     }
 
-    // **追加部分: ROBLOX_MEMBER_ROLE_ID を持っている場合、ROBLOX_ROLE_ID を削除**
+    // **追加部分: 何もロールが付いていない場合にBIGNER_ROLE_IDを付与**
+    if (member.roles.cache.size === 1) { // @everyoneのみ
+      await addRole(member, BIGNER_ROLE_ID, '[guildMemberAdd]');
+    }
+
+    // **既存の追加部分: ROBLOX_MEMBER_ROLE_ID を持っている場合、ROBLOX_ROLE_ID を削除**
     if (member.roles.cache.has(ROBLOX_MEMBER_ROLE_ID)) {
-      const robloxRole = guild.roles.cache.get(ROBLOX_ROLE_ID);
-      if (robloxRole) {
-        await member.roles.remove(robloxRole);
-        console.log(`Removed ROBLOX_ROLE_ID from ${member.user.tag} because they have ROBLOX_MEMBER_ROLE_ID.`);
-      } else {
-        console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
-      }
+      await removeRole(member, ROBLOX_ROLE_ID, '[guildMemberAdd]');
     }
 
   } catch (error) {
@@ -121,27 +138,13 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
   // 対象ギルドのみ処理
   if (newMember.guild.id !== GUILD_ID) return;
 
-  // **追加部分: ROBLOX_MEMBER_ROLE_ID が追加された場合、ROBLOX_ROLE_ID を削除**
+  // **既存の処理: ROBLOX_MEMBER_ROLE_ID が追加された場合、ROBLOX_ROLE_ID を削除**
   const hadRobloxMemberRole = oldMember.roles.cache.has(ROBLOX_MEMBER_ROLE_ID);
   const hasRobloxMemberRole = newMember.roles.cache.has(ROBLOX_MEMBER_ROLE_ID);
 
   if (!hadRobloxMemberRole && hasRobloxMemberRole) {
     console.log(`ROBLOX_MEMBER_ROLE_ID has been added to ${newMember.user.tag}.`);
-
-    // ROBLOX_ROLE_ID を削除
-    if (newMember.roles.cache.has(ROBLOX_ROLE_ID)) {
-      const robloxRole = newMember.guild.roles.cache.get(ROBLOX_ROLE_ID);
-      if (robloxRole) {
-        try {
-          await newMember.roles.remove(robloxRole);
-          console.log(`Removed ROBLOX_ROLE_ID from ${newMember.user.tag} after ROBLOX_MEMBER_ROLE_ID was added.`);
-        } catch (error) {
-          console.error(`Failed to remove ROBLOX_ROLE_ID from ${newMember.user.tag}:`, error);
-        }
-      } else {
-        console.error(`Role with ID ${ROBLOX_ROLE_ID} not found.`);
-      }
-    }
+    await removeRole(newMember, ROBLOX_ROLE_ID, '[guildMemberUpdate]');
   }
 
   // **既存の処理: ROBLOX_ROLE_ID が追加された場合の処理を保持**
@@ -150,63 +153,73 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
   if (!hadRobloxRole && hasRobloxRole) {
     console.log(`ROBLOX_ROLE_ID has been added to ${newMember.user.tag}.`);
+    await removeRole(newMember, BIGNER_ROLE_ID, '[guildMemberUpdate]');
+  }
 
-    // 「BIGNER_ROLE_ID」を削除
-    if (newMember.roles.cache.has(BIGNER_ROLE_ID)) {
-      const bignerRole = newMember.guild.roles.cache.get(BIGNER_ROLE_ID);
-      if (bignerRole) {
-        try {
-          await newMember.roles.remove(bignerRole);
-          console.log(`Removed BIGNER_ROLE_ID from ${newMember.user.tag} as they have ROBLOX_ROLE_ID.`);
-        } catch (error) {
-          console.error(`Failed to remove BIGNER_ROLE_ID from ${newMember.user.tag}:`, error);
-        }
-      } else {
-        console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
-      }
-    }
+  // **追加部分: メンバーが全てのロールを失った場合にBIGNER_ROLE_IDを付与**
+  if (newMember.roles.cache.size === 1 && !newMember.roles.cache.has(BIGNER_ROLE_ID)) { // @everyoneのみ
+    await addRole(newMember, BIGNER_ROLE_ID, '[guildMemberUpdate]');
   }
 });
 
 // Discordボットのログイン
 client.login(DISCORD_BOT_TOKEN);
 
+// HTTPサーバーの設定
 http
-  .createServer((request, response) => {
-    console.log("post from gas");
+  .createServer(async (request, response) => {
+    console.log("Received a request from external source.");
 
-  //--会員ロール調査--
-    // 付与対象から除外するロールIDを列挙
-    const EXCLUDED_ROLES = [process.env.MANAGER_ID];
-  
+    //--会員ロール調査--
+    // 付与対象から除外するロールIDを列挙は既にEXCLUDED_ROLESとして定義済み
+
     const guild = client.guilds.cache.get(GUILD_ID);
-    const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
+    if (!guild) {
+      console.error(`Guild with ID ${GUILD_ID} not found.`);
+      response.statusCode = 500;
+      response.end(JSON.stringify({ error: "Guild not found." }));
+      return;
+    }
 
-    guild.members.fetch().then((members) => {
+    const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
+    if (!bignerRole) {
+      console.error(`BIGNER_ROLE_ID with ID ${BIGNER_ROLE_ID} not found.`);
+      response.statusCode = 500;
+      response.end(JSON.stringify({ error: "Bigner role not found." }));
+      return;
+    }
+
+    try {
+      const members = await guild.members.fetch();
+      const rolePromises = [];
+
       members.each((member) => {
         if (!member.user.bot) {
-          
-          // メンバーのロールリストを取得
           const memberRoles = member.roles.cache;
-
-          // メンバーのロールが除外ロールリストに含まれているかチェック
           const hasExcludedRole = memberRoles.some(role => EXCLUDED_ROLES.includes(role.id));
 
           if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
-            try {
-              member.roles.remove(bignerRole);
-              console.log(`Removed role from ${member.user.username}`);
-            }
-            catch (error) {
-              console.error(`Failed to remove role from ${member.user.username}: `, error);
-            }
+            rolePromises.push(
+              removeRole(member, BIGNER_ROLE_ID, '[HTTP Server]')
+            );
+          }
+
+          // **追加部分: 何もロールが付いていないメンバーにBIGNER_ROLE_IDを付与**
+          if (memberRoles.size === 1 && !memberRoles.has(BIGNER_ROLE_ID)) { // @everyoneのみ
+            rolePromises.push(
+              addRole(member, BIGNER_ROLE_ID, '[HTTP Server]')
+            );
           }
         }
       });
-    }).catch(console.error);
+
+      await Promise.all(rolePromises);
+      console.log("Completed role removal and assignment process from HTTP server.");
+    } catch (error) {
+      console.error("Error during role removal and assignment in HTTP server:", error);
+    }
     //--会員ロール調査終了--
 
-  
     // リクエストヘッダーのコンテンツタイプをチェック
     if (request.headers["content-type"] === "application/json") {
       let requestBody = "";
@@ -217,48 +230,70 @@ http
       });
 
       // リクエストデータの受信が完了した際に発生する 'end' イベントのハンドラを設定
-      request.on("end", () => {
-        const guild = client.guilds.cache.get(GUILD_ID);
-        const channel = client.channels.cache.get(MSG_SEND_CHANNEL_ID);
-        const data = JSON.parse(requestBody);
-        const userData = data.postData;
-        
-        for(let i = 0; i < userData.length; i++){
-          let userId = userData[i].userId;
-          let works = userData[i].works;
-          let numPoint = userData[i].numPoint;
-          let totalPoint = userData[i].totalPoint;
-          let overPoint = userData[i].overPoint;
-          let message =`<@${userId}> さん\n本日のMetaGreenSeedsポイントを配布します。\n\n内訳：\n`;
-          for(let j = 0; j < works.length; j++){
-            message = message + `${works[j]}\n`
-          } 
-          message = message + `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
-          if(overPoint == 30){
-            guild.members.fetch();
-            guild.members.cache.get(userId).roles.add(ROLES[0]);
-            message = message + `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${URLS[0]} をご確認ください。`;
+      request.on("end", async () => {
+        try {
+          const data = JSON.parse(requestBody);
+          const userData = data.postData;
+
+          if (!userData || !Array.isArray(userData)) {
+            throw new Error("Invalid postData format.");
           }
-          if(overPoint == 60){
-            guild.members.fetch();
-            guild.members.cache.get(userId).roles.add(ROLES[1]);
-            message = message + `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${URLS[1]} をご確認ください。`;
+
+          const channel = client.channels.cache.get(MSG_SEND_CHANNEL_ID);
+          if (!channel) {
+            console.error(`Channel with ID ${MSG_SEND_CHANNEL_ID} not found.`);
+            response.statusCode = 500;
+            response.end(JSON.stringify({ error: "Channel not found." }));
+            return;
           }
-          if(overPoint == 100){
-            guild.members.fetch();
-            guild.members.cache.get(userId).roles.add(ROLES[2]);
-            message = message + `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${URLS[2]} をご確認ください。`;
-          }
-          channel.send(message);
+
+          await guild.members.fetch(); // メンバーのキャッシュを更新
+
+          const messagePromises = userData.map(async (user) => {
+            const { userId, works, numPoint, totalPoint, overPoint } = user;
+            const member = guild.members.cache.get(userId);
+            if (!member) {
+              console.warn(`Member with ID ${userId} not found.`);
+              return;
+            }
+
+            let message = `<@${userId}> さん\n本日のMetaGreenSeedsポイントを配布します。\n\n内訳：\n`;
+            works.forEach(work => {
+              message += `${work}\n`;
+            });
+            message += `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
+
+            if (overPoint === 30) {
+              await addRole(member, ROLES[0], '[HTTP Server]');
+              message += `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${URLS[0]} をご確認ください。`;
+            }
+            if (overPoint === 60) {
+              await addRole(member, ROLES[1], '[HTTP Server]');
+              message += `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${URLS[1]} をご確認ください。`;
+            }
+            if (overPoint === 100) {
+              await addRole(member, ROLES[2], '[HTTP Server]');
+              message += `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${URLS[2]} をご確認ください。`;
+            }
+
+            await channel.send(message);
+          });
+
+          await Promise.all(messagePromises);
+
+          // レスポンスを設定して200 OKを返す
+          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          response.statusCode = 200;
+          const responseBody = { message: "Data received and API is active now." };
+          response.write(JSON.stringify(responseBody));
+          response.end();
+        } catch (error) {
+          console.error("Error processing HTTP request:", error);
+          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: error.message }));
         }
       });
-
-      // レスポンスを設定して200 OKを返す
-      response.setHeader("Content-Type", "application/json; charset=utf-8");
-      response.statusCode = 200;
-      const responseBody = { message: "Data received and API is active now." };
-      response.write(JSON.stringify(responseBody));
-      response.end();
     } else {
       // リクエストのコンテンツタイプが不正な場合、400 Bad Requestを返す
       response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -270,6 +305,8 @@ http
       response.end();
     }
   })
-  .listen(3000);
+  .listen(3000, () => {
+    console.log("HTTP server is listening on port 3000.");
+  });
 
 require("./main.js");
