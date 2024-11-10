@@ -1,7 +1,6 @@
-// 必要なモジュールのインポート
 const http = require("http");
-const { Client, GatewayIntentBits } = require("discord.js");
-require('dotenv').config(); // dotenv を使用して環境変数をロード
+const Discord = require("discord.js");
+require('dotenv').config();
 
 // 環境変数の取得
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -18,14 +17,11 @@ const URLS = [
   process.env.PER_60_URL,
   process.env.PER_100_URL 
 ];
-const INVITE_CODE = process.env.INVITE_CODE;
-const ROBLOX_ROLE_ID = process.env.ROBLOX_ROLE_ID;
-const ROBLOX_MEMBER_ROLE_ID = process.env.ROBLOX_MEMBER_ROLE_ID; // 2024/10/7 新規追加
 const EXCLUDED_ROLES = [process.env.MANAGER_ID];
 
-// Discordクライアントの設定
-const client = new Client({
-  intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
+// Discordクライアントの設定（v12用）
+const client = new Discord.Client({
+  fetchAllMembers: true
 });
 
 // 招待キャッシュを保持するMap
@@ -43,8 +39,8 @@ client.once("ready", async () => {
   }
 
   try {
-    const invites = await guild.invites.fetch();
-    invites.each(inv => invitesCache.set(inv.code, inv.uses));
+    const invites = await guild.fetchInvites();
+    invites.forEach(inv => invitesCache.set(inv.code, inv.uses));
     console.log('Invite cache initialized.');
   } catch (error) {
     console.error('Error fetching invites:', error);
@@ -55,19 +51,10 @@ client.once("ready", async () => {
       console.log("post from gas");
 
       //--会員ロール調査--
-      // 付与対象から除外するロールIDを列挙
-      const excludedRoles = EXCLUDED_ROLES; // 大文字から小文字に変更（オプション）
+      const excludedRoles = EXCLUDED_ROLES;
     
-      // ギルドを取得（既に宣言済みのguild変数を使用）
-      if (!guild) {
-        console.error(`Guild with ID ${GUILD_ID} not found.`);
-        response.statusCode = 500;
-        response.end("Guild not found.");
-        return;
-      }
-
       // ロールを取得
-      const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID); // 新たに付与するロールを取得
+      const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID);
       if (!bignerRole) {
         console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
         response.statusCode = 500;
@@ -75,15 +62,11 @@ client.once("ready", async () => {
         return;
       }
 
-      // メンバーをフェッチ
       try {
         const members = await guild.members.fetch();
-        members.each((member) => {
+        members.forEach((member) => {
           if (!member.user.bot) {
-            // メンバーのロールリストを取得
             const memberRoles = member.roles.cache;
-
-            // メンバーのロールが除外ロールリストに含まれているかチェック
             const hasExcludedRole = memberRoles.some(role => excludedRoles.includes(role.id));
 
             if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
@@ -100,18 +83,13 @@ client.once("ready", async () => {
       } catch (error) {
         console.error('Error fetching members:', error);
       }
-      //--会員ロール調査終了--
 
-      // リクエストヘッダーのコンテンツタイプをチェック
       if (request.headers["content-type"] === "application/json") {
         let requestBody = "";
-
-        // データを受信
         request.on("data", (chunk) => {
           requestBody += chunk.toString();
         });
 
-        // データ受信完了
         request.on("end", async () => {
           try {
             const data = JSON.parse(requestBody);
@@ -154,7 +132,6 @@ client.once("ready", async () => {
               await channel.send(message);
             }
 
-            // レスポンスを設定して200 OKを返す
             response.setHeader("Content-Type", "application/json; charset=utf-8");
             response.statusCode = 200;
             const responseBody = { message: "Data received and API is active now." };
@@ -168,9 +145,8 @@ client.once("ready", async () => {
         });
 
       } else {
-        // リクエストのコンテンツタイプが不正な場合、400 Bad Requestを返す
         response.setHeader("Content-Type", "application/json; charset=utf-8");
-        response.statusCode = 400; // Bad Request
+        response.statusCode = 400;
         const responseBody = {
           error: "Invalid content type. Expected application/json.",
         };
@@ -183,7 +159,6 @@ client.once("ready", async () => {
     });
 });
 
-// Discordボットのログイン
 client.login(DISCORD_BOT_TOKEN)
   .then(() => {
     console.log('Login successful.');
@@ -191,8 +166,3 @@ client.login(DISCORD_BOT_TOKEN)
   .catch(error => {
     console.error('Failed to login:', error);
   });
-
-// require("./code.js")
-// require("./comand.js")
-// require("./main.js");
-
