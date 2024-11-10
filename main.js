@@ -1,6 +1,9 @@
 //const { Client, GatewayIntentBits } = require("discord.js");
-const { Client, Intents } = require('discord.js');
 const axios = require("axios");
+const client = require('./server.js');  // server.jsからclientをインポート
+
+// const { Client, Intents } = require('discord.js');
+// const axios = require("axios");
 
 const client = new Client({
   intents: [

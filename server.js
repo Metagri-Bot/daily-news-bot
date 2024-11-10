@@ -1,7 +1,12 @@
 // 必要なモジュールのインポート
 const http = require("http");
-const { Client, Intents } = require("discord.js"); // v13ではIntentsを使用
+const { Client, Intents } = require("discord.js");
 require('dotenv').config();
+// const http = require("http");
+// const { Client, Intents } = require("discord.js"); // v13ではIntentsを使用
+// require('dotenv').config();
+
+
 
 // 環境変数の取得（変更なし）
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -29,12 +34,17 @@ const client = new Client({
     Intents.FLAGS.GUILDS,
     Intents.FLAGS.GUILD_MEMBERS,
     Intents.FLAGS.GUILD_MESSAGES,
-    Intents.FLAGS.GUILD_INVITES
+    Intents.FLAGS.GUILD_MESSAGE_REACTIONS,
+    Intents.FLAGS.GUILD_PRESENCES,
+    Intents.FLAGS.GUILD_INVITES,
+    Intents.FLAGS.GUILD_MESSAGE_TYPING,
+    Intents.FLAGS.DIRECT_MESSAGES
   ]
 });
-
+  
 // 招待キャッシュを保持するMap
 const invitesCache = new Map();
+
 
 // ボットが準備完了したときの処理
 client.once("ready", async () => {
