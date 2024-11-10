@@ -156,9 +156,14 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await removeRole(newMember, BIGNER_ROLE_ID, '[guildMemberUpdate]');
   }
 
-  // **追加部分: メンバーが全てのロールを失った場合にBIGNER_ROLE_IDを付与**
-  if (newMember.roles.cache.size === 1 && !newMember.roles.cache.has(BIGNER_ROLE_ID)) { // @everyoneのみ
+  // **追加部分: メンバーが全てのロールを失った場合にBIGNER_ROLE_IDとROBLOX_MEMBER_ROLE_IDを付与**
+  if (
+    newMember.roles.cache.size === 1 &&
+    !newMember.roles.cache.has(BIGNER_ROLE_ID) &&
+    !newMember.roles.cache.has(ROBLOX_MEMBER_ROLE_ID)
+  ) { // @everyoneのみ
     await addRole(newMember, BIGNER_ROLE_ID, '[guildMemberUpdate]');
+    await addRole(newMember, ROBLOX_MEMBER_ROLE_ID, '[guildMemberUpdate]');
   }
 });
 
