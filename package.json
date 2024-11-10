@@ -7,14 +7,13 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@fastify/formbody": "^7.4.0",
-    "@fastify/static": "^6.10.2",
-    "@fastify/view": "^8.0.0",
-    "axios": "^1.6.2",
-    "discord-inviter-tracker": "^1.0.3",
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.4.5",
-    "fastify": "^4.19.2",
+    "@fastify/formbody": "^6.0.0",
+    "@fastify/static": "^5.0.0",
+    "@fastify/view": "^7.0.0",
+    "axios": "^0.21.4",
+    "discord.js": "^12.5.3",
+    "dotenv": "^8.6.0",
+    "fastify": "^3.29.5",
     "handlebars": "^4.7.7"
   },
   "engines": {

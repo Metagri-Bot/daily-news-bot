@@ -192,6 +192,7 @@ client.login(DISCORD_BOT_TOKEN)
     console.error('Failed to login:', error);
   });
 
-require("./code.js")
-require("./comand.js")
-require("./main.js");
+// require("./code.js")
+// require("./comand.js")
+// require("./main.js");
+
