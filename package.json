@@ -11,6 +11,7 @@
     "@fastify/static": "^6.10.2",
     "@fastify/view": "^8.0.0",
     "axios": "^1.6.2",
+    "discord-inviter-tracker": "^1.0.3",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
     "fastify": "^4.19.2",
