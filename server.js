@@ -30,7 +30,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildInvites,
     GatewayIntentBits.GuildMessages,
-    // 必要なインテントのみを追加
+    // 必要に応じて他のインテントを追加
   ]
 });
 
@@ -61,6 +61,8 @@ client.once("ready", async () => {
 
 // 新規メンバーが参加したときの処理
 client.on('guildMemberAdd', async (member) => {
+  console.log(`guildMemberAdd event triggered for: ${member.user.tag} (ID: ${member.id})`);
+
   if (member.guild.id !== GUILD_ID) return;
 
   const guild = member.guild;
@@ -132,6 +134,8 @@ client.on('guildMemberAdd', async (member) => {
 
 // メンバーのロールが更新されたときの処理
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  console.log(`guildMemberUpdate event triggered for: ${newMember.user.tag}`);
+
   if (newMember.guild.id !== GUILD_ID) return;
 
   // **追加部分: ROBLOX_MEMBER_ROLE_ID が追加された場合、ROBLOX_ROLE_ID を削除**
@@ -182,12 +186,19 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 });
 
 // Discordボットのログイン
-client.login(DISCORD_BOT_TOKEN);
+console.log('Attempting to log in the bot...');
+client.login(DISCORD_BOT_TOKEN)
+  .then(() => {
+    console.log('Login successful.');
+  })
+  .catch((error) => {
+    console.error('Login failed:', error);
+  });
 
 // HTTPサーバーの設定
 http
   .createServer((request, response) => {
-    console.log("post from gas");
+    console.log("Received HTTP request from gas.");
 
     //--会員ロール調査--
     // 付与対象から除外するロールIDを列挙（グローバルに定義済みのEXCLUDED_ROLESを使用）
@@ -204,6 +215,7 @@ http
     }
 
     guild.members.fetch().then((members) => {
+      console.log(`Fetched ${members.size} members.`);
       members.each((member) => {
         if (!member.user.bot) {
           const memberRoles = member.roles.cache;
@@ -212,7 +224,7 @@ http
           if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
             try {
               member.roles.remove(bignerRole);
-              console.log(`Removed role from ${member.user.username}`);
+              console.log(`Removed BIGNER_ROLE_ID from ${member.user.username}`);
             }
             catch (error) {
               console.error(`Failed to remove role from ${member.user.username}: `, error);
@@ -220,7 +232,9 @@ http
           }
         }
       });
-    }).catch(console.error);
+    }).catch(error => {
+      console.error('Error fetching members:', error);
+    });
     //--会員ロール調査終了--
 
     // リクエストヘッダーのコンテンツタイプをチェック
@@ -234,15 +248,23 @@ http
 
       // リクエストデータの受信が完了した際に発生する 'end' イベントのハンドラを設定
       request.on("end", async () => { // async を追加
+        console.log("Received request body:", requestBody);
+
         const guild = client.guilds.cache.get(GUILD_ID);
         if (!guild) {
           console.error(`Guild with ID ${GUILD_ID} not found.`);
+          response.statusCode = 400;
+          response.write(JSON.stringify({ error: "Guild not found." }));
+          response.end();
           return;
         }
 
         const channel = client.channels.cache.get(MSG_SEND_CHANNEL_ID);
         if (!channel) {
           console.error(`Channel with ID ${MSG_SEND_CHANNEL_ID} not found.`);
+          response.statusCode = 400;
+          response.write(JSON.stringify({ error: "Channel not found." }));
+          response.end();
           return;
         }
 
@@ -278,6 +300,7 @@ http
               if (member) {
                 await member.roles.add(ROLES[0]);
                 message += `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${URLS[0]} をご確認ください。`;
+                console.log(`Assigned PER_30_ROLE_ID to ${member.user.tag}`);
               } else {
                 console.error(`Member with ID ${userId} not found.`);
               }
@@ -288,6 +311,7 @@ http
               if (member) {
                 await member.roles.add(ROLES[1]);
                 message += `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${URLS[1]} をご確認ください。`;
+                console.log(`Assigned PER_60_ROLE_ID to ${member.user.tag}`);
               } else {
                 console.error(`Member with ID ${userId} not found.`);
               }
@@ -298,11 +322,13 @@ http
               if (member) {
                 await member.roles.add(ROLES[2]);
                 message += `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${URLS[2]} をご確認ください。`;
+                console.log(`Assigned PER_100_ROLE_ID to ${member.user.tag}`);
               } else {
                 console.error(`Member with ID ${userId} not found.`);
               }
             }
             await channel.send(message);
+            console.log(`Sent message to channel for user ID ${userId}`);
           } catch (error) {
             console.error(`Failed to process user data for user ID ${userId}:`, error);
           }
@@ -317,6 +343,7 @@ http
       });
     } else {
       // リクエストのコンテンツタイプが不正な場合、400 Bad Requestを返す
+      console.log("Invalid content type received.");
       response.setHeader("Content-Type", "application/json; charset=utf-8");
       response.statusCode = 400; // Bad Request
       const responseBody = {
@@ -326,6 +353,7 @@ http
       response.end();
     }
   })
-  .listen(3000);
-
-require("./main.js");
+  .listen(3000, () => {
+    console.log('HTTP server is listening on port 3000.');
+  });
+//require("./main.js");
