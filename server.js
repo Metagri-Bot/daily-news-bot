@@ -2,11 +2,10 @@
 const http = require("http");
 const { Client, Intents } = require("discord.js");
 require('dotenv').config();
+
 // const http = require("http");
 // const { Client, Intents } = require("discord.js"); // v13ではIntentsを使用
 // require('dotenv').config();
-
-
 
 // 環境変数の取得（変更なし）
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -28,6 +27,7 @@ const ROBLOX_ROLE_ID = process.env.ROBLOX_ROLE_ID;
 const ROBLOX_MEMBER_ROLE_ID = process.env.ROBLOX_MEMBER_ROLE_ID;
 const EXCLUDED_ROLES = [process.env.MANAGER_ID];
 
+
 // Discordクライアントの設定（v13用に変更）
 const client = new Client({
   intents: [
@@ -41,30 +41,6 @@ const client = new Client({
 // 招待キャッシュを保持するMap
 const invitesCache = new Map();
 
-
-client.on('error', error => {
-  console.error('Discord client error:', error);
-});
-
-client.on('disconnect', () => {
-  console.log('Discord bot disconnected');
-});
-
-// ログイン処理を詳細に
-console.log('Starting Discord bot login...');
-console.log('Using token:', process.env.DISCORD_BOT_TOKEN ? 'Token exists' : 'Token is missing');
-
-client.login(process.env.DISCORD_BOT_TOKEN)
-  .then(() => {
-    console.log('Discord bot login successful');
-    console.log(`Logged in as ${client.user.tag}`);
-  })
-  .catch(error => {
-    console.error('Discord bot login failed. Error details:', error);
-    console.error('Error name:', error.name);
-    console.error('Error message:', error.message);
-    process.exit(1);
-  });
 
 
 // ボットが準備完了したときの処理
