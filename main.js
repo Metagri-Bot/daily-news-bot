@@ -1,22 +1,25 @@
 //const { Client, GatewayIntentBits } = require("discord.js");
-const axios = require("axios");
-const client = require('./server.js');  // server.jsからclientをインポート
 
 // const { Client, Intents } = require('discord.js');
-// const axios = require("axios");
+const axios = require("axios");
 
-const client = new Client({
-  intents: [
-    Intents.FLAGS.GUILDS,
-    Intents.FLAGS.GUILD_MEMBERS,
-    Intents.FLAGS.GUILD_MESSAGES,
-    Intents.FLAGS.GUILD_INVITES
-  ]
-});
+const client = require('./server.js');
+
+// const client = new Client({
+//   intents: [
+//     Intents.FLAGS.GUILDS,
+//     Intents.FLAGS.GUILD_MEMBERS,
+//     Intents.FLAGS.GUILD_MESSAGES,
+//     Intents.FLAGS.GUILD_INVITES
+//   ]
+// });
+
 // const client = new Client({
 //   intents: Object.values(GatewayIntentBits).reduce((a, b) => a | b)
 // });
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+
+// const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+
 const GAS_API_URL = process.env.GAS_API_URL;
 const GUILD_ID = process.env.GUILD_ID;
 const TARGET_CHANNEL_IDS = [
@@ -40,8 +43,13 @@ const METAGRIST_ROLE_ID = process.env.METAGRIST_ROLE_ID;
 
 let pretimeDict = new Map();
 
-client.once("ready", () => {});
-client.login(DISCORD_BOT_TOKEN);
+// client.once("ready", () => {});
+// client.login(DISCORD_BOT_TOKEN);
+
+// イベントハンドラーの設定
+client.on("ready", () => {
+  console.log(`Bot is ready as ${client.user.tag}`);
+});
 
 //202410/4 インターンロール追加
 client.on("messageCreate", async message => {

@@ -34,16 +34,37 @@ const client = new Client({
     Intents.FLAGS.GUILDS,
     Intents.FLAGS.GUILD_MEMBERS,
     Intents.FLAGS.GUILD_MESSAGES,
-    Intents.FLAGS.GUILD_MESSAGE_REACTIONS,
-    Intents.FLAGS.GUILD_PRESENCES,
-    Intents.FLAGS.GUILD_INVITES,
-    Intents.FLAGS.GUILD_MESSAGE_TYPING,
-    Intents.FLAGS.DIRECT_MESSAGES
+    Intents.FLAGS.GUILD_INVITES
   ]
 });
   
 // 招待キャッシュを保持するMap
 const invitesCache = new Map();
+
+
+client.on('error', error => {
+  console.error('Discord client error:', error);
+});
+
+client.on('disconnect', () => {
+  console.log('Discord bot disconnected');
+});
+
+// ログイン処理を詳細に
+console.log('Starting Discord bot login...');
+console.log('Using token:', process.env.DISCORD_BOT_TOKEN ? 'Token exists' : 'Token is missing');
+
+client.login(process.env.DISCORD_BOT_TOKEN)
+  .then(() => {
+    console.log('Discord bot login successful');
+    console.log(`Logged in as ${client.user.tag}`);
+  })
+  .catch(error => {
+    console.error('Discord bot login failed. Error details:', error);
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    process.exit(1);
+  });
 
 
 // ボットが準備完了したときの処理
@@ -172,8 +193,12 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 });
 
 // Discordボットのログイン
-client.login(DISCORD_BOT_TOKEN);
-
+console.log('Starting Discord bot login...');
+client.login(DISCORD_BOT_TOKEN)
+  .then(() => {
+    console.log('Discord bot login successful');
+  
+     // HTTPサーバーの起動（ログイン成功後に開始）
 http
   .createServer(async (request, response) => {  // async を追加
     console.log("post from gas");
@@ -298,4 +323,13 @@ http
     console.log('Server is running on port 3000');
   });
 
-require("./main.js");
+   // main.jsの読み込み（ログイン成功後に実行）
+    require('./main.js');
+  })
+  .catch(error => {
+    console.error('Discord bot login failed:', error);
+    process.exit(1);
+  });
+
+// clientをエクスポート
+module.exports = client;
