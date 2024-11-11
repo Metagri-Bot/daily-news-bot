@@ -1,6 +1,8 @@
 // 必要なモジュールのインポート
+const { Client, GatewayIntentBits } = require("discord.js");
 const http = require("http");
-const { Client, Intents } = require("discord.js");
+// const { Client, Intents } = require("discord.js");
+const axios = require("axios");
 require('dotenv').config();
 
 // const http = require("http");
@@ -31,10 +33,10 @@ const EXCLUDED_ROLES = [process.env.MANAGER_ID];
 // Discordクライアントの設定（v13用に変更）
 const client = new Client({
   intents: [
-    Intents.FLAGS.GUILDS,
-    Intents.FLAGS.GUILD_MEMBERS,
-    Intents.FLAGS.GUILD_MESSAGES,
-    Intents.FLAGS.GUILD_INVITES
+    GatewayIntentBits.Guilds, // For guild-related events
+    GatewayIntentBits.GuildMessages, // For message-related events
+    GatewayIntentBits.GuildMembers, // For member-related events (requires Privileged Intent)
+    GatewayIntentBits.MessageContent // For accessing message content (requires Privileged Intent)
   ]
 });
   
