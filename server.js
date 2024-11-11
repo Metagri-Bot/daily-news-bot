@@ -46,6 +46,8 @@ const invitesCache = new Map();
 require('./main.js')(client); // ここで main.js が client を受け取るようにする
 
 
+
+
 // ボットが準備完了したときの処理
 client.once("ready", async () => {
   console.log('Bot is ready!');
