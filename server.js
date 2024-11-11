@@ -1,4 +1,11 @@
 // 必要なモジュールのインポート
+
+//エラーが発生し、動かなくなっていたので追加。nodeの通信周りの影響か//hirosuke
+if (typeof ReadableStream === 'undefined') {
+  global.ReadableStream = require('stream/web').ReadableStream;
+}
+
+
 const { Client, GatewayIntentBits } = require("discord.js");
 const http = require("http");
 // const { Client, Intents } = require("discord.js");
