@@ -20,6 +20,9 @@ const axios = require("axios");
 
 // const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 
+// `main.js` を関数としてエクスポートし、`client` を引数として受け取るように変更
+module.exports = (client) => {
+  
 const GAS_API_URL = process.env.GAS_API_URL;
 const GUILD_ID = process.env.GUILD_ID;
 const TARGET_CHANNEL_IDS = [
@@ -34,7 +37,7 @@ const TARGET_CHANNEL_IDS = [
   process.env.VOICE_CHANNEL_ID,
   process.env.SELF_INTRODUCTION_CHANNEL_ID,
   process.env.METAVERSE_CHANNEL_ID           // 10 (新規追加)
-]
+];
 const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const MANAGER_ID = process.env.MANAGER_ID;
 const INTERN_ROLE_ID = process.env.INTERN_ROLE_ID; //202410/4 インターンロール追加
@@ -233,4 +236,6 @@ const post = (data) =>{
     .catch((err) => {
       console.error("err:" + err);
     });
-}
+ };
+
+};

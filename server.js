@@ -45,6 +45,7 @@ const invitesCache = new Map();
 // main.js をインポートし、クライアントを渡す
 require('./main.js')(client); // ここで main.js が client を受け取るようにする
 
+
 // ボットが準備完了したときの処理
 client.once("ready", async () => {
   console.log('Bot is ready!');
@@ -300,9 +301,9 @@ http
   .listen(3000, () => {
     console.log('Server is running on port 3000');
   });
-
-   // main.jsの読み込み（ログイン成功後に実行）
-    require('./main.js');
+   
+    // main.jsの読み込みを削除
+    // require('./main.js'); // この行を削除します
   })
   .catch(error => {
     console.error('Discord bot login failed:', error);
