@@ -42,6 +42,8 @@ const client = new Client({
 const invitesCache = new Map();
 
 
+// main.js をインポートし、クライアントを渡す
+require('./main.js')(client); // ここで main.js が client を受け取るようにする
 
 // ボットが準備完了したときの処理
 client.once("ready", async () => {

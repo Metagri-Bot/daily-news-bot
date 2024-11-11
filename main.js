@@ -3,7 +3,7 @@
 // const { Client, Intents } = require('discord.js');
 const axios = require("axios");
 
-const client = require('./server.js');
+// const client = require('./server.js');
 
 // const client = new Client({
 //   intents: [
@@ -45,6 +45,8 @@ let pretimeDict = new Map();
 
 // client.once("ready", () => {});
 // client.login(DISCORD_BOT_TOKEN);
+
+
 
 // イベントハンドラーの設定
 client.on("ready", () => {
