@@ -1,44 +1,172 @@
-# Hello Node!
+### 作成目的
 
-This project includes a Node.js server script and a web page that connects to it. The front-end page presents a form the visitor can use to submit a color name, sending the submitted value to the back-end API running on the server. The server returns info to the page that allows it to update the display with the chosen color. 🎨
+MetaGreenSeedsプログラムに基づき自動化可能箇所を開発する
 
-[Node.js](https://nodejs.org/en/about/) is a popular runtime that lets you run server-side JavaScript. This project uses the [Fastify](https://www.fastify.io/) framework and explores basic templating with [Handlebars](https://handlebarsjs.com/).
+### 機能説明
 
-_Last updated: 14 August 2023_
+各条件ごとにポイントを配布する
 
-## Prerequisites
+### 仕様
 
-You'll get best use out of this project if you're familiar with basic JavaScript. If you've written JavaScript for client-side web pages this is a little different because it uses server-side JS, but the syntax is the same!
+- 配布対象は入門者（Metagri_Hopeful）
+- マネージャーはMetagri会員※インターン生の配布権限も追加（2024/10/4）
+- 配布除外者であれば、ポイントを配布しない
+- マネージャーがbotと対象者をメンションし、「（数）ポイント」と入力すると対象者に（数）ポイントが配布される。メンションでの配布は活動名自動配布定義外とし週間配布に記録される。※インターン生のロールも追加
+- 毎日18:00に活動シートを集計・リセット・ログシートに記録し、内容と合計ポイントが送信される。
+    - 週間配布の活動のポイント配布は水曜日に行われる。（オフ会やセミナーは主に土日に行われ、それに関する投稿をその日中に行ったと仮定して、水曜日までその話題が続くとは考えられないから）
+    - 定義外配布は毎週金曜日の18時に配布
+- 30、60、100ポイントをオーバーするごとに１回お知らせのメッセージが送信される。
+- 活動内容シートで変更可能箇所
+- 活動名
+- ポイント数
+- 配布周期
+- 正規表現
+- 注意点
+    - ユーザーが多くなると、GASの実行時間をオーバーする可能性あがある
+    - ユーザー情報の削除は「行を削除」から行ってください
 
-## What's in this project?
+### フローチャート
 
-← `README.md`: That’s this file, where you can tell people what your cool website does and how you built it.
+```mermaid
+graph TD
+  A(START)
+  B(投稿がなされた)
+  C{入門者である}
+  D{各条件達成（条件ごとに後述）}
+  E{マネージャーである}
+  F{ボットと対象者がメンションされている}
+  G[ポイント配布]
+  H(END)
 
-← `public/style.css`: The styling rules for the pages in your site.
+  A --> B
+  B --> C
+  C --"yes"--> D
+  C --"no"--> E
+  D --"yes"--> G
+  D --"no"--> H
+  E --"yes"--> F
+  E --"no"--> H
+  F --"yes"--> G
+  F --"no"--> H
+  G --> H
+```
 
-← `server.js`: The **Node.js** server script for your new site. The JavaScript defines the endpoints in the site back-end, one to return the homepage and one to update with the submitted color. Each one sends data to a Handlebars template which builds these parameter values into the web page the visitor sees.
+```mermaid
+sequenceDiagram
+	autonumber
+	actor user as ユーザー
+  participant discord as Discord
+  participant glitch as MetagreenSeeds<br>Glitch
+  participant gas as スプレッドシート<br>GAS
+	user ->> discord : 投稿
+	Note left of glitch: メッセージ情報
+  discord ->> glitch: データ送信
+	Note left of gas: ユーザーID,ユーザー名,メッセージ,自動フラグ
+  glitch ->> gas: データ送信
+  gas ->> gas: データ記録
+	Note left of gas: チャンネルID,活動名,総ポイント数,お知らせ識別子
+  gas ->> glitch: データ送信
+  glitch ->> discord: メッセージ送信
+```
 
-← `package.json`: The NPM packages for your project's dependencies.
+### 活動一覧
 
-← `src/`: This folder holds the site template along with some basic data files.
+| No. | 活動名 | ポイント数 | ポイント配布周期（日） | 正規表現 |
+| --- | --- | --- | --- | --- |
+| 0 | 挨拶投稿 | 1 | 1 |  |
+| 1 | 雑談返信 | 1 | 1 |  |
+| 2 | メシ投稿 | 2 | 1 |  |
+| 3 | メシ返信 | 1 | 1 |  |
+| 4 | ニュース投稿 | 2 | 1 | https:// |
+| 5 | ニュース返信 | 1 | 1 |  |
+| 6 | 書評投稿 | 2 | 1 | https:// |
+| 7 | 書評返信 | 1 | 1 |  |
+| 8 | SNS投稿 | 1 | 1 | https:// |
+| 9 | セミナー感想投稿 | 5 | 7 |  |
+| 10 | オフ会参加 | 10 | 7 |  |
+| 11 | ボイスチャット参加 | 3 | 1 |  |
+| 12 | 初回参加 | 1 | 0 |  |
+| 13 | 自己紹介投稿 | 3 | 0 |  |
 
-← `src/pages/index.hbs`: This is the main page template for your site. The template receives parameters from the server script, which it includes in the page HTML. The page sends the user submitted color value in the body of a request, or as a query parameter to choose a random color.
+### 配布除外者リスト
 
-← `src/colors.json`: A collection of CSS color names. We use this in the server script to pick a random color, and to match searches against color names.
+| ユーザーID | ユーザー名 |
+| --- | --- |
+|  |  |
 
-← `src/seo.json`: When you're ready to share your new site or add a custom domain, change SEO/meta settings in here.
+### メンバー一覧
 
-## Try this next 🏗️
+| ユーザーID | ユーザー名 | 合計ポイント | 30% | 60% | 100% |
+| --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |
 
-Take a look in `TODO.md` for next steps you can try out in your new site!
+### 日間配布
 
-___Want a minimal version of this project to build your own Node.js app? Check out [Blank Node](https://glitch.com/edit/#!/remix/glitch-blank-node)!___
+| ユーザーID | ユーザー名 | 活動名 | ポイント | 日時 |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
 
-![Glitch](https://cdn.glitch.com/a9975ea6-8949-4bab-addb-8a95021dc2da%2FLogo_Color.svg?v=1602781328576)
+### 週間配布
 
-## You built this with Glitch!
+| ユーザーID | ユーザー名 | 活動名 | ポイント | 日時 |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
 
-[Glitch](https://glitch.com) is a friendly community where millions of people come together to build web apps and websites.
+### 定義外※毎週金曜日の18時に配布
 
-- Need more help? [Check out our Help Center](https://help.glitch.com/) for answers to any common questions.
-- Ready to make it official? [Become a paid Glitch member](https://glitch.com/pricing) to boost your app with private sharing, more storage and memory, domains and more.
+| ユーザーID | ユーザー名 | ポイント | 日時 | メモ（配布メッセージ） |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
+
+### 配布ログ
+
+| ユーザーID | ユーザー名 | 活動名 | ポイント | 日時 |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
+
+### 初回参加
+
+| ユーザーID | ユーザー名 | 日時 |
+| --- | --- | --- |
+|  |  |  |
+
+### 自己紹介投稿
+
+| ユーザーID | ユーザー名 | 日時 |
+| --- | --- | --- |
+|  |  |  |
+
+### 対応事項
+
+1. Bot やサーバーの作成 [こちら](https://note.com/exteoi/n/nf1c37cb26c41)を参考に作成してください。
+2. GAS
+- GAS の作成
+    - code.gs の内容を転記
+    - プロジェクトの設定：プロジェクトの設定ー＞スクリプトプロパティのプロパティに GLITCH_URL、値に Glitch の Share ー＞ Project links の Link site をコピーしたものを貼り付けてください。
+    - トリガーの設定：トリガーー＞トリガーの追加ー＞実行する関数を retainGlitch、イベントのソースを選択を時間主導型、時間ベースのトリガーのタイプを選択を分ベースのタイマー、時間の間隔を選択（分）を５分おきに設定してください。
+    - デプロイ：デプロイー＞新しいデプロイを作成ー＞ウェブアプリを自分、アクセスできるユーザを全員に設定してください。
+1. Glitch
+- .env ファイルへの記載
+    - DISCORD_BOT_TOKEN：BOTのTOKENを記載してください。
+    - GAS_API_URL：.GAS で取得したAPIキーを記載してください。
+    - GUILD_ID：サーバーのIDを記載してください。
+    - MSG_SEND_CHANNEL_ID：配布メッセージを送るチャンネルIDを記載してください。
+    - PER_30_ROLE_ID：30%offのメッセージが書かれたチャンネルを記載してください。
+    - PER_60_ROLE_ID：60%offのメッセージが書かれたチャンネルを記載してください。
+    - PER_100_ROLE_ID：100%offのメッセージが書かれたチャンネルを記載してください。
+    - PER_30_URL：30%offのメッセージが書かれたチャンネルのリンクを記載してください。
+    - PER_60_URL60%offのメッセージが書かれたチャンネルのリンクを記載してください。
+    - PER_100_URL：100%offのメッセージが書かれたチャンネルのリンクを記載してください。
+    - GREETING_CHANNEL_ID：挨拶投稿のチャンネルIDを記載してください。
+    - TALK_CHANNEL_ID：雑談返信のチャンネルIDを記載してください。
+    - FOOD_CHANNEL_ID：メシ投稿・メシ返信のチャンネルIDを記載してください。
+    - NEWS_CHANNEL_ID：ニュース投稿・ニュース返信のチャンネルIDを記載してください。
+    - BOOK_CHANNEL_ID：書評投稿・書評返信のチャンネルIDを記載してください。
+    - SNS_CHANNEL_ID：SNS投稿のチャンネルIDを記載してください。
+    - SEMINAR_CHANNEL_ID：セミナー感想投稿のチャンネルIDを記載してください。
+    - OFF_LINE_MEETING_CHANNEL_ID：オフ会参加のチャンネルIDを記載してください。
+    - VOICE_CHANNEL_ID：ボイスチャット30分参加のチャンネルIDを記載してください。
+    - BIGNER_ROLE_ID：Metagri＿HopefulロールのIDを記載してください。
+    - MANAGER_ID：マネージャーロールのIDを記載してください。
+    - BOT_ID：BOTのIDを記載してください。
+    - SELF_INTRODUCTION_CHANNEL_ID：自己紹介投稿のチャンネルIDを記載してください。
