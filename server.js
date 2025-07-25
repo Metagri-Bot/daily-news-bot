@@ -1,20 +1,8 @@
 // 必要なモジュールのインポート
 
-//エラーが発生し、動かなくなっていたので追加。nodeの通信周りの影響か//hirosuke
-if (typeof ReadableStream === 'undefined') {
-  global.ReadableStream = require('stream/web').ReadableStream;
-}
-
-
 const { Client, GatewayIntentBits } = require("discord.js");
 const http = require("http");
-// const { Client, Intents } = require("discord.js");
-const axios = require("axios");
 require('dotenv').config();
-
-// const http = require("http");
-// const { Client, Intents } = require("discord.js"); // v13ではIntentsを使用
-// require('dotenv').config();
 
 // 環境変数の取得（変更なし）
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -24,12 +12,12 @@ const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const ROLES = [
   process.env.PER_30_ROLE_ID,
   process.env.PER_60_ROLE_ID,
-  process.env.PER_100_ROLE_ID 
+  process.env.PER_100_ROLE_ID
 ];
 const URLS = [
   process.env.PER_30_URL,
   process.env.PER_60_URL,
-  process.env.PER_100_URL 
+  process.env.PER_100_URL
 ];
 const INVITE_CODE = process.env.INVITE_CODE;
 const ROBLOX_ROLE_ID = process.env.ROBLOX_ROLE_ID;
@@ -46,7 +34,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent // For accessing message content (requires Privileged Intent)
   ]
 });
-  
+
 // 招待キャッシュを保持するMap
 const invitesCache = new Map();
 
@@ -187,134 +175,131 @@ console.log('Starting Discord bot login...');
 client.login(DISCORD_BOT_TOKEN)
   .then(() => {
     console.log('Discord bot login successful');
-  
-     // HTTPサーバーの起動（ログイン成功後に開始）
-http
-  .createServer(async (request, response) => {  // async を追加
-    console.log("post from gas");
 
-    try {  // エラーハンドリングを追加
-      const guild = await client.guilds.fetch(GUILD_ID);  // fetch を使用
-      if (!guild) {
-        console.error(`Guild with ID ${GUILD_ID} not found.`);
-        response.statusCode = 500;
-        response.end("Guild not found.");
-        return;
-      }
+    // HTTPサーバーの起動（ログイン成功後に開始）
+    http
+      .createServer(async (request, response) => {  // async を追加
+        console.log("post from gas");
 
-      const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID);
-      if (!bignerRole) {
-        console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
-        response.statusCode = 500;
-        response.end("Role not found.");
-        return;
-      }
-
-      // メンバー処理部分も非同期で処理
-      const members = await guild.members.fetch();
-      members.each((member) => {
-        if (!member.user.bot) {
-          const memberRoles = member.roles.cache;
-          const hasExcludedRole = memberRoles.some(role => EXCLUDED_ROLES.includes(role.id));
-
-          if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
-            try {
-              member.roles.remove(bignerRole);
-              console.log(`Removed role from ${member.user.username}`);
-            }
-            catch (error) {
-              console.error(`Failed to remove role from ${member.user.username}: `, error);
-            }
+        try {  // エラーハンドリングを追加
+          const guild = await client.guilds.fetch(GUILD_ID);  // fetch を使用
+          if (!guild) {
+            console.error(`Guild with ID ${GUILD_ID} not found.`);
+            response.statusCode = 500;
+            response.end("Guild not found.");
+            return;
           }
-        }
-      });
 
-      if (request.headers["content-type"] === "application/json") {
-        let requestBody = "";
+          const bignerRole = guild.roles.cache.get(BIGNER_ROLE_ID);
+          if (!bignerRole) {
+            console.error(`Role with ID ${BIGNER_ROLE_ID} not found.`);
+            response.statusCode = 500;
+            response.end("Role not found.");
+            return;
+          }
 
-        request.on("data", (chunk) => {
-          requestBody += chunk.toString();
-        });
+          // メンバー処理部分も非同期で処理
+          const members = await guild.members.fetch();
+          members.each((member) => {
+            if (!member.user.bot) {
+              const memberRoles = member.roles.cache;
+              const hasExcludedRole = memberRoles.some(role => EXCLUDED_ROLES.includes(role.id));
 
-        request.on("end", async () => {  // async を追加
-          try {
-            const data = JSON.parse(requestBody);
-            const userData = data.postData;
-            const channel = await client.channels.fetch(MSG_SEND_CHANNEL_ID);  // fetch を使用
-            
-            if (!channel) {
-              console.error(`Channel with ID ${MSG_SEND_CHANNEL_ID} not found.`);
-              response.statusCode = 500;
-              response.end("Channel not found.");
-              return;
+              if (hasExcludedRole && memberRoles.has(BIGNER_ROLE_ID)) {
+                try {
+                  member.roles.remove(bignerRole);
+                  console.log(`Removed role from ${member.user.username}`);
+                }
+                catch (error) {
+                  console.error(`Failed to remove role from ${member.user.username}: `, error);
+                }
+              }
             }
+          });
 
-            for(let i = 0; i < userData.length; i++){
-              let userId = userData[i].userId;
-              let works = userData[i].works;
-              let numPoint = userData[i].numPoint;
-              let totalPoint = userData[i].totalPoint;
-              let overPoint = userData[i].overPoint;
-              let message = `<@${userId}> さん\n本日のMetaGreenSeedsポイントを配布します。\n\n内訳：\n`;
-              
-              for(let j = 0; j < works.length; j++){
-                message += `${works[j]}\n`;
-              } 
-              
-              message += `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
-              
-              if(overPoint == 30){
-                const member = await guild.members.fetch(userId);
-                await member.roles.add(ROLES[0]);
-                message += `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${URLS[0]} をご確認ください。`;
-              }
-              if(overPoint == 60){
-                const member = await guild.members.fetch(userId);
-                await member.roles.add(ROLES[1]);
-                message += `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${URLS[1]} をご確認ください。`;
-              }
-              if(overPoint == 100){
-                const member = await guild.members.fetch(userId);
-                await member.roles.add(ROLES[2]);
-                message += `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${URLS[2]} をご確認ください。`;
-              }
-              await channel.send(message);
-            }
+          if (request.headers["content-type"] === "application/json") {
+            let requestBody = "";
 
+            request.on("data", (chunk) => {
+              requestBody += chunk.toString();
+            });
+
+            request.on("end", async () => {  // async を追加
+              try {
+                const data = JSON.parse(requestBody);
+                const userData = data.postData;
+                const channel = await client.channels.fetch(MSG_SEND_CHANNEL_ID);  // fetch を使用
+
+                if (!channel) {
+                  console.error(`Channel with ID ${MSG_SEND_CHANNEL_ID} not found.`);
+                  response.statusCode = 500;
+                  response.end("Channel not found.");
+                  return;
+                }
+
+                for (let i = 0; i < userData.length; i++) {
+                  let userId = userData[i].userId;
+                  let works = userData[i].works;
+                  let totalPoint = userData[i].totalPoint;
+                  let overPoint = userData[i].overPoint;
+                  let message = `<@${userId}> さん\n本日のMetaGreenSeedsポイントを配布します。\n\n内訳：\n`;
+
+                  for (let j = 0; j < works.length; j++) {
+                    message += `${works[j]}\n`;
+                  }
+
+                  message += `\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。\n`;
+
+                  if (overPoint == 30) {
+                    const member = await guild.members.fetch(userId);
+                    await member.roles.add(ROLES[0]);
+                    message += `\n【お知らせ】MetaGreenSeedsポイントが30ポイント溜ってます。\nこちら ${URLS[0]} をご確認ください。`;
+                  }
+                  if (overPoint == 60) {
+                    const member = await guild.members.fetch(userId);
+                    await member.roles.add(ROLES[1]);
+                    message += `\n【お知らせ】MetaGreenSeedsポイントが60ポイント溜ってます。\nこちら ${URLS[1]} をご確認ください。`;
+                  }
+                  if (overPoint == 100) {
+                    const member = await guild.members.fetch(userId);
+                    await member.roles.add(ROLES[2]);
+                    message += `\n【お知らせ】MetaGreenSeedsポイントが100ポイント溜ってます。\nこちら ${URLS[2]} をご確認ください。`;
+                  }
+                  await channel.send(message);
+                }
+
+                response.setHeader("Content-Type", "application/json; charset=utf-8");
+                response.statusCode = 200;
+                const responseBody = { message: "Data received and API is active now." };
+                response.write(JSON.stringify(responseBody));
+                response.end();
+
+              } catch (error) {
+                console.error('Error processing request:', error);
+                response.statusCode = 500;
+                response.end("Internal Server Error");
+              }
+            });
+          } else {
             response.setHeader("Content-Type", "application/json; charset=utf-8");
-            response.statusCode = 200;
-            const responseBody = { message: "Data received and API is active now." };
+            response.statusCode = 400;
+            const responseBody = {
+              error: "Invalid content type. Expected application/json.",
+            };
             response.write(JSON.stringify(responseBody));
             response.end();
-
-          } catch (error) {
-            console.error('Error processing request:', error);
-            response.statusCode = 500;
-            response.end("Internal Server Error");
           }
-        });
-      } else {
-        response.setHeader("Content-Type", "application/json; charset=utf-8");
-        response.statusCode = 400;
-        const responseBody = {
-          error: "Invalid content type. Expected application/json.",
-        };
-        response.write(JSON.stringify(responseBody));
-        response.end();
-      }
 
-    } catch (error) {
-      console.error('Error:', error);
-      response.statusCode = 500;
-      response.end("Internal Server Error");
-    }
-  })
-  .listen(3000, () => {
-    console.log('Server is running on port 3000');
-  });
-   
-    // main.jsの読み込みを削除
-    // require('./main.js'); // この行を削除します
+        } catch (error) {
+          console.error('Error:', error);
+          response.statusCode = 500;
+          response.end("Internal Server Error");
+        }
+      })
+      .listen(3000, () => {
+        console.log('Server is running on port 3000');
+      });
+
   })
   .catch(error => {
     console.error('Discord bot login failed:', error);

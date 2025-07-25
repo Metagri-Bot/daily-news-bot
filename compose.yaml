@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
