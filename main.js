@@ -1,4 +1,3 @@
-const axios = require("axios");
 
 // `main.js` を関数としてエクスポートし、`client` を引数として受け取るように変更
 module.exports = (client) => {
@@ -200,15 +199,5 @@ module.exports = (client) => {
     post(data);
   });
 
-  const post = (data) => {
-    axios
-      .post(GAS_API_URL, data)
-      .then((response) => {
-        console.log(response.data);
-      })
-      .catch((err) => {
-        console.error("err:" + err);
-      });
-  };
 
 };
