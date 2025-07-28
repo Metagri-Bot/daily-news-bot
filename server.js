@@ -113,17 +113,9 @@ client.login(DISCORD_BOT_TOKEN).then(() => {
           const guild = await client.guilds.fetch(GUILD_ID);
           const channel = await client.channels.fetch(MSG_SEND_CHANNEL_ID);
 
-          for (const { userId, works, totalPoint, overPoint } of postData) {
-            const member = await guild.members.fetch(userId);
-            let msg = `<@${userId}> さん\n本日のMetaGreenSeedsポイントを配布します。\n\n内訳：\n`;
-            msg += works.join("\n") + `\n\n現在の合計MetaGreenSeedsポイントは ${totalPoint} ポイントです。`;
-
-            if ([30, 60, 100].includes(overPoint)) {
-              await member.roles.add(ROLES[[30, 60, 100].indexOf(overPoint)]);
-              msg += `\n【お知らせ】MetaGreenSeedsポイントが${overPoint}ポイント溜まってます。\nこちら ${URLS[[30, 60, 100].indexOf(overPoint)]} をご確認ください。`;
-            }
-            await channel.send(msg);
-          }
+for (const [key, value] of Object.entries(postData)) {
+  console.log(`${key}: ${value}`);
+}
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ message: "Data received and API is active now." }));
