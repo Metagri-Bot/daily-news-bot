@@ -110,6 +110,11 @@ client.login(DISCORD_BOT_TOKEN).then(() => {
       req.on("end", async () => {
         try {
           const { postData } = JSON.parse(body);
+          if (!Array.isArray(postData)) {
+            console.error("postData is not an array:", postData);
+            res.writeHead(400);
+            return res.end("Invalid postData");
+          }
           const guild = await client.guilds.fetch(GUILD_ID);
           const channel = await client.channels.fetch(MSG_SEND_CHANNEL_ID);
 
