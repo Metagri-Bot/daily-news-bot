@@ -109,9 +109,18 @@ client.login(DISCORD_BOT_TOKEN).then(() => {
       req.on("data", (chunk) => (body += chunk));
       req.on("end", async () => {
         try {
-          const { postData } = JSON.parse(body);
+          let parsed;
+          try {
+            parsed = JSON.parse(body);
+            console.log("受信データ:", parsed);
+          } catch (e) {
+            console.error("JSON parse error:", e, body);
+            res.writeHead(400);
+            return res.end("Invalid JSON");
+          }
+          const postData = parsed.postData;
           if (!Array.isArray(postData)) {
-            console.error("postData is not an array:", postData);
+            console.error("postData is not an array or missing:", postData);
             res.writeHead(400);
             return res.end("Invalid postData");
           }
