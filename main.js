@@ -22,6 +22,16 @@ module.exports = (client) => {
   const INTERN_ROLE_ID = process.env.INTERN_ROLE_ID; //202410/4 インターンロール追加
   const BOT_ID = process.env.BOT_ID;
 
+const post = (data) =>{
+  axios
+    .post(GAS_API_URL, data)
+    .then((response) => {
+      console.log(response.data);
+    })
+    .catch((err) => {
+      console.error("err:" + err);
+    });
+  };
   let pretimeDict = new Map();
 
   // イベントハンドラーの設定
