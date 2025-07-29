@@ -1,4 +1,4 @@
-
+const axios = require('axios');
 // `main.js` を関数としてエクスポートし、`client` を引数として受け取るように変更
 module.exports = (client) => {
 
