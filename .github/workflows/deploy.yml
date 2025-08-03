@@ -46,7 +46,8 @@ jobs:
           echo "MANAGER_ID=${{ secrets.MANAGER_ID }}" >> .env
           echo "BOT_ID=${{ secrets.BOT_ID }}" >> .env
           echo "INVITE_CODE=${{ secrets.INVITE_CODE }}" >> .env
-
+          echo "QUIZ_USER_ID=${{ secrets.QUIZ_USER_ID }}" >> .env
+          
       - run:
          docker compose up --build -d
         env:
