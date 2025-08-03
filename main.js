@@ -21,6 +21,8 @@ module.exports = (client) => {
   const MANAGER_ID = process.env.MANAGER_ID;
   const INTERN_ROLE_ID = process.env.INTERN_ROLE_ID; //202410/4 インターンロール追加
   const BOT_ID = process.env.BOT_ID;
+  const QUIZ_USER_ID = process.env.QUIZ_USER_ID; //20250803 クイズ正解用に追加
+  const MSG_SEND_CHANNEL_ID = process.env.MSG_SEND_CHANNEL_ID; //20250803 クイズ正解用に追加
 
 const post = (data) =>{
   axios
@@ -41,6 +43,47 @@ const post = (data) =>{
 
   client.on("messageCreate", async message => {
     if (message.author.bot) return;
+
+// 【新しい条件】クイズユーザーが、指定のチャンネルで投稿したか？
+  if (message.author.id === QUIZ_USER_ID && message.channel.id === MSG_SEND_CHANNEL_ID) {
+    
+    // メンションされたユーザーの「メンバー情報（ロールを含む）」を取得
+    const mentionedMembers = message.mentions.members;
+
+    // メンションされたメンバーがいる場合のみ処理
+    if (mentionedMembers.size > 0) {
+      console.log(`[クイズポイント] ${message.author.tag}さんからの投稿を検知。対象者のロールをチェックします。`);
+
+      // メンションされた各メンバーについてループ処理
+      mentionedMembers.forEach(mentionedMember => {
+        
+        // ★★★ ここが重要 ★★★
+        // メンションされたメンバーが「入門者ロール」を持っているかチェック
+        if (mentionedMember.roles.cache.has(BIGNER_ROLE_ID)) {
+          
+          // GASに送信するデータを作成
+          const data = {
+            workNum: 15, // GAS「活動一覧」で設定したNo.
+            userId: mentionedMember.id,
+            userName: mentionedMember.user.tag,
+            content: `クイズ正解者`, // メモ
+            isAuto: true // 自動配布のフローに乗せる
+          };
+          
+          console.log(`[クイズポイント] 付与対象者です: ${mentionedMember.user.tag}`);
+          post(data); // GASへ送信
+
+        } else {
+          // 入門者ロールを持っていない場合はログに記録してスキップ
+          console.log(`[クイズポイント] スキップ（ロール対象外）: ${mentionedMember.user.tag}`);
+        }
+      });
+    }
+    // クイズポイントの処理はここで完了なので、以降の処理は行わない
+    return;
+  }
+// 【新しい条件】クイズ条件終了
+    
     const member = message.member;
 
     if (member.roles.cache.has(BIGNER_ROLE_ID)) {
