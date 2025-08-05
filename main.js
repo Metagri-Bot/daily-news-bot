@@ -47,8 +47,7 @@ const post = (data) =>{
   console.log(`[ID CHECK] Author:  ${message.author.id} vs ${process.env.QUIZ_USER_ID}`);
   // ▲▲▲ ここまで ▲▲▲
       console.log("A new message was received."); // ← とにかくこれだけ追加
-    
-    if (message.author.bot) return;
+  
 
 // 【新しい条件】クイズユーザーが、指定のチャンネルで投稿したか？
   if (message.author.id === QUIZ_USER_ID && message.channel.id === MSG_SEND_CHANNEL_ID) {
