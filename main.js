@@ -49,39 +49,52 @@ const post = (data) =>{
 // 【新しい条件】クイズユーザーが、指定のチャンネルで投稿したか？
   if (message.author.id === QUIZ_USER_ID && message.channel.id === MSG_SEND_CHANNEL_ID) {
     
-    // メンションされたユーザーの「メンバー情報（ロールを含む）」を取得
+    // ▼▼▼ デバッグログ追加 ▼▼▼
+    console.log("===== クイズポイント処理開始 =====");
+    
+    // --- ステップ1: メンション情報を取得 ---
+    const mentionedUsers = message.mentions.users;
     const mentionedMembers = message.mentions.members;
+    
+    console.log(`[デバッグ] mentionedUsers の数: ${mentionedUsers.size}`);
+    if (mentionedUsers.size > 0) {
+      console.log(`[デバッグ] mentionedUsers の内容:`, mentionedUsers.map(u => u.tag));
+    }
+    
+    console.log(`[デバッグ] mentionedMembers の数: ${mentionedMembers.size}`);
+    if (mentionedMembers.size > 0) {
+      console.log(`[デバッグ] mentionedMembers の内容:`, mentionedMembers.map(m => m.user.tag));
+    }
+    // ▲▲▲ デバッグログここまで ▲▲▲
 
     // メンションされたメンバーがいる場合のみ処理
-    if (mentionedMembers.size > 0) {
-      console.log(`[クイズポイント] ${message.author.tag}さんからの投稿を検知。対象者のロールをチェックします。`);
+    if (mentionedMembers && mentionedMembers.size > 0) {
+      // --- ステップ2: ロールチェック処理 ---
+      console.log(`[クイズポイント] 検知成功。対象者のロールをチェックします。`);
 
-      // メンションされた各メンバーについてループ処理
       mentionedMembers.forEach(mentionedMember => {
+        console.log(`[デバッグ] チェック対象: ${mentionedMember.user.tag}`);
         
         // ★★★ ここが重要 ★★★
-        // メンションされたメンバーが「入門者ロール」を持っているかチェック
         if (mentionedMember.roles.cache.has(BIGNER_ROLE_ID)) {
-          
-          // GASに送信するデータを作成
+          // --- ステップ3: データ送信処理 ---
           const data = {
-            workNum: 15, // GAS「活動一覧」で設定したNo.
+            workNum: 15,
             userId: mentionedMember.id,
             userName: mentionedMember.user.tag,
-            content: `クイズ正解者`, // メモ
-            isAuto: true // 自動配布のフローに乗せる
+            content: `クイズ正解者`,
+            isAuto: true
           };
-          
           console.log(`[クイズポイント] 付与対象者です: ${mentionedMember.user.tag}`);
-          post(data); // GASへ送信
-
+          post(data);
         } else {
-          // 入門者ロールを持っていない場合はログに記録してスキップ
           console.log(`[クイズポイント] スキップ（ロール対象外）: ${mentionedMember.user.tag}`);
         }
       });
+    } else {
+      console.log("[クイズポイント] 処理スキップ: メンションされたメンバー情報(mentionedMembers)が取得できませんでした。");
     }
-    // クイズポイントの処理はここで完了なので、以降の処理は行わない
+    console.log("===== クイズポイント処理終了 =====");
     return;
   }
 // 【新しい条件】クイズ条件終了
