@@ -42,13 +42,17 @@ const post = (data) =>{
   });
 
   client.on("messageCreate", async message => {
+      // --- Bot投稿の例外処理 ---
+  // もし投稿者がBotで、かつ、そのBotが「クイズポイント配布Bot」ではない場合のみ処理を中断する
+  if (message.author.bot && message.author.id !== QUIZ_USER_ID) {
+    return;
+  }
  // ▼▼▼ デバッグ用ログを再追加 ▼▼▼
   console.log(`[ID CHECK] Channel: ${message.channel.id} vs ${process.env.MSG_SEND_CHANNEL_ID}`);
   console.log(`[ID CHECK] Author:  ${message.author.id} vs ${process.env.QUIZ_USER_ID}`);
   // ▲▲▲ ここまで ▲▲▲
       console.log("A new message was received."); // ← とにかくこれだけ追加
   
-
 // 【新しい条件】クイズユーザーが、指定のチャンネルで投稿したか？
   if (message.author.id === QUIZ_USER_ID && message.channel.id === MSG_SEND_CHANNEL_ID) {
     
