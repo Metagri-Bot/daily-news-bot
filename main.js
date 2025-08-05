@@ -43,14 +43,6 @@ const post = (data) =>{
 
   client.on("messageCreate", async message => {
 
- // ▼▼▼ デバッグ用ログを追加 ▼▼▼
-  console.log("===== 新規メッセージ受信 =====");
-  console.log(`投稿チャンネルID: ${message.channel.id}`);
-  console.log(`投稿者ID: ${message.author.id}`);
-  console.log(`環境変数 MSG_SEND_CHANNEL_ID: ${process.env.MSG_SEND_CHANNEL_ID}`);
-  console.log(`環境変数 QUIZ_USER_ID: ${process.env.QUIZ_USER_ID}`);
-  console.log("============================");
-  // ▲▲▲ ここまで追加 ▲▲▲
     
     if (message.author.bot) return;
 
