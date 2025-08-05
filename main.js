@@ -42,7 +42,11 @@ const post = (data) =>{
   });
 
   client.on("messageCreate", async message => {
-
+ // ▼▼▼ デバッグ用ログを再追加 ▼▼▼
+  console.log(`[ID CHECK] Channel: ${message.channel.id} vs ${process.env.MSG_SEND_CHANNEL_ID}`);
+  console.log(`[ID CHECK] Author:  ${message.author.id} vs ${process.env.QUIZ_USER_ID}`);
+  // ▲▲▲ ここまで ▲▲▲
+      console.log("A new message was received."); // ← とにかくこれだけ追加
     
     if (message.author.bot) return;
 
