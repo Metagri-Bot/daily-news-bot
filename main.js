@@ -47,63 +47,51 @@ const post = (data) =>{
   if (message.author.bot && message.author.id !== QUIZ_USER_ID) {
     return;
   }
- // ▼▼▼ デバッグ用ログを再追加 ▼▼▼
-  console.log(`[ID CHECK] Channel: ${message.channel.id} vs ${process.env.MSG_SEND_CHANNEL_ID}`);
-  console.log(`[ID CHECK] Author:  ${message.author.id} vs ${process.env.QUIZ_USER_ID}`);
-  // ▲▲▲ ここまで ▲▲▲
-      console.log("A new message was received."); // ← とにかくこれだけ追加
-  
+ 
 // 【新しい条件】クイズユーザーが、指定のチャンネルで投稿したか？
-  if (message.author.id === QUIZ_USER_ID && message.channel.id === MSG_SEND_CHANNEL_ID) {
+if (message.author.id === QUIZ_USER_ID && message.channel.id === MSG_SEND_CHANNEL_ID) {
     
-    // ▼▼▼ デバッグログ追加 ▼▼▼
-    console.log("===== クイズポイント処理開始 =====");
-    
-    // --- ステップ1: メンション情報を取得 ---
+    // メンションされた「ユーザー」情報を取得
     const mentionedUsers = message.mentions.users;
-    const mentionedMembers = message.mentions.members;
-    
-    console.log(`[デバッグ] mentionedUsers の数: ${mentionedUsers.size}`);
+
+    // メンションされたユーザーがいる場合のみ処理
     if (mentionedUsers.size > 0) {
-      console.log(`[デバッグ] mentionedUsers の内容:`, mentionedUsers.map(u => u.tag));
-    }
-    
-    console.log(`[デバッグ] mentionedMembers の数: ${mentionedMembers.size}`);
-    if (mentionedMembers.size > 0) {
-      console.log(`[デバッグ] mentionedMembers の内容:`, mentionedMembers.map(m => m.user.tag));
-    }
-    // ▲▲▲ デバッグログここまで ▲▲▲
+      console.log(`[クイズポイント] ${mentionedUsers.size}件のユーザーメンションを検知。ロールをチェックします。`);
 
-    // メンションされたメンバーがいる場合のみ処理
-    if (mentionedMembers && mentionedMembers.size > 0) {
-      // --- ステップ2: ロールチェック処理 ---
-      console.log(`[クイズポイント] 検知成功。対象者のロールをチェックします。`);
+      // メンションされた各ユーザーについてループ処理
+      mentionedUsers.forEach(async (user) => {
+        // Bot自身や投稿者自身へのメンションは無視
+        if (user.bot || user.id === message.author.id) {
+          console.log(`[クイズポイント] スキップ（Botまたは投稿者自身）: ${user.tag}`);
+          return;
+        }
 
-      mentionedMembers.forEach(mentionedMember => {
-        console.log(`[デバッグ] チェック対象: ${mentionedMember.user.tag}`);
-        
-        // ★★★ ここが重要 ★★★
-        if (mentionedMember.roles.cache.has(BIGNER_ROLE_ID)) {
-          // --- ステップ3: データ送信処理 ---
-          const data = {
-            workNum: 15,
-            userId: mentionedMember.id,
-            userName: mentionedMember.user.tag,
-            content: `クイズ正解者`,
-            isAuto: true
-          };
-          console.log(`[クイズポイント] 付与対象者です: ${mentionedMember.user.tag}`);
-          post(data);
-        } else {
-          console.log(`[クイズポイント] スキップ（ロール対象外）: ${mentionedMember.user.tag}`);
+        try {
+          // ★★★ ここが重要 ★★★
+          // ユーザーIDから、そのサーバーの「メンバー」情報を改めて取得する
+          const member = await message.guild.members.fetch(user.id);
+
+          // メンバー情報が取得でき、かつ「入門者ロール」を持っているかチェック
+          if (member && member.roles.cache.has(BIGNER_ROLE_ID)) {
+            const data = {
+              workNum: 15,
+              userId: member.id,
+              userName: member.user.tag,
+              content: `クイズ正解者`,
+              isAuto: true
+            };
+            console.log(`[クイズポイント] 付与対象者です: ${member.user.tag}`);
+            post(data);
+          } else {
+            console.log(`[クイズポイント] スキップ（ロール対象外またはメンバー情報なし）: ${user.tag}`);
+          }
+        } catch (error) {
+          console.error(`[クイズポイント] メンバー情報の取得に失敗しました。ユーザー: ${user.tag}`, error);
         }
       });
-    } else {
-      console.log("[クイズポイント] 処理スキップ: メンションされたメンバー情報(mentionedMembers)が取得できませんでした。");
     }
-    console.log("===== クイズポイント処理終了 =====");
     return;
-  }
+}
 // 【新しい条件】クイズ条件終了
     
     const member = message.member;
