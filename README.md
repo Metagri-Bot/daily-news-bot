@@ -30,35 +30,27 @@ MetaGreenSeedsプログラムに基づき自動化可能箇所を開発する
 
 ```mermaid
 graph TD
-  subgraph ユーザー起点
-    A(START)
-    B(投稿がなされた)
-    C{入門者(Hopeful)である}
-    D{各条件達成}
-    E{マネージャーである}
-    F{Botと対象者がメンション}
-    G[ポイント配布]
-    H(END)
+    subgraph ユーザー起点
+        A[START] --> B[投稿がなされた];
+        B --> C{入門者(Hopeful)か？};
+        C -- Yes --> D{各条件を達成したか？};
+        C -- No --> E{マネージャーか？};
+        D -- Yes --> G[ポイント配布];
+        D -- No --> H[END];
+        E -- Yes --> F{Botと対象者をメンションしたか？};
+        E -- No --> H;
+        F -- Yes --> G;
+        F -- No --> H;
+    end
 
-    A --> B
-    B --> C
-    C --"yes"--> D
-    C --"no"--> E
-    D --"yes"--> G
-    D --"no"--> H
-    E --"yes"--> F
-    E --"no"--> H
-    F --"yes"--> G
-    F --"no"--> H
-    G --> H
-  end
+    subgraph Bot起点（クイズポイント）
+        A_prime[START] --> B_prime[クイズBotがメンション投稿];
+        B_prime --> C_prime{メンションされたユーザーは<br>入門者(Hopeful)か？};
+        C_prime -- Yes --> G;
+        C_prime -- No --> H;
+    end
 
-  subgraph Bot起点（クイズポイント）
-    A_prime(START) --> B_prime(クイズBotがメンション投稿)
-    B_prime --> C_prime{メンションされたユーザーは<br>入門者(Hopeful)か？}
-    C_prime --"yes"--> G[ポイント配布]
-    C_prime --"no"--> H(END)
-  end
+    G --> H;
 ```
 
 ```mermaid
