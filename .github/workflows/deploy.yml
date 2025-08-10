@@ -47,6 +47,9 @@ jobs:
           echo "BOT_ID=${{ secrets.BOT_ID }}" >> .env
           echo "INVITE_CODE=${{ secrets.INVITE_CODE }}" >> .env
           echo "QUIZ_USER_ID=${{ secrets.QUIZ_USER_ID }}" >> .env
+          # ▼▼▼ 以下2行を追記 ▼▼▼
+          echo "NFT_ROLE_ID=${{ secrets.NFT_ROLE_ID }}" >> .env
+          echo "PER_10_URL=${{ secrets.PER_10_URL }}" >> .env
           
       - run:
          docker compose up --build -d
