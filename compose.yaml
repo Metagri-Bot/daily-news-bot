@@ -8,5 +8,3 @@ services:
       - .env
     environment:
       - NODE_ENV=development
-    ports:
-      - "3006:3000" 
