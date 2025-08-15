@@ -1,12 +1,14 @@
+# ベースイメージを指定 (この行が最も重要です)
+FROM node:20
+
 # タイムゾーンデータをインストールし、コンテナのタイムゾーンをJSTに設定
-# Debianベースのイメージなので apt-get を使用
 ENV TZ=Asia/Tokyo
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 作業ディレクトリを/appに変更（より標準的なパス）
+# 作業ディレクトリを設定
 WORKDIR /app
 
-# package.jsonとpackage-lock.jsonをコピー
+# package.json と package-lock.json をコピー
 COPY package*.json ./
 
 # 依存パッケージをインストール
