@@ -2,9 +2,9 @@ services:
   app:
     build: .
     restart: unless-stopped
-    volumes:
-      - .:/app
+    # volumes:
+    #   - .:/app
     env_file:
       - .env
-    environment:
-      - NODE_ENV=development
+    # environment:
+    #   - NODE_ENV=development
