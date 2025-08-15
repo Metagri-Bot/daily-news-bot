@@ -4,7 +4,8 @@
   "description": "このBotは、毎日指定された時間に、農業やWeb3関連のニュースを自動でDiscordチャンネルに投稿するBotです。\r 投稿されたニュースには自動でスレッドが作成され、メンバー同士の議論を促進することを目的としています。",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
   },
   "repository": {
     "type": "git",
