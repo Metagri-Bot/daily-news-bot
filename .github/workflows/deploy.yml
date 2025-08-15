@@ -1,57 +1,39 @@
-name: Docker Compose Up
+name: Deploy Daily News Bot
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ "main" ] # mainブランチにプッシュされたときに実行
+  workflow_dispatch: # 手動でも実行できるようにする
 
 jobs:
-  up:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      # 1. リポジトリのコードをチェックアウト
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: MrSquaare/ssh-setup-action@84ff9deaad2dbb1be99efe9080a849fe66139149 # v2.0.1
+      # 2. SSH接続をセットアップ
+      - name: Setup SSH
+        uses: MrSquaare/ssh-setup-action@v2.0.1
         with:
           host: ${{ secrets.SSH_HOST }}
           private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # 3. サーバーで使う .env ファイルをSecretsから生成
       - name: Write .env file
         run: |
           echo "DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}" >> .env
-          echo "GAS_API_URL=${{ secrets.GAS_API_URL }}" >> .env
-          echo "GUILD_ID=${{ secrets.GUILD_ID }}" >> .env
-          echo "MSG_SEND_CHANNEL_ID=${{ secrets.MSG_SEND_CHANNEL_ID }}" >> .env
-          echo "GREETING_CHANNEL_ID=${{ secrets.GREETING_CHANNEL_ID }}" >> .env
-          echo "TALK_CHANNEL_ID=${{ secrets.TALK_CHANNEL_ID }}" >> .env
-          echo "FOOD_CHANNEL_ID=${{ secrets.FOOD_CHANNEL_ID }}" >> .env
           echo "NEWS_CHANNEL_ID=${{ secrets.NEWS_CHANNEL_ID }}" >> .env
-          echo "BOOK_CHANNEL_ID=${{ secrets.BOOK_CHANNEL_ID }}" >> .env
-          echo "SNS_CHANNEL_ID=${{ secrets.SNS_CHANNEL_ID }}" >> .env
-          echo "SEMINAR_CHANNEL_ID=${{ secrets.SEMINAR_CHANNEL_ID }}" >> .env
-          echo "OFF_LINE_MEETING_CHANNEL_ID=${{ secrets.OFF_LINE_MEETING_CHANNEL_ID }}" >> .env
-          echo "SELF_INTRODUCTION_CHANNEL_ID=${{ secrets.SELF_INTRODUCTION_CHANNEL_ID }}" >> .env
-          echo "METAVERSE_CHANNEL_ID=${{ secrets.METAVERSE_CHANNEL_ID }}" >> .env
-          echo "VOICE_CHANNEL_ID=${{ secrets.VOICE_CHANNEL_ID }}" >> .env
-          echo "PER_30_ROLE_ID=${{ secrets.PER_30_ROLE_ID }}" >> .env
-          echo "PER_60_ROLE_ID=${{ secrets.PER_60_ROLE_ID }}" >> .env
-          echo "PER_100_ROLE_ID=${{ secrets.PER_100_ROLE_ID }}" >> .env
+          echo "GOOGLE_APPS_SCRIPT_URL=${{ secrets.GOOGLE_APPS_SCRIPT_URL }}" >> .env
           echo "BIGNER_ROLE_ID=${{ secrets.BIGNER_ROLE_ID }}" >> .env
-          echo "ROBLOX_ROLE_ID=${{ secrets.ROBLOX_ROLE_ID }}" >> .env
-          echo "INTERN_ROLE_ID=${{ secrets.INTERN_ROLE_ID }}" >> .env
-          echo "ROBLOX_MEMBER_ROLE_ID=${{ secrets.ROBLOX_MEMBER_ROLE_ID }}" >> .env
-          echo "PER_30_URL=${{ secrets.PER_30_URL }}" >> .env
-          echo "PER_60_URL=${{ secrets.PER_60_URL }}" >> .env
-          echo "PER_100_URL=${{ secrets.PER_100_URL }}" >> .env
-          echo "MANAGER_ID=${{ secrets.MANAGER_ID }}" >> .env
-          echo "BOT_ID=${{ secrets.BOT_ID }}" >> .env
-          echo "INVITE_CODE=${{ secrets.INVITE_CODE }}" >> .env
-          echo "QUIZ_USER_ID=${{ secrets.QUIZ_USER_ID }}" >> .env
-          # ▼▼▼ 以下2行を追記 ▼▼▼
-          echo "NFT_ROLE_ID=${{ secrets.NFT_ROLE_ID }}" >> .env
-          echo "PER_10_URL=${{ secrets.PER_10_URL }}" >> .env
+          echo "METAGRI_ROLE_ID=${{ secrets.METAGRI_ROLE_ID }}" >> .env
+          echo "NEWS_RSS_FEEDS_AGRICULTURE=${{ secrets.NEWS_RSS_FEEDS_AGRICULTURE }}" >> .env
+          echo "NEWS_RSS_FEEDS_WEB3=${{ secrets.NEWS_RSS_FEEDS_WEB3 }}" >> .env
           
-      - run:
-         docker compose up --build -d
+      # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
+      - name: Deploy with Docker Compose
+        run: docker compose up --build -d
         env:
           DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'

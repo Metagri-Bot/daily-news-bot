@@ -1,23 +1,27 @@
 {
-  "name": "MetaGreen-Seeds-Bot",
+  "name": "daily-news-bot",
   "version": "1.0.0",
-  "description": "MetaGreenSeedsプログラムに基づき自動化可能箇所を開発する",
-  "main": "server.js",
+  "description": "このBotは、毎日指定された時間に、農業やWeb3関連のニュースを自動でDiscordチャンネルに投稿するBotです。\r 投稿されたニュースには自動でスレッドが作成され、メンバー同士の議論を促進することを目的としています。",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "axios": "^1.4.0",
-    "discord.js": "14.13.0",
-    "dotenv": "^16.4.5"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
-    "url": "https://github.com/Metagri-Bot/MetaGreen-Seeds-Bot"
+    "type": "git",
+    "url": "git+https://github.com/Metagri-Bot/daily-news-bot.git"
   },
-  "license": "MIT",
-  "keywords": [
-    "node",
-    "discord",
-    "bot"
-  ]
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Metagri-Bot/daily-news-bot/issues"
+  },
+  "homepage": "https://github.com/Metagri-Bot/daily-news-bot/#readme",
+  "dependencies": {
+    "axios": "^1.11.0",
+    "discord.js": "^14.21.0",
+    "dotenv": "^17.2.1",
+    "node-cron": "^4.2.1",
+    "rss-parser": "^3.13.0"
+  }
 }
