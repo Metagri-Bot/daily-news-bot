@@ -55,9 +55,9 @@ client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
 
   // 毎日朝7時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')
-  cron.schedule('0 7 * * *', async () => {
+  // cron.schedule('0 7 * * *', async () => {
 
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 
     console.log('[Daily News] ニュース投稿タスクを開始します...');
     try {
@@ -161,7 +161,24 @@ client.once("ready", async () => {
         .setFooter({ text: `Source: ${selectedArticle.feed?.title || new URL(selectedArticle.link).hostname}` })
         .setTimestamp(new Date(selectedArticle.isoDate));
 
-      const message = await channel.send({ content: `**今日の注目ニュース！** 📰`, embeds: [embed] });
+  // ▼▼▼ ここからが変更点 ▼▼▼
+      // Discordに投稿するメッセージを作成
+      const postContent = `
+## 【**農業と新技術の注目ニュース！**🌱🤖】
+
+**【ディスカッションに参加しよう！✨】**
+このニュースについて、下のスレッドであなたの意見や感想を投稿してみませんか？
+
+## **<MLTT or ポイント配布について>**
+✅ <@&1115455932239986738> はMLTT
+✅ <@&1105009184442945587> <@&1111648980842053702>  はポイントを
+それぞれ1日1回配布します！
+⏰ **本日17:00まで**のスレッド内でのご発言が対象となります。
+`;
+
+      const message = await channel.send({ content: postContent, embeds: [embed] });
+      // ▲▲▲ ここまで ▲▲▲
+
       await message.startThread({
         name: `【議論】${selectedArticle.title.substring(0, 80)}`,
         autoArchiveDuration: 1440,
