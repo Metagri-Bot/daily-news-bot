@@ -55,7 +55,8 @@ client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
 
   // 毎日朝7時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')
-  cron.schedule('0 7 * * *', async () => {
+  // cron.schedule('0 7 * * *', async () => {
+ cron.schedule('35 8 * * *', async () => {
 
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 
