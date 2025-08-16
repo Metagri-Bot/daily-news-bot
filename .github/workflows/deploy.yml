@@ -31,6 +31,8 @@ jobs:
           echo "METAGRI_ROLE_ID=${{ secrets.METAGRI_ROLE_ID }}" >> .env
           echo "NEWS_RSS_FEEDS_AGRICULTURE=${{ secrets.NEWS_RSS_FEEDS_AGRICULTURE }}" >> .env
           echo "NEWS_RSS_FEEDS_WEB3=${{ secrets.NEWS_RSS_FEEDS_WEB3 }}" >> .env
+           # ▼▼▼ この行を追加 ▼▼▼
+          echo "INFO_GATHERING_CHANNEL_ID=${{ secrets.INFO_GATHERING_CHANNEL_ID }}" >> .env
           
       # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose

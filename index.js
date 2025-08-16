@@ -15,6 +15,9 @@ const GOOGLE_APPS_SCRIPT_URL = process.env.GOOGLE_APPS_SCRIPT_URL;
 const NEWS_RSS_FEEDS_AGRICULTURE = process.env.NEWS_RSS_FEEDS_AGRICULTURE.split(',');
 const NEWS_RSS_FEEDS_WEB3 = process.env.NEWS_RSS_FEEDS_WEB3.split(',');
 
+// ▼▼▼ 新しい環境変数を読み込む ▼▼▼
+const INFO_GATHERING_CHANNEL_ID = process.env.INFO_GATHERING_CHANNEL_ID;
+
 // ロールIDを読み込む
 const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
@@ -49,6 +52,10 @@ const client = new Client({
   ],
   partials: [Partials.Channel],
 });
+
+// ▼▼▼ 重複投稿防止用のキャッシュを追加 ▼▼▼
+const postedArticleUrls = new Set();
+// ▲▲▲ ▲▲▲
 
 // Botが起動したときの処理
 client.once("ready", async () => {
@@ -198,6 +205,85 @@ client.once("ready", async () => {
       console.error('[Daily News] ニュース投稿中に予期せぬエラーが発生しました:', error);
     }
   });
+
+
+ // --- 2. 3時間ごとの情報収集ニュース投稿タスク (新しい機能) ---
+  // JSTで朝6時から夜6時まで、3時間ごとに実行 (6, 9, 12, 15, 18時)
+  cron.schedule('0 6-18/3 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  console.log('[Info Gathering] 情報収集タスクを開始します...');
+    try {
+      if (!INFO_GATHERING_CHANNEL_ID) { return; }
+      const channel = await client.channels.fetch(INFO_GATHERING_CHANNEL_ID);
+      if (!channel || channel.type !== ChannelType.GuildText) { return; }
+
+      // Step 0: カテゴリ別に記事を並行取得
+      const fetchArticles = async (urls) => {
+        const promises = urls.map(url => parser.parseURL(url).catch(() => null));
+        const feeds = await Promise.all(promises);
+        return feeds.filter(f => f && f.items).flatMap(f => f.items);
+      };
+      
+      const allAgriArticles = await fetchArticles(NEWS_RSS_FEEDS_AGRICULTURE);
+      const allTechArticles = await fetchArticles(NEWS_RSS_FEEDS_WEB3);
+     
+       // Step 1: 直近24時間の記事のみを対象にする
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+      
+      const recentAgriArticles = allAgriArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+      const recentTechArticles = allTechArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+
+      // Step 2: ★★★ 投稿済みの記事を除外する ★★★
+      const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
+      const newTechArticles = recentTechArticles.filter(a => !postedArticleUrls.has(a.link));
+
+      // Step 3: フィルタリングと優先順位付け
+      const candidates = [];
+      
+      const priority1 = newAgriArticles.filter(a => TECH_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
+      candidates.push(...priority1);
+
+      const priority2 = newTechArticles.filter(a => PRIMARY_INDUSTRY_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
+      candidates.push(...priority2);
+      
+      newAgriArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
+      candidates.push(...newAgriArticles);
+
+      newTechArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
+      candidates.push(...newTechArticles);
+
+      // Step 4: 候補リストから重複を削除し、上位3件を抽出
+      const uniqueUrls = new Set();
+      const finalArticles = candidates.filter(article => {
+        if (!uniqueUrls.has(article.link)) {
+          uniqueUrls.add(article.link);
+          return true;
+        }
+        return false;
+      }).slice(0, 3);
+      
+      if (finalArticles.length === 0) {
+        console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
+        return;
+      }
+
+      let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
+      finalArticles.forEach((article, index) => {
+        postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
+      });
+
+      await channel.send({ content: postContent });
+      console.log(`[Info Gathering] ${finalArticles.length}件のニュースを投稿しました。`);
+
+    } catch (error) {
+      console.error('[Info Gathering] タスク実行中にエラーが発生しました:', error);
+    }
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+
+  console.log('Daily news (8am) and Info gathering (6am-6pm, every 3h) jobs have been scheduled.');
 });
 
 // ★★★ 議論スレッドのメッセージ監視ロジックを更新 ★★★
