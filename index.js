@@ -57,6 +57,23 @@ const client = new Client({
 const postedArticleUrls = new Set();
 // ▲▲▲ ▲▲▲
 
+/**
+ * スプレッドシートから投稿済みURLのリストを取得し、キャッシュを更新する
+ */
+async function syncPostedUrlsFromSheet() {
+  if (!GOOGLE_APPS_SCRIPT_URL) return;
+  try {
+    console.log('[Info Gathering] Fetching posted URLs from sheet...');
+    const response = await axios.get(GOOGLE_APPS_SCRIPT_URL);
+    if (Array.isArray(response.data)) {
+      response.data.forEach(url => postedArticleUrls.add(url));
+      console.log(`[Info Gathering] Synced ${response.data.length} URLs from sheet.`);
+    }
+  } catch (error) {
+    console.error('[Info Gathering] Failed to fetch posted URLs from sheet:', error.message);
+  }
+}
+
 // Botが起動したときの処理
 client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
@@ -268,13 +285,39 @@ client.once("ready", async () => {
         return;
       }
 
-      let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
+         let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
+      const articlesToLog = []; // スプレッドシートに記録するための、より詳細な情報リスト
+
       finalArticles.forEach((article, index) => {
+        // 1. 投稿メッセージを作成
         postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
+        
+        // 2. メモリ上のキャッシュにURLを追加（次回の実行で重複させないため）
+        postedArticleUrls.add(article.link);
+
+        // 3. スプレッドシートに記録する詳細データを作成
+        articlesToLog.push({
+          url: article.link,
+          title: article.title,
+          pubDate: article.isoDate 
+        });
       });
 
+      // Discordに投稿
       await channel.send({ content: postContent });
       console.log(`[Info Gathering] ${finalArticles.length}件のニュースを投稿しました。`);
+
+      // 投稿成功後、新しい記事の詳細情報をスプレッドシートに記録する
+      if (articlesToLog.length > 0) {
+        // GASには'articles'というキーで、オブジェクトの配列を送信
+        await logToSpreadsheet('addArticles', { articles: articlesToLog });
+      }
+      // ▲▲▲ ここまで 
+    //     postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
+    //   });
+
+    //   await channel.send({ content: postContent });
+    //   console.log(`[Info Gathering] ${finalArticles.length}件のニュースを投稿しました。`);
 
     } catch (error) {
       console.error('[Info Gathering] タスク実行中にエラーが発生しました:', error);
