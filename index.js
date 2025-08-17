@@ -226,8 +226,8 @@ client.once("ready", async () => {
 
  // --- 2. 3時間ごとの情報収集ニュース投稿タスク (新しい機能) ---
   // JSTで朝6時から夜6時まで、3時間ごとに実行 (6, 9, 12, 15, 18時)
-  // cron.schedule('0 6-18/3 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('0 6-18/3 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
   console.log('[Info Gathering] 情報収集タスクを開始します...');
     try {
       if (!INFO_GATHERING_CHANNEL_ID) { return; }
