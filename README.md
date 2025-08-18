@@ -26,6 +26,56 @@
 
 ---
 
+## 機能の仕組み
+
+このBotには、目的の異なる2つのニュース配信機能が搭載されています。それぞれの仕組みは以下の通りです。
+
+### 1. 厳選ニュース配信 (毎日 AM 8:00)
+
+コミュニティでの議論を促すため、最も価値の高いニュースを1つだけ選び出し、スレッドを作成します。
+
+```mermaid
+sequenceDiagram
+    participant Scheduler as スケジューラ (Bot内部)
+    participant DailyNewsTask as 厳選ニュース機能
+    participant NewsSites as ニュースサイト (RSS)
+    participant Discord
+    participant GoogleSheets as Googleスプレッドシート
+
+    Scheduler->>DailyNewsTask: 毎朝8時に実行命令
+    DailyNewsTask->>NewsSites: 全ソースから最新記事を要求
+    NewsSites-->>DailyNewsTask: 記事リストを返す
+    DailyNewsTask->>DailyNewsTask: 多段階フィルタリングで1件を厳選
+    DailyNewsTask->>Discord: 整形したニュース(Embed)を投稿
+    Discord-->>DailyNewsTask: 投稿メッセージ情報を返す
+    DailyNewsTask->>Discord: 受け取った情報をもとにスレッドを作成
+    DailyNewsTask->>GoogleSheets: 投稿ログを「News」シートに記録
+```
+
+### 2. 情報収集ヘッドライン (AM 6:00 - PM 18:00 / 3時間ごと)
+
+個人の情報収集をサポートするため、幅広いニュースソースから関連性の高い最新ニュースを3件、重複なく届け続けます。
+
+```mermaid
+sequenceDiagram
+    participant Scheduler as スケジューラ (Bot内部)
+    participant InfoGatheringTask as 情報収集機能
+    participant GoogleSheets as Googleスプレッドシート
+    participant NewsSites as ニュースサイト (RSS)
+    participant Discord
+
+    Scheduler->>InfoGatheringTask: 3時間ごとに実行命令
+    InfoGatheringTask->>GoogleSheets: 投稿済みURLリストを要求
+    GoogleSheets-->>InfoGatheringTask: URLリストを返す
+    InfoGatheringTask->>NewsSites: 全ソースから最新記事を要求
+    NewsSites-->>InfoGatheringTask: 記事リストを返す
+    InfoGatheringTask->>InfoGatheringTask: フィルタリング (投稿済み除外, 鮮度, 優先度)
+    InfoGatheringTask->>InfoGatheringTask: 上位3件を選出
+    InfoGatheringTask->>Discord: ヘッドライン形式でニュース3件を投稿
+    InfoGatheringTask->>GoogleSheets: 新しく投稿したURLを「Posted_URLs」シートに追記
+```
+---
+
 ## 🛠️ 使用技術 (Technology Stack)
 
 - **Bot**: Node.js, discord.js, axios, node-cron, rss-parser
