@@ -182,34 +182,34 @@ sequenceDiagram
 ```mermaid
 graph TD
     subgraph Discord
-        A[ユーザーがスレッドで発言] --> B{Botがメッセージを検知};
+        A["ユーザーがスレッドで発言"] --> B{"Botがメッセージを検知"};
     end
 
     subgraph "Node.js (Botサーバー)"
-        B --> C[発言データを整形];
-        C --> D{GAS WebアプリへPOST};
+        B --> C["発言データを整形"];
+        C --> D["GAS WebアプリへPOST"];
     end
 
     subgraph "Google Apps Script (GAS)"
-        D --> E[doPost関数がデータ受信];
-        E --> F[シートにログを追記];
-        G[定時実行トリガー (毎日17時台)] --> H{データ集計・転記処理};
-        H --> I[シートから全ログ読込];
-        I --> J[最新日の投稿のみ抽出];
-        J --> K[ユニークユーザー化];
-        K --> L[ロール別にフィルタリング];
-        L --> M{外部スプレッドシートへPOST};
+        D --> E["doPost関数がデータ受信"];
+        E --> F["シートにログを追記"];
+        G["定時実行トリガー (毎日17時台)"] --> H["データ集計・転記処理"];
+        H --> I["シートから全ログ読込"];
+        I --> J["最新日の投稿のみ抽出"];
+        J --> K["ユニークユーザー化"];
+        K --> L["ロール別にフィルタリング"];
+        L --> M["外部スプレッドシートへPOST"];
     end
     
     subgraph "Google スプレッドシート (ログ用)"
-        F --> Sheet1([Userシート]);
-        Sheet2([Posted_URLsシート]);
+        F --> Sheet1(["Userシート"]);
+        F --> Sheet2(["Posted_URLsシート"]);
         I --> Sheet1;
     end
 
     subgraph "Google スプレッドシート (外部連携用)"
-        M --> Sheet3([Role 0 転記先]);
-        M --> Sheet4([Role 1 転記先]);
+        M --> Sheet3(["Role 0 転記先"]);
+        M --> Sheet4(["Role 1 転記先"]);
     end
 ```
 
