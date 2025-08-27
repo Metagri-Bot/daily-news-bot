@@ -184,11 +184,15 @@ async function syncPostedUrlsFromSheet() {
 client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
 
+  // ▼▼▼ この行を追加 ▼▼▼
+  await syncPostedUrlsFromSheet();
+  // ▲▲▲ ▲▲▲
+
   // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')
-  // cron.schedule('0 8 * * *', async () => {
+  cron.schedule('0 8 * * *', async () => {
  // cron.schedule('40 8 * * *', async () => {
 
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 
     console.log('[Daily News] ニュース投稿タスクを開始します...');
     try {
@@ -391,72 +395,73 @@ ${discussionQuestions}
       const recentTechArticles = allTechArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
 
       // Step 2: ★★★ 投稿済みの記事を除外する ★★★
+      // ▼▼▼ postedArticleUrls が空だと意味がないので、起動時に同期処理を呼び出す必要があります ▲▲▲
       const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
       const newTechArticles = recentTechArticles.filter(a => !postedArticleUrls.has(a.link));
+      console.log(`[Info Gathering] 新規記事候補: 農業関連=${newAgriArticles.length}件, 技術関連=${newTechArticles.length}件`);
 
       // Step 3: フィルタリングと優先順位付け
       const candidates = [];
-      
-      const priority1 = newAgriArticles.filter(a => TECH_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
-      candidates.push(...priority1);
+      const addedUrls = new Set(); // 候補リスト内での重複を防ぐセット
 
-      const priority2 = newTechArticles.filter(a => PRIMARY_INDUSTRY_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
-      candidates.push(...priority2);
-      
-      newAgriArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
-      candidates.push(...newAgriArticles);
-
-      newTechArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
-      candidates.push(...newTechArticles);
-
-      // Step 4: 候補リストから重複を削除し、上位3件を抽出
-      const uniqueUrls = new Set();
-      const finalArticles = candidates.filter(article => {
-        if (!uniqueUrls.has(article.link)) {
-          uniqueUrls.add(article.link);
-          return true;
+      // 記事にラベルを付け、重複をチェックしながら候補リストに追加するヘルパー関数
+      const addCandidate = (article, label) => {
+        if (article && article.link && !addedUrls.has(article.link)) {
+          candidates.push({ ...article, priorityLabel: label });
+          addedUrls.add(article.link);
         }
-        return false;
-      }).slice(0, 3);
+      };
+      
+    // --- 【優先度1】農業記事 ∩ 技術キーワード ---
+      const priority1 = newAgriArticles.filter(a => TECH_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
+      priority1.forEach(a => addCandidate(a, 'P1: Agri x Tech'));
+
+      // --- 【優先度2】技術記事 ∩ 農業キーワード ---
+      const priority2 = newTechArticles.filter(a => PRIMARY_INDUSTRY_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
+      priority2.forEach(a => addCandidate(a, 'P2: Tech x Agri'));
+      
+      // --- 【優先度3】残りの農業記事（新しい順）---
+      newAgriArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
+      newAgriArticles.forEach(a => addCandidate(a, 'P3: Agri General'));
+
+      // --- 【優先度4】残りの技術記事（新しい順）---
+      newTechArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
+      newTechArticles.forEach(a => addCandidate(a, 'P4: Tech General'));
+      
+      // Step 5: 最終的に上位3件を抽出
+      const finalArticles = candidates.slice(0, 3);
       
       if (finalArticles.length === 0) {
         console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
         return;
       }
 
-         let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
-      const articlesToLog = []; // スプレッドシートに記録するための、より詳細な情報リスト
+      console.log('[Info Gathering] 最終選考記事リスト:');
+      finalArticles.forEach((article, index) => {
+        console.log(`  ${index + 1}. [${article.priorityLabel}] ${article.title}`);
+      });
+      // ▲▲▲ ロジック改善とラベリングここまで ▲▲▲
+
+      let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
+      const articlesToLog = [];
 
       finalArticles.forEach((article, index) => {
-        // 1. 投稿メッセージを作成
         postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
-        
-        // 2. メモリ上のキャッシュにURLを追加（次回の実行で重複させないため）
         postedArticleUrls.add(article.link);
-
-        // 3. スプレッドシートに記録する詳細データを作成
         articlesToLog.push({
           url: article.link,
           title: article.title,
-          pubDate: article.isoDate 
+          pubDate: article.isoDate,
+          priority: article.priorityLabel // ▼▼▼ ラベルもログに記録 ▼▼▼
         });
       });
 
-      // Discordに投稿
       await channel.send({ content: postContent });
       console.log(`[Info Gathering] ${finalArticles.length}件のニュースを投稿しました。`);
 
-      // 投稿成功後、新しい記事の詳細情報をスプレッドシートに記録する
       if (articlesToLog.length > 0) {
-        // GASには'articles'というキーで、オブジェクトの配列を送信
         await logToSpreadsheet('addArticles', { articles: articlesToLog });
       }
-      // ▲▲▲ ここまで 
-    //     postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
-    //   });
-
-    //   await channel.send({ content: postContent });
-    //   console.log(`[Info Gathering] ${finalArticles.length}件のニュースを投稿しました。`);
 
     } catch (error) {
       console.error('[Info Gathering] タスク実行中にエラーが発生しました:', error);
