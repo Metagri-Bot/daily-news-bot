@@ -25,10 +25,53 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
 
-// === キーワード定義 ===
-const PRIMARY_INDUSTRY_KEYWORDS = [ '農業', '農家', '農産物', 'アグリ', 'Agri', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' ];
+// === キーワード定義（旧） ===
 const TECH_KEYWORDS = [ 'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース', '生成AI', 'LLM', 'ChatGPT', 'AI', '人工知能', 'IoT', 'ドローン', 'DX', 'デジタル', 'ロボット', '自動化', '衛星', 'ソリューション', 'プラットフォーム', 'システム' ];
+const PRIMARY_INDUSTRY_KEYWORDS = [ '農業', '農家', '農産物', 'アグリ', 'Agri', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' ];
 const USECASE_KEYWORDS = [ '事例', '活用', '導入', '実証実験', '提携', '協業', '開発', 'リリース', '発表', '開始', '連携', '提供' ];
+
+// === 新しいキーワードカテゴリ ===
+
+// 【1. コア農業キーワード】（+3点） - 記事の土台
+const CORE_AGRI_KEYWORDS =  [ '農業', '農家', '農産物', 'アグリ', 'Agri', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' , '水産', '園芸', '花卉', '茶業', '果樹', '施設園芸', '水耕栽培', '植物工場', 'アクアポニックス'];
+
+// 【2. テクノロジー・革新キーワード】（+5点） - Metagriらしさ
+const TECH_INNOVATION_KEYWORDS = [
+  // AI / 生成AI 関連
+  'AI', '人工知能', '生成AI', 'LLM', 'ChatGPT', 'エージェント',
+
+  // Web3 / ブロックチェーン 関連
+  'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース',
+
+  // スマート農業 / IoT 関連
+  'スマート農業', 'IoT', 'ドローン', 'ロボット', '自動化', '衛星', 'DX', 'デジタル', 'フードテック',
+
+  // バイオ・環境技術 関連
+  'カーボンクレジット', 'ゲノム編集', 'フードテック', '培養肉', '代替肉',
+
+  // その他（概念・手法）
+  'VR', 'ソリューション', 'プラットフォーム', 'システム'
+];
+
+// 【3. 消費者・体験キーワード】（+5点） - 新しい価値
+const CONSUMER_EXPERIENCE_KEYWORDS = [ '6次産業化', '直売所', 'スイーツ', '地ビール', '商品開発', 'ブランド', '体験', 'ツーリズム', 'オーナー制度', 'レストラン', 'Tシャツ', 'マンガ', '昆虫食','食の安全', '食の安心', 'トレーサビリティ' , '観光農園', '体験農園', '農泊', 'アグリツーリズム', 'グリーンツーリズム'];
+
+// 【4. 社会課題・サステナビリティキーワード】（+4点） - 大義
+const SOCIAL_SUSTAINABILITY_KEYWORDS = [ '食料危機', '規格外', '食品ロス', 'ゼロ廃棄', '環境再生型', 'サステナブル', '熱中症対策' , 'サステナブル', '有機農業', '環境保全', 'SDGs', '食料危機', '食料安全保障', '食料自給率',
+  '規格外', '食品ロス', 'フードロス', '食料廃棄', '鳥獣害', '病害虫', '気候変動', '中山間地域', '過疎地域', '限界集落', '地域活性化', '地方創生'];
+
+// 【5. ヒト・ストーリーキーワード】（+4点） - 共感
+const HUMAN_STORY_KEYWORDS = [ '挑戦', '想い', '高校生', '脱サラ', '新規就農', '奮闘記', '農家グループ' ,   '担い手', '後継者', '就農', '新規就農', '認定農業者', '農業研修', '農業法人', '挑戦', '想い', '高校生','大学生', '脱サラ', '農家グループ', '奮闘記', '地域おこし協力隊', '関係人口', '二地域居住', '移住', '定住'];
+
+// 【カテゴリ6】ビジネス・政策・制度 (+3点) - 専門的・制度的な側面を補強するキーワード
+const BUSINESS_POLICY_KEYWORDS = [
+  '農業経営', 'アグリビジネス', '農業経済', '農業金融', '農業保険', '農業共済', '農業政策', '農業白書', 'JAS',
+  'GAP', 'HACCP', '有機JAS', 'GLOBALG.A.P', '地理的表示', 'GI', 'JA', '農業協同組合', '農業委員会',
+  'ふるさと納税', '農業振興', '基本法', '食料供給'
+];
+
+// 【ボーナスキーワード】（+2点） - 議論のきっかけ
+const BUZZ_KEYWORDS = [ '異業種', 'コラボ', '提携', '実証実験', 'コンテスト', 'MOU', '連携', 'ソリューション', 'プラットフォーム', 'システム', '農機具', '農業機械', '農業資材' ];
 
 // === Metagri研究所の見解生成関数 ===
 async function generateMetagriInsight(article) {
@@ -401,49 +444,113 @@ ${discussionQuestions}
       console.log(`[Info Gathering] 新規記事候補: 農業関連=${newAgriArticles.length}件, 技術関連=${newTechArticles.length}件`);
 
       // Step 3: フィルタリングと優先順位付け
-      const candidates = [];
-      const addedUrls = new Set(); // 候補リスト内での重複を防ぐセット
+      // ▼▼▼ Step 3 & 4: スコアリング方式による新しい選定ロジック ▼▼▼
+console.log('[Info Gathering] スコアリングを開始...');
+const allNewArticles = [...newAgriArticles, ...newTechArticles];
+const scoredArticles = [];
+const uniqueUrls = new Set();
 
-      // 記事にラベルを付け、重複をチェックしながら候補リストに追加するヘルパー関数
-      const addCandidate = (article, label) => {
-        if (article && article.link && !addedUrls.has(article.link)) {
-          candidates.push({ ...article, priorityLabel: label });
-          addedUrls.add(article.link);
-        }
-      };
-      
-    // --- 【優先度1】農業記事 ∩ 技術キーワード ---
-      const priority1 = newAgriArticles.filter(a => TECH_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
-      priority1.forEach(a => addCandidate(a, 'P1: Agri x Tech'));
+// すべての新規記事をスコアリング
+for (const article of allNewArticles) {
+  if (!article.link || uniqueUrls.has(article.link)) continue;
 
-      // --- 【優先度2】技術記事 ∩ 農業キーワード ---
-      const priority2 = newTechArticles.filter(a => PRIMARY_INDUSTRY_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
-      priority2.forEach(a => addCandidate(a, 'P2: Tech x Agri'));
-      
-      // --- 【優先度3】残りの農業記事（新しい順）---
-      newAgriArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
-      newAgriArticles.forEach(a => addCandidate(a, 'P3: Agri General'));
+  const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+  let score = 0;
+  let matchedCategories = new Set();
 
-      // --- 【優先度4】残りの技術記事（新しい順）---
-      newTechArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
-      newTechArticles.forEach(a => addCandidate(a, 'P4: Tech General'));
-      
-      // Step 5: 最終的に上位3件を抽出
-      const finalArticles = candidates.slice(0, 3);
-      
-      if (finalArticles.length === 0) {
-        console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
-        return;
-      }
+  // Helper function to check keywords and update score/labels
+  const checkKeywords = (keywords, categoryName, points) => {
+    if (keywords.some(k => content.includes(k.toLowerCase()))) {
+      score += points;
+      matchedCategories.add(categoryName);
+    }
+  };
 
-      console.log('[Info Gathering] 最終選考記事リスト:');
-      finalArticles.forEach((article, index) => {
-        console.log(`  ${index + 1}. [${article.priorityLabel}] ${article.title}`);
-      });
-      // ▲▲▲ ロジック改善とラベリングここまで ▲▲▲
+  // 各カテゴリのキーワードをチェックしてスコアを加算
+  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 2);
+  checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
+  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 3);
+  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 3);
+  checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
+  checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
+  checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
+
+  // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
+  if (score > 0 && matchedCategories.has('コア農業')) {
+    scoredArticles.push({
+      ...article,
+      score: score,
+      priorityLabel: Array.from(matchedCategories).join(' + ')
+    });
+    uniqueUrls.add(article.link);
+  }
+}
+
+// スコアの高い順、次に日付の新しい順でソート
+scoredArticles.sort((a, b) => {
+  if (b.score !== a.score) {
+    return b.score - a.score;
+  }
+  return new Date(b.isoDate) - new Date(a.isoDate);
+});
+
+// Step 5: 最終的に上位3件を抽出
+const finalArticles = scoredArticles.slice(0, 3);
+
+if (finalArticles.length === 0) {
+  console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
+  return;
+}
+
+console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
+finalArticles.forEach((article, index) => {
+  console.log(`  ${index + 1}. [Score: ${article.score}] [${article.priorityLabel}] ${article.title}`);
+});
+// ▲▲▲ 新しいロジックここまで ▲▲▲
+
+    //   const candidates = [];
+    //   const addedUrls = new Set(); // 候補リスト内での重複を防ぐセット
+
+    //   // 記事にラベルを付け、重複をチェックしながら候補リストに追加するヘルパー関数
+    //   const addCandidate = (article, label) => {
+    //     if (article && article.link && !addedUrls.has(article.link)) {
+    //       candidates.push({ ...article, priorityLabel: label });
+    //       addedUrls.add(article.link);
+    //     }
+    //   };
+      
+    // // --- 【優先度1】農業記事 ∩ 技術キーワード ---
+    //   const priority1 = newAgriArticles.filter(a => TECH_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
+    //   priority1.forEach(a => addCandidate(a, 'P1: Agri x Tech'));
+
+    //   // --- 【優先度2】技術記事 ∩ 農業キーワード ---
+    //   const priority2 = newTechArticles.filter(a => PRIMARY_INDUSTRY_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
+    //   priority2.forEach(a => addCandidate(a, 'P2: Tech x Agri'));
+      
+    //   // --- 【優先度3】残りの農業記事（新しい順）---
+    //   newAgriArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
+    //   newAgriArticles.forEach(a => addCandidate(a, 'P3: Agri General'));
+
+    //   // --- 【優先度4】残りの技術記事（新しい順）---
+    //   newTechArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
+    //   newTechArticles.forEach(a => addCandidate(a, 'P4: Tech General'));
+      
+    //   // Step 5: 最終的に上位3件を抽出
+    //   const finalArticles = candidates.slice(0, 3);
+      
+    //   if (finalArticles.length === 0) {
+    //     console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
+    //     return;
+    //   }
+
+    //   console.log('[Info Gathering] 最終選考記事リスト:');
+    //   finalArticles.forEach((article, index) => {
+    //     console.log(`  ${index + 1}. [${article.priorityLabel}] ${article.title}`);
+    //   });
+    //   // ▲▲▲ ロジック改善とラベリングここまで ▲▲▲
 
       let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
-      const articlesToLog = [];
+       const articlesToLog = [];
 
       finalArticles.forEach((article, index) => {
         postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
@@ -452,7 +559,8 @@ ${discussionQuestions}
           url: article.link,
           title: article.title,
           pubDate: article.isoDate,
-          priority: article.priorityLabel // ▼▼▼ ラベルもログに記録 ▼▼▼
+          priority: article.priorityLabel,
+          score: article.score // ▼▼▼ この行を追加 ▼▼▼
         });
       });
 
