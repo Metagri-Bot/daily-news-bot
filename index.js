@@ -810,11 +810,18 @@ finalArticles.forEach((article, index) => {
         return;
       }
 
-      // 海外RSSフィードから記事を取得 (axios方式に統一)
+     // 海外RSSフィードから記事を取得 (ヘッダー強化版)
       let allGlobalArticles = [];
+      const headers = { // 人間らしいヘッダーを定義
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'application/xml,application/xhtml+xml,text/html;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+        'Referer': 'https://www.google.com/'
+      };
+
       const feedPromises = GLOBAL_RSS_FEEDS.map(async (url) => {
         try {
-          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          const response = await axios.get(url, { headers, timeout: 15000 }); // 強化したヘッダーを使用
           return await parser.parseString(response.data);
         } catch (err) {
           console.error(`[Global Research] RSSフィード取得失敗: ${url}`, err.message);
@@ -822,7 +829,7 @@ finalArticles.forEach((article, index) => {
         }
       });
       const feeds = await Promise.all(feedPromises);
-
+      
       for (const feed of feeds) {
         if (feed && feed.items) {
           allGlobalArticles.push(...feed.items);
