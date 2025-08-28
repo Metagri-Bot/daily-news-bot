@@ -794,8 +794,8 @@ finalArticles.forEach((article, index) => {
   });
 
 // === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
-  cron.schedule('0 10,19 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('0 10,19 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Global Research] 海外文献収集タスクを開始します...');
     
     if (!GLOBAL_RESEARCH_CHANNEL_ID || GLOBAL_RSS_FEEDS.length === 0) {
