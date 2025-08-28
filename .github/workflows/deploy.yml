@@ -31,9 +31,10 @@ jobs:
           echo "METAGRI_ROLE_ID=${{ secrets.METAGRI_ROLE_ID }}" >> .env
           echo "NEWS_RSS_FEEDS_AGRICULTURE=${{ secrets.NEWS_RSS_FEEDS_AGRICULTURE }}" >> .env
           echo "NEWS_RSS_FEEDS_WEB3=${{ secrets.NEWS_RSS_FEEDS_WEB3 }}" >> .env
-           # ▼▼▼ この行を追加 ▼▼▼
           echo "INFO_GATHERING_CHANNEL_ID=${{ secrets.INFO_GATHERING_CHANNEL_ID }}" >> .env
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env          
+          echo "GLOBAL_RESEARCH_CHANNEL_ID=${{ secrets.GLOBAL_RESEARCH_CHANNEL_ID }}" >> .env
+          echo "GLOBAL_RSS_FEEDS=${{ secrets.GLOBAL_RSS_FEEDS }}" >> .env
       # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d

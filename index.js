@@ -1,6 +1,9 @@
 // .envファイルから環境変数を読み込む
 require('dotenv').config();
 
+// Webページの内容を取得（スクレイピング）するために、cheerioというライブラリを使用
+const cheerio = require('cheerio');
+
 // 必要なライブラリを読み込む
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, ChannelType } = require('discord.js');
 const cron = require('node-cron');
@@ -17,6 +20,11 @@ const NEWS_RSS_FEEDS_AGRICULTURE = process.env.NEWS_RSS_FEEDS_AGRICULTURE.split(
 const NEWS_RSS_FEEDS_WEB3 = process.env.NEWS_RSS_FEEDS_WEB3.split(',');
 const INFO_GATHERING_CHANNEL_ID = process.env.INFO_GATHERING_CHANNEL_ID;
 
+// ▼▼▼ 以下を追加 ▼▼▼
+// === 海外文献用の新しい環境変数 ===
+const GLOBAL_RESEARCH_CHANNEL_ID = process.env.GLOBAL_RESEARCH_CHANNEL_ID;
+const GLOBAL_RSS_FEEDS = process.env.GLOBAL_RSS_FEEDS ? process.env.GLOBAL_RSS_FEEDS.split(',') : [];
+
 // OpenAI API設定（.envに追加が必要）
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -29,6 +37,32 @@ const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
 const TECH_KEYWORDS = [ 'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース', '生成AI', 'LLM', 'ChatGPT', 'AI', '人工知能', 'IoT', 'ドローン', 'DX', 'デジタル', 'ロボット', '自動化', '衛星', 'ソリューション', 'プラットフォーム', 'システム' ];
 const PRIMARY_INDUSTRY_KEYWORDS = [ '農業', '農家', '農産物', 'アグリ', 'Agri', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' ];
 const USECASE_KEYWORDS = [ '事例', '活用', '導入', '実証実験', '提携', '協業', '開発', 'リリース', '発表', '開始', '連携', '提供' ];
+
+// === 海外文献用のキーワード（英語） ===
+const GLOBAL_AGRI_KEYWORDS = [
+  'agriculture', 'agribusiness', 'agronomy', 'agrotech', 'agtech', 'agritech',
+  'farming', 'farmer', 'farm',
+  'livestock', 'aquaculture', 'aquaponics',
+  'soil', 'irrigation',
+  'horticulture', 'forestry', 'fishery',
+  'regenerative ag', 'sustainable agriculture', 'vertical farming',
+  'food security', 'food system', 'precision agriculture', 'smart farming', 'digital agriculture',
+  'agritech', 'agtech', 'vertical farming', 'sustainable agriculture',
+  'IoT agriculture', 'drone farming', 'satellite agriculture'
+];
+
+const GLOBAL_TECH_KEYWORDS = [
+  'blockchain', 'artificial intelligence', 'machine learning', 'IoT', 'drone', 'satellite',
+  'robotics', 'automation', 'digital twin', 'data analytics', 'sensor', 'computer vision',
+  'climate tech', 'biotech', 'gene editing', 'CRISPR', 'synthetic biology',  'blockchain agriculture', 'Web3 farming', 'metaverse agriculture',
+  'AI agriculture', 'machine learning crop', 'digital twin farming',
+  'smart contracts agriculture', 'NFT agriculture', 'DeFi agriculture'
+];
+
+const GLOBAL_RESEARCH_KEYWORDS = [
+  'research', 'study', 'paper', 'journal', 'findings', 'innovation', 'breakthrough',
+  'development', 'trial', 'experiment', 'analysis', 'report', 'publication'
+];
 
 // === 新しいキーワードカテゴリ ===
 
@@ -72,6 +106,227 @@ const BUSINESS_POLICY_KEYWORDS = [
 
 // 【ボーナスキーワード】（+2点） - 議論のきっかけ
 const BUZZ_KEYWORDS = [ '異業種', 'コラボ', '提携', '実証実験', 'コンテスト', 'MOU', '連携', 'ソリューション', 'プラットフォーム', 'システム', '農機具', '農業機械', '農業資材' ];
+
+// ▼▼▼ 以下を追加 ▼▼▼
+// ▼▼▼ 以下の新しい関数を追加 ▼▼▼
+/**
+ * URLから記事の本文を取得する
+ * @param {string} url 記事のURL
+ * @returns {Promise<string|null>} 記事の本文テキスト、または取得失敗時にnull
+ */
+async function scrapeArticleContent(url) {
+  try {
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1', // Do Not Track
+      'Upgrade-Insecure-Requests': '1',
+      'Connection': 'keep-alive',
+      'Referer': 'https://www.google.com/' // Google検索から来たと見せかける
+    };
+
+    const { data } = await axios.get(url, { headers, timeout: 15000 }); // タイムアウトを15秒に延長
+    const $ = cheerio.load(data);
+
+    // (以降のセレクタと本文抽出ロジックは変更なし)
+    const contentSelectors = [
+      'article', '.article-body', '.post-content', '#content', 
+      '.entry-content', 'div[class*="content"]', 'main'
+    ];
+    let bodyText = '';
+    for (const selector of contentSelectors) {
+      if ($(selector).length) {
+        bodyText = $(selector).text();
+        break;
+      }
+    }
+    if (!bodyText) { bodyText = $('p').text(); }
+    
+    const cleanedText = bodyText.replace(/\s\s+/g, ' ').trim();
+    return cleanedText.substring(0, 8000);
+    
+  } catch (error) {
+    console.error(`[Scraping] 記事本文の取得に失敗: ${url}`, error.message);
+    return null;
+  }
+}
+  
+//   try {
+//     const { data } = await axios.get(url, {
+//       headers: {
+//         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+//       }
+//     });
+//     const $ = cheerio.load(data);
+
+//     // 一般的な記事本文が含まれる可能性のあるセレクタを試す
+//     const contentSelectors = [
+//       'article', '.article-body', '.post-content', 
+//       '#content', '.entry-content', 'div[class*="content"]'
+//     ];
+//     let bodyText = '';
+//     for (const selector of contentSelectors) {
+//       if ($(selector).length) {
+//         bodyText = $(selector).text();
+//         break;
+//       }
+//     }
+
+//     // セレクタで見つからなければ、<p>タグをすべて結合する
+//     if (!bodyText) {
+//       bodyText = $('p').text();
+//     }
+    
+//     // 不要な空白や改行を整理し、長さを制限
+//     const cleanedText = bodyText.replace(/\s\s+/g, ' ').trim();
+//     return cleanedText.substring(0, 8000); // OpenAIのトークン制限を考慮
+//   } catch (error) {
+//     console.error(`[Scraping] 記事本文の取得に失敗: ${url}`, error.message);
+//     return null;
+//   }
+// }
+
+// === 海外文献の翻訳・要約関数 ===
+async function translateAndSummarizeArticle(article) {
+  if (!OPENAI_API_KEY) {
+    console.log('[Global Research] OpenAI APIキーが設定されていません。');
+    return null;
+  }
+
+   try {
+     // ▼▼▼ 記事本文の取得処理を追加 ▼▼▼
+    const fullContent = await scrapeArticleContent(article.link);
+    const contentForAI = fullContent || article.contentSnippet || article.content || '';
+
+    // 本文が短すぎる場合はAPIコール前にスキップ
+    if (!contentForAI || contentForAI.length < 200) { 
+      console.log(`[Global Research] 記事内容が短すぎるため翻訳をスキップ: ${article.title}`);
+      return null;
+    }
+    // ▲▲▲ ▲▲▲
+
+    const prompt = `
+以下の英語記事を日本語で要約してください。専門用語は適切に翻訳し、農業技術の専門家向けの内容として整理してください。
+
+【記事タイトル】
+${article.title}
+
+【記事内容】
+${contentForAI} // ← 変数を置き換え
+// ${article.contentSnippet || article.content || ''}
+
+// ▼▼▼ 以下を追加・修正 ▼▼▼
+【要求事項】
+以下のJSON形式で**必ず**返してください。
+もし記事内容が不十分で要約できない場合でも、各項目に「情報不足」などと記入し、JSONの構造は維持してください。
+{
+  "titleJa": "日本語タイトル",
+  "summary": "要約（200-300文字）",
+  "keyPoints": ["重要ポイント1", "重要ポイント2", "重要ポイント3"],
+  "implications": "日本の農業への示唆（100-150文字）",
+  "technicalTerms": {"英語用語1": "日本語訳1", "英語用語2": "日本語訳2"}
+}
+// ▲▲▲ ▲▲▲
+
+【注意点】
+- 農業技術の専門的な内容を正確に翻訳
+- 日本の農業コンテキストとの関連性を意識
+- 技術的な新規性や革新性を強調
+`;
+
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+       temperature: 0.3,
+      max_tokens: 2048, // ▼▼▼ 1000から2048に増やします ▼▼▼
+    });
+
+    const content = response.choices[0].message.content;
+
+    // ▼▼▼ JSONパース部分のエラーハンドリングを強化 ▼▼▼
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return JSON.parse(content);
+    } catch (parseError) {
+      console.error('[Global Research] JSONのパースに失敗しました。AIの応答:', content);
+      return null; // パースに失敗した場合はnullを返し、処理をスキップさせる
+    }
+    // ▲▲▲ ▲▲▲
+    return JSON.parse(content);
+  } catch (error) {
+    console.error('[Global Research] 翻訳・要約中にエラーが発生しました:', error);
+    return null;
+  }
+}
+
+// === 海外文献のフィルタリング関数（強化版） ===
+function filterGlobalArticles(articles) {
+  const scoredArticles = [];
+  console.log('[Global Research] Filtering articles...');
+
+  for (const article of articles) {
+    const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+    let score = 0;
+    const matchedCategories = new Set(); // どのカテゴリにマッチしたか記録
+
+    // カテゴリごとにキーワードのマッチをチェック
+    const hasAgri = GLOBAL_AGRI_KEYWORDS.some(k => content.includes(k.toLowerCase()));
+    if (hasAgri) matchedCategories.add('Agri');
+
+    const hasTech = GLOBAL_TECH_KEYWORDS.some(k => content.includes(k.toLowerCase()));
+    if (hasTech) matchedCategories.add('Tech');
+
+    const hasResearch = GLOBAL_RESEARCH_KEYWORDS.some(k => content.includes(k.toLowerCase()));
+    if (hasResearch) matchedCategories.add('Research');
+
+    // --- 【必須条件】 ---
+    // 農業キーワードが含まれていない記事は、この時点で除外
+    if (!matchedCategories.has('Agri')) {
+      continue; // 次の記事へ
+    }
+
+    // --- スコアリング ---
+    score += 5; // 農業キーワードが含まれているので基礎点
+
+    if (matchedCategories.has('Tech')) score += 5;
+    if (matchedCategories.has('Research')) score += 3;
+
+    // --- 【ボーナス】 ---
+    // 農業と技術の両方が含まれる場合に、さらに大きなボーナス
+    if (matchedCategories.has('Agri') && matchedCategories.has('Tech')) {
+      score += 10;
+      matchedCategories.add('Agri-Tech Synergy');
+    }
+    
+    // スコアが0より大きい場合のみ候補に追加
+    if (score > 0) {
+      scoredArticles.push({ 
+        article, 
+        score,
+        label: Array.from(matchedCategories).join(' + ')
+      });
+    }
+  }
+  
+  console.log(`[Global Research] Found ${scoredArticles.length} relevant articles.`);
+
+  // スコアの高い順にソート
+  scoredArticles.sort((a, b) => b.score - a.score);
+
+  // ログに上位候補を表示
+  console.log('[Global Research] Top candidates:');
+  scoredArticles.slice(0, 5).forEach(item => {
+    console.log(`  - Score: ${item.score}, [${item.label}], Title: ${item.article.title}`);
+  });
+
+  return scoredArticles.map(item => item.article);
+}
 
 // === Metagri研究所の見解生成関数 ===
 async function generateMetagriInsight(article) {
@@ -204,6 +459,7 @@ const client = new Client({
 
 // ▼▼▼ 重複投稿防止用のキャッシュを追加 ▼▼▼
 const postedArticleUrls = new Set();
+const postedGlobalArticleUrls = new Set(); // ▼▼▼ この行を追加 ▼▼▼
 // ▲▲▲ ▲▲▲
 
 /**
@@ -508,47 +764,6 @@ finalArticles.forEach((article, index) => {
 });
 // ▲▲▲ 新しいロジックここまで ▲▲▲
 
-    //   const candidates = [];
-    //   const addedUrls = new Set(); // 候補リスト内での重複を防ぐセット
-
-    //   // 記事にラベルを付け、重複をチェックしながら候補リストに追加するヘルパー関数
-    //   const addCandidate = (article, label) => {
-    //     if (article && article.link && !addedUrls.has(article.link)) {
-    //       candidates.push({ ...article, priorityLabel: label });
-    //       addedUrls.add(article.link);
-    //     }
-    //   };
-      
-    // // --- 【優先度1】農業記事 ∩ 技術キーワード ---
-    //   const priority1 = newAgriArticles.filter(a => TECH_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
-    //   priority1.forEach(a => addCandidate(a, 'P1: Agri x Tech'));
-
-    //   // --- 【優先度2】技術記事 ∩ 農業キーワード ---
-    //   const priority2 = newTechArticles.filter(a => PRIMARY_INDUSTRY_KEYWORDS.some(k => (a.title + (a.contentSnippet||'')).toLowerCase().includes(k.toLowerCase())));
-    //   priority2.forEach(a => addCandidate(a, 'P2: Tech x Agri'));
-      
-    //   // --- 【優先度3】残りの農業記事（新しい順）---
-    //   newAgriArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
-    //   newAgriArticles.forEach(a => addCandidate(a, 'P3: Agri General'));
-
-    //   // --- 【優先度4】残りの技術記事（新しい順）---
-    //   newTechArticles.sort((a, b) => new Date(b.isoDate) - new Date(a.isoDate));
-    //   newTechArticles.forEach(a => addCandidate(a, 'P4: Tech General'));
-      
-    //   // Step 5: 最終的に上位3件を抽出
-    //   const finalArticles = candidates.slice(0, 3);
-      
-    //   if (finalArticles.length === 0) {
-    //     console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
-    //     return;
-    //   }
-
-    //   console.log('[Info Gathering] 最終選考記事リスト:');
-    //   finalArticles.forEach((article, index) => {
-    //     console.log(`  ${index + 1}. [${article.priorityLabel}] ${article.title}`);
-    //   });
-    //   // ▲▲▲ ロジック改善とラベリングここまで ▲▲▲
-
       let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
        const articlesToLog = [];
 
@@ -578,8 +793,159 @@ finalArticles.forEach((article, index) => {
     timezone: "Asia/Tokyo"
   });
 
-  console.log('Daily news (8am) and Info gathering (6am-6pm, every 3h) jobs have been scheduled.');
-});
+// === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
+  cron.schedule('0 10,19 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    console.log('[Global Research] 海外文献収集タスクを開始します...');
+    
+    if (!GLOBAL_RESEARCH_CHANNEL_ID || GLOBAL_RSS_FEEDS.length === 0) {
+      console.log('[Global Research] チャンネルIDまたはRSSフィードが設定されていません。');
+      return;
+    }
+
+    try {
+      const channel = await client.channels.fetch(GLOBAL_RESEARCH_CHANNEL_ID);
+      if (!channel || channel.type !== ChannelType.GuildText) {
+        console.error('[Global Research] 海外文献投稿用チャンネルが見つかりません。');
+        return;
+      }
+
+      // 海外RSSフィードから記事を取得 (axios方式に統一)
+      let allGlobalArticles = [];
+      const feedPromises = GLOBAL_RSS_FEEDS.map(async (url) => {
+        try {
+          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          return await parser.parseString(response.data);
+        } catch (err) {
+          console.error(`[Global Research] RSSフィード取得失敗: ${url}`, err.message);
+          return null;
+        }
+      });
+      const feeds = await Promise.all(feedPromises);
+
+      for (const feed of feeds) {
+        if (feed && feed.items) {
+          allGlobalArticles.push(...feed.items);
+        }
+      }
+
+      if (allGlobalArticles.length === 0) {
+        console.log('[Global Research] 海外文献が取得できませんでした。');
+        return;
+      }
+
+      const fortyEightHoursAgo = new Date();
+      fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
+      
+      const recentGlobalArticles = allGlobalArticles.filter(article => {
+        const articleDate = new Date(article.isoDate || article.pubDate);
+        return articleDate && articleDate >= fortyEightHoursAgo;
+      });
+
+      const newGlobalArticles = recentGlobalArticles.filter(a => !postedGlobalArticleUrls.has(a.link));
+
+      if (newGlobalArticles.length === 0) {
+        console.log('[Global Research] 新しい海外文献がありません。');
+        return;
+      }
+
+      const filteredArticles = filterGlobalArticles(newGlobalArticles);
+      
+      if (filteredArticles.length === 0) {
+        console.log('[Global Research] 条件に合致する海外文献が見つかりませんでした。');
+        return;
+      }
+
+      const selectedArticles = filteredArticles.slice(0, 3);
+      console.log(`[Global Research] ${selectedArticles.length}件の文献を翻訳します...`);
+
+      const translatedArticles = [];
+      for (const article of selectedArticles) {
+        const translation = await translateAndSummarizeArticle(article);
+        if (translation) {
+          translatedArticles.push({
+            original: article,
+            translated: translation
+          });
+        }
+      }
+
+      if (translatedArticles.length === 0) {
+        console.log('[Global Research] 翻訳に失敗しました。');
+        return;
+      }
+      
+      // ▼▼▼ ここからが補完部分です ▼▼▼
+
+      // Discord投稿用のメッセージを作成
+      const currentHour = new Date().getHours();
+      const greeting = currentHour < 12 ? 'おはようございます' : 'こんばんは';
+      
+      let postContent = `## 🌍 **Metagri Global Research Digest**\n\n${greeting}！世界の農業技術研究の最新動向をお届けします。\n\n`;
+      const embeds = [];
+      
+      for (let i = 0; i < translatedArticles.length; i++) {
+        const { original, translated } = translatedArticles[i];
+        
+        const embed = new EmbedBuilder()
+          .setColor(0x4A90E2)
+          .setTitle(`${i + 1}. ${translated.titleJa}`)
+          .setURL(original.link)
+          .addFields(
+            { name: '📝 要約', value: translated.summary },
+            { name: '🔍 重要ポイント', value: translated.keyPoints.map(p => `• ${p}`).join('\n') },
+            { name: '💡 日本の農業への示唆', value: translated.implications }
+          )
+          .setFooter({ text: `Source: ${new URL(original.link).hostname}` })
+          .setTimestamp(new Date(original.isoDate || original.pubDate));
+        
+        embeds.push(embed);
+        postedGlobalArticleUrls.add(original.link);
+      }
+
+      let technicalTermsSection = '\n**📚 今回の専門用語解説**\n';
+      const allTerms = {};
+      translatedArticles.forEach(({ translated }) => Object.assign(allTerms, translated.technicalTerms));
+      
+      if (Object.keys(allTerms).length > 0) {
+        Object.entries(allTerms).slice(0, 5).forEach(([en, ja]) => {
+          technicalTermsSection += `• **${en}**: ${ja}\n`;
+        });
+        postContent += technicalTermsSection;
+      }
+
+      postContent += `\n**【議論・質問歓迎】**\nこれらの研究成果について、ご意見やご質問があればお気軽にコメントください！🌱`;
+
+      // メッセージを送信
+      await channel.send({ content: postContent, embeds: embeds });
+      console.log(`[Global Research] ${translatedArticles.length}件の海外文献を投稿しました。`);
+
+      // ログを記録
+      for (const { original, translated } of translatedArticles) {
+        await logToSpreadsheet('globalResearch', {
+          titleOriginal: original.title,
+          titleJa: translated.titleJa,
+          link: original.link,
+          summary: translated.summary,
+          keyPoints: translated.keyPoints.join('\n'), // 配列を文字列に
+          implications: translated.implications,
+          publishDate: original.isoDate || original.pubDate
+        });
+      }
+      // ▲▲▲ 補完ここまで ▲▲▲
+
+    } catch (error) {
+      console.error('[Global Research] タスク実行中にエラーが発生しました:', error);
+    }
+  }, {
+    timezone: "Asia/Tokyo"
+  }); // ← 抜けていた閉じ括弧
+
+  console.log('All scheduled jobs initialized:');
+  console.log('- Metagri Daily Insight: 8:00 JST');
+  console.log('- Info Gathering: 6:00-18:00 JST (every 3h)');
+  console.log('- Global Research Digest: 10:00, 19:00 JST');
+}); // ← 抜けていた client.once の閉じ括弧
 
 // ★★★ 議論スレッドのメッセージ監視ロジックを更新 ★★★
 client.on('messageCreate', async message => {
