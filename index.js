@@ -20,10 +20,13 @@ const NEWS_RSS_FEEDS_AGRICULTURE = process.env.NEWS_RSS_FEEDS_AGRICULTURE.split(
 const NEWS_RSS_FEEDS_WEB3 = process.env.NEWS_RSS_FEEDS_WEB3.split(',');
 const INFO_GATHERING_CHANNEL_ID = process.env.INFO_GATHERING_CHANNEL_ID;
 
-// ▼▼▼ 以下を追加 ▼▼▼
 // === 海外文献用の新しい環境変数 ===
 const GLOBAL_RESEARCH_CHANNEL_ID = process.env.GLOBAL_RESEARCH_CHANNEL_ID;
 const GLOBAL_RSS_FEEDS = process.env.GLOBAL_RSS_FEEDS ? process.env.GLOBAL_RSS_FEEDS.split(',') : [];
+
+// === Robloxニュース用の新しい環境変数 ===
+const ROBLOX_NEWS_CHANNEL_ID = process.env.ROBLOX_NEWS_CHANNEL_ID;
+const ROBLOX_RSS_FEEDS = process.env.ROBLOX_RSS_FEEDS ? process.env.ROBLOX_RSS_FEEDS.split(',') : [];
 
 // OpenAI API設定（.envに追加が必要）
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -896,8 +899,6 @@ finalArticles.forEach((article, index) => {
         return;
       }
       
-      // ▼▼▼ ここからが補完部分です ▼▼▼
-
       // Discord投稿用のメッセージを作成
       const currentHour = new Date().getHours();
       const greeting = currentHour < 12 ? 'おはようございます' : 'こんばんは';
@@ -962,11 +963,121 @@ finalArticles.forEach((article, index) => {
     timezone: "Asia/Tokyo"
   }); // ← 抜けていた閉じ括弧
 
+
+   // ▼▼▼ 以下をまるごと追加 ▼▼▼
+  // === 4. 新機能：Robloxニュースの収集・投稿（毎日 AM 7:00 JST） ===
+  cron.schedule('0 7 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
+    
+    if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
+      console.log('[Roblox News] チャンネルIDまたはRSSフィードが設定されていません。');
+      return;
+    }
+
+    try {
+      // --- ステップ1: 記事の収集とフィルタリング ---
+      let recentArticles = [];
+      const timeThreshold = new Date();
+      timeThreshold.setHours(timeThreshold.getHours() - 24); // 24時間前の時刻
+
+      const feedPromises = ROBLOX_RSS_FEEDS.map(async (url) => {
+        try {
+          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 });
+          const feed = await parser.parseString(response.data);
+          return { sourceName: feed.title, items: feed.items };
+        } catch (err) {
+          console.error(`[Roblox News] RSSフィード取得失敗: ${url}`, err.message);
+          return null;
+        }
+      });
+      const feeds = await Promise.all(feedPromises);
+
+      for (const feed of feeds) {
+        if (feed && feed.items) {
+          for (const item of feed.items) {
+            const articleDate = new Date(item.isoDate || item.pubDate);
+            if (articleDate && articleDate >= timeThreshold) {
+              recentArticles.push({
+                source: feed.sourceName,
+                title: item.title,
+                link: item.link,
+                published: articleDate,
+              });
+            }
+          }
+        }
+      }
+
+      // 新しい順にソート
+      recentArticles.sort((a, b) => b.published - a.published);
+
+      // --- ステップ2: Discordへの通知 ---
+      const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
+      if (!channel || channel.type !== ChannelType.GuildText) {
+        console.error('[Roblox News] 通知用チャンネルが見つかりません。');
+        return;
+      }
+      
+      if (recentArticles.length === 0) {
+        await channel.send("過去24時間のRoblox関連ニュースはありませんでした。");
+        console.log('[Roblox News] 新しいニュースはありませんでした。');
+        return;
+      }
+
+      // --- ステップ3: Embedメッセージの作成 ---
+      const embed = new EmbedBuilder()
+        .setColor(0x00A2FF) // Robloxの青色
+        .setTitle(`🤖 Roblox 最新情報レポート (${new Date().toLocaleDateString('ja-JP')})`)
+        .setDescription(`過去24時間に収集されたニュースは **${recentArticles.length}** 件です。`)
+        .setTimestamp();
+        
+      // 情報源ごとに記事をグループ化
+      const articlesBySource = {};
+      recentArticles.forEach(article => {
+        if (!articlesBySource[article.source]) {
+          articlesBySource[article.source] = [];
+        }
+        articlesBySource[article.source].push(article);
+      });
+
+      // Embedのフィールドに情報を追加
+      for (const source in articlesBySource) {
+        const articles = articlesBySource[source];
+        let fieldValue = '';
+        articles.forEach(article => {
+          // タイトル内の[]をエスケープ
+          const escapedTitle = article.title.replace(/\[/g, '［').replace(/\]/g, '］');
+          fieldValue += `• [${escapedTitle}](${article.link})\n`;
+        });
+        
+        // フィールドの文字数制限（1024文字）を考慮
+        if (fieldValue.length > 1024) {
+          fieldValue = fieldValue.substring(0, 1020) + '...';
+        }
+        
+        embed.addFields({ name: `📰 ${source}`, value: fieldValue });
+      }
+      
+      await channel.send({ embeds: [embed] });
+      console.log(`[Roblox News] ${recentArticles.length}件のニュースを投稿しました。`);
+
+    } catch (error) {
+      console.error('[Roblox News] タスク実行中にエラーが発生しました:', error);
+    }
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+  
+  console.log(' - Roblox News Digest: 7:00 JST');
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00-18:00 JST (every 3h)');
   console.log('- Global Research Digest: 10:00, 19:00 JST');
 }); // ← 抜けていた client.once の閉じ括弧
+
+
+
 
 // ★★★ 議論スレッドのメッセージ監視ロジックを更新 ★★★
 client.on('messageCreate', async message => {

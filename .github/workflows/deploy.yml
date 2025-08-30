@@ -35,6 +35,8 @@ jobs:
           echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env          
           echo "GLOBAL_RESEARCH_CHANNEL_ID=${{ secrets.GLOBAL_RESEARCH_CHANNEL_ID }}" >> .env
           echo "GLOBAL_RSS_FEEDS=${{ secrets.GLOBAL_RSS_FEEDS }}" >> .env
+          echo "ROBLOX_NEWS_CHANNEL_ID=${{ secrets.ROBLOX_NEWS_CHANNEL_ID }}" >> .env
+          echo "ROBLOX_RSS_FEEDS=${{ secrets.ROBLOX_RSS_FEEDS }}" >> .env     
       # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d
