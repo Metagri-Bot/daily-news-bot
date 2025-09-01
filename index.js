@@ -1058,8 +1058,8 @@ finalArticles.forEach((article, index) => {
 
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
   // === 4. 新機能：Robloxニュースの収集・投稿（毎日 AM 7:00 JST） ===
-  // cron.schedule('0 7 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('0 7 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
     
     if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
