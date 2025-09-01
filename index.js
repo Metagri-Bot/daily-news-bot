@@ -125,6 +125,25 @@ const BUSINESS_POLICY_KEYWORDS = [
 // 【ボーナスキーワード】（+2点） - 議論のきっかけ
 const BUZZ_KEYWORDS = [ '異業種', 'コラボ', '提携', '実証実験', 'コンテスト', 'MOU', '連携', 'ソリューション', 'プラットフォーム', 'システム', '農機具', '農業機械', '農業資材' ];
 
+
+// === Robloxニュース選定用キーワード（英語） ===
+const ROBLOX_BUSINESS_KEYWORDS = [ // ビジネス・ブランド活用事例 (+5点)
+  'partner', 'partnership', 'collaboration', 'brand', 'marketing', 'campaign',
+  'retail', 'ecommerce', 'virtual store', 'concert', 'event', 'gucci', 'nike', 'disney'
+];
+const ROBLOX_PLATFORM_KEYWORDS = [ // プラットフォームの大型アップデート (+5点)
+  'update', 'feature', 'release', 'engine', 'studio', 'developer', 'creator',
+  'economy', 'monetization', 'marketplace', 'immesive ads', 'UGC'
+];
+const ROBLOX_FINANCE_KEYWORDS = [ // 財務・投資・市場動向 (+4点)
+  'earnings', 'revenue', 'stock', 'shares', 'investment', 'acquisition', 'ipo',
+  'financial', 'quarterly', 'growth', 'MAU', 'DAU'
+];
+const ROBLOX_TECH_KEYWORDS = [ // 技術・イノベーション (+3点)
+  'AI', 'generative ai', 'metaverse', 'avatar', 'virtual reality', 'VR', 'AR',
+  'physics', 'rendering'
+];
+
 // ▼▼▼ 以下の新しい関数を追加 ▼▼▼
 /**
  * URLから記事の本文を取得する
@@ -170,6 +189,79 @@ async function scrapeArticleContent(url) {
   }
 }
   
+
+// ▼▼▼ 以下の新しい関数を追加 ▼▼▼
+/**
+ * Roblox関連の英語ニュースを日本語に翻訳・要約する
+ * @param {object} article 記事オブジェクト
+ * @returns {Promise<object|null>} 翻訳結果、または失敗時にnull
+ */
+async function translateAndSummarizeRobloxArticle(article) {
+  if (!OPENAI_API_KEY) {
+    console.log('[Roblox AI] OpenAI APIキーが設定されていません。');
+    return null;
+  }
+
+  try {
+      // ▼▼▼ スクレイピング処理を追加 ▼▼▼
+    const fullContent = await scrapeArticleContent(article.link);
+    // 記事全文があればそれを使い、なければRSSの概要、それもなければタイトルを使う
+    const contentForAI = fullContent || article.contentSnippet || article.title;
+
+    // 内容が乏しい場合はスキップ
+    if (contentForAI.length < 100) {
+      console.log(`[Roblox AI] 記事内容が短すぎるため翻訳をスキップ: ${article.title}`);
+      return null;
+    }
+    // ▲▲▲ ▲▲▲
+
+    const prompt = `
+あなたは、メタバースとゲーム業界を専門とするアナリストです。
+以下のRoblox関連の英語ニュースを日本語に翻訳し、ビジネスパーソン向けに要点をまとめてください。
+
+【記事タイトル】
+${article.title}
+
+【記事概要】
+${contentForAI}
+
+【要求事項】
+以下のJSON形式で返してください：
+{
+  "titleJa": "日本語のタイトル",
+  "summary": "日本語の要約（150-250文字）"
+}
+
+【注意点】
+- 企業の活用事例、プラットフォームのアップデート、市場動向など、ビジネス上の重要点に焦点を当てること。
+- 専門用語は避け、分かりやすい言葉で要約すること。
+`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o", // 最新モデルを推奨
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 1024,
+    });
+
+    const content = response.choices[0].message.content;
+
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return JSON.parse(content);
+    } catch (parseError) {
+      console.error('[Roblox AI] JSONのパースに失敗しました。AIの応答:', content);
+      return null;
+    }
+
+  } catch (error) {
+    console.error('[Roblox AI] 翻訳・要約中にエラーが発生しました:', error);
+    return null;
+  }
+}
 //   try {
 //     const { data } = await axios.get(url, {
 //       headers: {
@@ -966,8 +1058,8 @@ finalArticles.forEach((article, index) => {
 
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
   // === 4. 新機能：Robloxニュースの収集・投稿（毎日 AM 7:00 JST） ===
-  cron.schedule('0 7 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('0 7 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
     
     if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
@@ -1003,64 +1095,98 @@ finalArticles.forEach((article, index) => {
                 title: item.title,
                 link: item.link,
                 published: articleDate,
+  contentSnippet: item.contentSnippet || '', // ★★★ この行を追加 ★★★
               });
             }
           }
         }
       }
 
-      // 新しい順にソート
-      recentArticles.sort((a, b) => b.published - a.published);
+       // ▼▼▼ ここからがロジック強化部分です ▼▼▼
+      // --- ステップ2: スコアリングによる重要ニュースの厳選 ---
+      const scoredArticles = [];
+      for (const article of recentArticles) { // ← ここを allArticles から recentArticles に修正
+        const content = (article.title + ' ' + article.contentSnippet).toLowerCase();
+        let score = 0;
+        const matchedCategories = new Set();
 
-      // --- ステップ2: Discordへの通知 ---
+        const checkKeywords = (keywords, categoryName, points) => {
+          if (keywords.some(k => content.includes(k.toLowerCase()))) {
+            score += points;
+            matchedCategories.add(categoryName);
+          }
+        };
+        
+        checkKeywords(ROBLOX_BUSINESS_KEYWORDS, 'Business/Brand', 5);
+        checkKeywords(ROBLOX_PLATFORM_KEYWORDS, 'Platform Update', 5);
+        checkKeywords(ROBLOX_FINANCE_KEYWORDS, 'Finance/Market', 4);
+        checkKeywords(ROBLOX_TECH_KEYWORDS, 'Tech/Innovation', 3);
+
+        if (score > 0) {
+          scoredArticles.push({ ...article, score, label: Array.from(matchedCategories).join(' & ') });
+        }
+      }
+
+      // スコアの高い順にソートし、最低スコア（例: 5点以上）で足切り
+      const MINIMUM_SCORE = 5; 
+      const finalArticles = scoredArticles
+        .filter(a => a.score >= MINIMUM_SCORE)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3); // 最大3件まで
+
+         if (finalArticles.length === 0) {
+        console.log('[Roblox News] 翻訳対象の重要ニュースはありませんでした。');
+        return;
+      }
+      
+      // ▼▼▼ ここからが新しい処理です ▼▼▼
+      // --- ステップ3: AIによる翻訳と要約 ---
+      console.log(`[Roblox News] ${finalArticles.length}件の重要ニュースを翻訳します...`);
+      const translatedArticles = [];
+      for (const article of finalArticles) {
+        const translation = await translateAndSummarizeRobloxArticle(article);
+        if (translation) {
+          translatedArticles.push({
+            original: article,
+            translated: translation
+          });
+        }
+      }
+
+      if (translatedArticles.length === 0) {
+        console.log('[Roblox News] 翻訳に成功した記事がありませんでした。');
+        // この場合、通知はしない
+        return;
+      }
+
+      // --- ステップ4: Discordへの通知 ---
       const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) {
         console.error('[Roblox News] 通知用チャンネルが見つかりません。');
         return;
       }
       
-      if (recentArticles.length === 0) {
-        await channel.send("過去24時間のRoblox関連ニュースはありませんでした。");
-        console.log('[Roblox News] 新しいニュースはありませんでした。');
-        return;
-      }
-
-      // --- ステップ3: Embedメッセージの作成 ---
+      // --- ステップ5: Embedメッセージの作成 ---
       const embed = new EmbedBuilder()
-        .setColor(0x00A2FF) // Robloxの青色
-        .setTitle(`🤖 Roblox 最新情報レポート (${new Date().toLocaleDateString('ja-JP')})`)
-        .setDescription(`過去24時間に収集されたニュースは **${recentArticles.length}** 件です。`)
+        .setColor(0x00A2FF)
+        .setTitle(`🤖 Roblox ビジネス・アップデート速報 (${new Date().toLocaleDateString('ja-JP')})`)
+        .setDescription(`**${translatedArticles.length}件**の重要ニュースをAIが翻訳・要約しました。`)
         .setTimestamp();
         
-      // 情報源ごとに記事をグループ化
-      const articlesBySource = {};
-      recentArticles.forEach(article => {
-        if (!articlesBySource[article.source]) {
-          articlesBySource[article.source] = [];
-        }
-        articlesBySource[article.source].push(article);
-      });
-
-      // Embedのフィールドに情報を追加
-      for (const source in articlesBySource) {
-        const articles = articlesBySource[source];
-        let fieldValue = '';
-        articles.forEach(article => {
-          // タイトル内の[]をエスケープ
-          const escapedTitle = article.title.replace(/\[/g, '［').replace(/\]/g, '］');
-          fieldValue += `• [${escapedTitle}](${article.link})\n`;
-        });
+      for (const item of translatedArticles) {
+        const { original, translated } = item;
+        const escapedTitle = translated.titleJa.replace(/\[/g, '［').replace(/\]/g, '］');
         
-        // フィールドの文字数制限（1024文字）を考慮
-        if (fieldValue.length > 1024) {
-          fieldValue = fieldValue.substring(0, 1020) + '...';
-        }
+        // 要約と原文リンクを結合
+        const summaryAndLink = `${translated.summary}\n\n[原文を読む](${original.link}) (*Source: ${original.source}*)`;
         
-        embed.addFields({ name: `📰 ${source}`, value: fieldValue });
+        const fieldName = `[${original.score}点 | ${original.label}] ${escapedTitle}`;
+        
+        embed.addFields({ name: fieldName, value: summaryAndLink });
       }
       
       await channel.send({ embeds: [embed] });
-      console.log(`[Roblox News] ${recentArticles.length}件のニュースを投稿しました。`);
+      console.log(`[Roblox News] ${translatedArticles.length}件の翻訳済みニュースを投稿しました。`);
 
     } catch (error) {
       console.error('[Roblox News] タスク実行中にエラーが発生しました:', error);
@@ -1074,7 +1200,7 @@ finalArticles.forEach((article, index) => {
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00-18:00 JST (every 3h)');
   console.log('- Global Research Digest: 10:00, 19:00 JST');
-}); // ← 抜けていた client.once の閉じ括弧
+}); 
 
 
 
