@@ -1172,12 +1172,27 @@ finalArticles.forEach((article, index) => {
         const { original, translated } = item;
         const escapedTitle = translated.titleJa.replace(/\[/g, '［').replace(/\]/g, '］');
         
-        // 要約と原文リンクを結合
-        const summaryAndLink = `${translated.summary}\n\n[原文を読む](${original.link}) (*Source: ${original.source}*)`;
+   // ▼▼▼ ここからが修正箇所です ▼▼▼
         
+        // valueに含める情報を定義
+        const summary = translated.summary;
+        const linkText = `\n\n[原文を読む](${original.link}) (*Source: ${original.source}*)`;
+        
+        let valueText = summary + linkText;
+
+        // 文字数制限のチェックと切り詰め処理
+        const MAX_VALUE_LENGTH = 1024;
+        if (valueText.length > MAX_VALUE_LENGTH) {
+          // summary部分を短くして、linkTextが必ず入るように調整
+          const availableLength = MAX_VALUE_LENGTH - linkText.length - 4; // "..."とマージン
+          const truncatedSummary = summary.substring(0, availableLength) + "...";
+          valueText = truncatedSummary + linkText;
+        }
+
         const fieldName = `[${original.score}点 | ${original.label}] ${escapedTitle}`;
         
-        embed.addFields({ name: fieldName, value: summaryAndLink });
+        embed.addFields({ name: fieldName, value: valueText });
+        // ▲▲▲ ▲▲▲
       }
       
       await channel.send({ embeds: [embed] });
