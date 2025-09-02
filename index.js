@@ -190,9 +190,8 @@ async function scrapeArticleContent(url) {
 }
   
 
-// ▼▼▼ 以下の新しい関数を追加 ▼▼▼
 /**
- * Roblox関連の英語ニュースを日本語に翻訳・要約する
+ * Roblox関連の英語ニュースを日本語に翻訳・要約する (ロジック緩和版)
  * @param {object} article 記事オブジェクト
  * @returns {Promise<object|null>} 翻訳結果、または失敗時にnull
  */
@@ -203,18 +202,12 @@ async function translateAndSummarizeRobloxArticle(article) {
   }
 
   try {
-      // ▼▼▼ スクレイピング処理を追加 ▼▼▼
+    // スクレイピングを試みるのは海外文献と同様
     const fullContent = await scrapeArticleContent(article.link);
-    // 記事全文があればそれを使い、なければRSSの概要、それもなければタイトルを使う
-    const contentForAI = fullContent || article.contentSnippet || article.title;
+    // 記事全文があればそれを使い、なければRSSの概要、それもなければ空文字
+    const contentForAI = fullContent || article.contentSnippet || '';
 
-    // 内容が乏しい場合はスキップ
-    if (contentForAI.length < 100) {
-      console.log(`[Roblox AI] 記事内容が短すぎるため翻訳をスキップ: ${article.title}`);
-      return null;
-    }
-    // ▲▲▲ ▲▲▲
-
+    // ▼▼▼ ここからが重要な変更点 ▼▼▼
     const prompt = `
 あなたは、メタバースとゲーム業界を専門とするアナリストです。
 以下のRoblox関連の英語ニュースを日本語に翻訳し、ビジネスパーソン向けに要点をまとめてください。
@@ -226,7 +219,8 @@ ${article.title}
 ${contentForAI}
 
 【要求事項】
-以下のJSON形式で返してください：
+以下のJSON形式で返してください。
+もし【記事概要】が非常に短い、または空の場合でも、**【記事タイトル】から内容を最大限推測し**、あなたの知識を基に可能な限り要約を作成してください。
 {
   "titleJa": "日本語のタイトル",
   "summary": "日本語の要約（150-250文字）"
@@ -236,9 +230,10 @@ ${contentForAI}
 - 企業の活用事例、プラットフォームのアップデート、市場動向など、ビジネス上の重要点に焦点を当てること。
 - 専門用語は避け、分かりやすい言葉で要約すること。
 `;
+    // ▲▲▲ ▲▲▲
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // 最新モデルを推奨
+      model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 1024,
@@ -1058,8 +1053,8 @@ finalArticles.forEach((article, index) => {
 
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
   // === 4. 新機能：Robloxニュースの収集・投稿（毎日 AM 7:00 JST） ===
-  // cron.schedule('0 7 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('0 7 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
     
     if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
