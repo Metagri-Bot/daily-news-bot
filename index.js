@@ -129,7 +129,7 @@ const BUZZ_KEYWORDS = [ '異業種', 'コラボ', '提携', '実証実験', 'コ
 // === Robloxニュース選定用キーワード（英語） ===
 const ROBLOX_BUSINESS_KEYWORDS = [ // ビジネス・ブランド活用事例 (+5点)
   'partner', 'partnership', 'collaboration', 'brand', 'marketing', 'campaign',
-  'retail', 'ecommerce', 'virtual store', 'concert', 'event', 'gucci', 'nike', 'disney'
+  'retail', 'ecommerce', 'virtual store', 'concert', 'event', 'gucci', 'nike', 'disney', 'experience', 'adidas', 'lego', 'warner bros', 'unilever', 'coca-cola', 'mcdonalds', 'starbucks', 'netflix', 'marvel', 'dc', 'sony', 'playstation', 'xbox'
 ];
 const ROBLOX_PLATFORM_KEYWORDS = [ // プラットフォームの大型アップデート (+5点)
   'update', 'feature', 'release', 'engine', 'studio', 'developer', 'creator',
@@ -141,7 +141,7 @@ const ROBLOX_FINANCE_KEYWORDS = [ // 財務・投資・市場動向 (+4点)
 ];
 const ROBLOX_TECH_KEYWORDS = [ // 技術・イノベーション (+3点)
   'AI', 'generative ai', 'metaverse', 'avatar', 'virtual reality', 'VR', 'AR',
-  'physics', 'rendering'
+  'physics', 'rendering', 'phygital', 'virtual goods', 'digital twin', 'shopify', 'vr', 'virtual reality', 'augmented reality', 'ar'
 ];
 
 // ▼▼▼ 以下の新しい関数を追加 ▼▼▼
