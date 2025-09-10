@@ -591,7 +591,7 @@ client.once("ready", async () => {
   await syncPostedUrlsFromSheet();
   // ▲▲▲ ▲▲▲
 
-  // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')
+  // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')XXXXXX
   cron.schedule('0 8 * * *', async () => {
  // cron.schedule('40 8 * * *', async () => {
 
@@ -698,23 +698,17 @@ client.once("ready", async () => {
         // === Metagri研究所の見解を生成 ===
       const metagriAnalysis = await generateMetagriInsight(selectedArticle);
       
-// Embedを作成
+// === ステップ1: メイン投稿用のEmbedとコンテンツを作成 ===XXXXXX
       const embed = new EmbedBuilder()
         .setColor(0x28a745)
         .setTitle(selectedArticle.title)
         .setURL(selectedArticle.link)
-        .setDescription(selectedArticle.contentSnippet?.substring(0, 250) + '...' || '概要はありません。')
-        // addFieldsを削除
-        .setFooter({ text: `Source: ${selectedArticle.feed?.title || new URL(selectedArticle.link).hostname}` })
+        // 概要の文字数を少し増やして情報量をリッチにします (最大4096文字まで可能)
+        .setDescription(selectedArticle.contentSnippet?.substring(0, 400) + '...' || '概要はありません。')
+        .setFooter({ text: `Source: ${new URL(selectedArticle.link).hostname}` })
         .setTimestamp(new Date(selectedArticle.isoDate));
 
-      // 投げかけの質問を含むメッセージを作成
-      let discussionQuestions = "**💭 今日の議論テーマ**\n";
-      metagriAnalysis.questions.forEach((q, i) => {
-        discussionQuestions += `${i + 1}. ${q}\n`;
-      });
-
-            const postContent = `
+      const postContent = `
 ## 【**Metagri研究所 Daily Insight**】🌱🤖
 
 おはようございます！本日の注目ニュースをお届けします。
@@ -722,32 +716,47 @@ client.once("ready", async () => {
 🔬 **Metagri研究所より**
 ${metagriAnalysis.insight}
 
+**▼議論は下のスレッドでどうぞ！▼**
+`;
+
+      // === ステップ2: メインメッセージを投稿し、その投稿からスレッドを作成 ===
+      const message = await channel.send({ content: postContent, embeds: [embed] });
+
+      const thread = await message.startThread({
+        name: `【議論】${selectedArticle.title.substring(0, 80)}`,
+        autoArchiveDuration: 1440, // 24時間
+        reason: 'デイリーニュースに関する議論のため',
+      });
+      console.log(`[Daily News] ニュースを投稿し、スレッドを作成しました: ${selectedArticle.title}`);
+
+      // === ステップ3: スレッド内に投稿する議論のテーマと報酬案内を作成 ===
+      let discussionQuestions = "**💭 今日の議論テーマ**\n";
+      metagriAnalysis.questions.forEach((q, i) => {
+        discussionQuestions += `${i + 1}. ${q}\n`;
+      });
+
+      const threadPostContent = `
+<@&${METAGRI_ROLE_ID}> <@&${BIGNER_ROLE_ID}> の皆さん！
+
 ${discussionQuestions}
 
 **【ディスカッションに参加しよう！✨】**
-スレッドで皆さまのご意見をお聞かせください。
+皆さまのご意見をお聞かせください。
 現場の声、技術的な考察、未来への提案など、どんな視点も歓迎です！
 
+---
 ## **<報酬について>**
 ✅ <@&${METAGRI_ROLE_ID}> はMLTT
 ✅ <@&${BIGNER_ROLE_ID}> はポイントを
 それぞれ1日1回配布します！
 ⏰ **本日17:00まで**のスレッド内でのご発言が対象となります。
-
-一緒に農業の未来を考えましょう！🌾
 `;
 
+      // === ステップ4: 作成したスレッド内に議論のテーマを投稿 ===
+      await thread.send(threadPostContent);
+      console.log(`[Daily News] スレッド内に議論のテーマを投稿しました。`);
 
-      const message = await channel.send({ content: postContent, embeds: [embed] });
-      // ▲▲▲ ここまで ▲▲▲
 
-      await message.startThread({
-        name: `【議論】${selectedArticle.title.substring(0, 80)}`,
-        autoArchiveDuration: 1440,
-        reason: 'デイリーニュースに関する議論のため',
-      });
-        console.log(`[Daily News] ニュースを投稿しました: ${selectedArticle.title}`);
-      
       // ★★★ ログ関数呼び出しを修正 ★★★
       await logToSpreadsheet('news', {
           title: selectedArticle.title,
