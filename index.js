@@ -645,7 +645,7 @@ client.once("ready", async () => {
       const eligibleArticles = recentArticles.filter(article => {
         const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
         // EXCLUSION_KEYWORDS のいずれかが content に含まれていたら除外 (falseを返す)
-        return !EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword.toLowerCase()));
+        return !EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
       });
 
       console.log(`[Daily News] 除外キーワードに合致したため ${recentArticles.length - eligibleArticles.length} 件の記事を除外しました。`);
@@ -659,8 +659,10 @@ client.once("ready", async () => {
       // ★★★ 多段階フィルタリングロジック ★★★
       let articlesToSelectFrom = [];
 
+      // ▼▼▼ ここから下のすべてのフィルタリング対象を "eligibleArticles" に修正 ▼▼▼
+
       // --- 【最優先】一次産業 + 技術 + 活用事例 ---
-      articlesToSelectFrom = recentArticles.filter(article => {
+      articlesToSelectFrom = eligibleArticles.filter(article => {
         const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
         const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
         const hasTech = TECH_KEYWORDS.some(key => content.includes(key.toLowerCase()));
@@ -671,7 +673,7 @@ client.once("ready", async () => {
       // --- 【次善】一次産業 + 技術 ---
       if (articlesToSelectFrom.length === 0) {
         console.log('[Daily News] 最優先条件に合致せず。緩和条件1（一次産業+技術）で再検索...');
-        articlesToSelectFrom = recentArticles.filter(article => {
+        articlesToSelectFrom = eligibleArticles.filter(article => { // ← ここも修正
           const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
           const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
           const hasTech = TECH_KEYWORDS.some(key => content.includes(key.toLowerCase()));
@@ -682,7 +684,7 @@ client.once("ready", async () => {
       // --- 【次次善】一次産業 + 活用事例 ---
       if (articlesToSelectFrom.length === 0) {
         console.log('[Daily News] 緩和条件1に合致せず。緩和条件2（一次産業+活用事例）で再検索...');
-        articlesToSelectFrom = recentArticles.filter(article => {
+        articlesToSelectFrom = eligibleArticles.filter(article => { // ← ここも修正
             const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
             const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
             const hasUsecase = USECASE_KEYWORDS.some(key => content.includes(key.toLowerCase()));
@@ -693,12 +695,14 @@ client.once("ready", async () => {
       // --- 【次次次善】一次産業のみ ---
       if (articlesToSelectFrom.length === 0) {
         console.log('[Daily News] 緩和条件2に合致せず。最終緩和条件（一次産業のみ）で再検索...');
-        articlesToSelectFrom = recentArticles.filter(article => {
+        articlesToSelectFrom = eligibleArticles.filter(article => { // ← ここも修正
             const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
             const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
             return hasPrimary;
         });
       }
+      
+      // ▲▲▲ 修正ここまで ▲▲▲
       
       if (articlesToSelectFrom.length > 0) {
         console.log(`[Daily News] 最終的に ${articlesToSelectFrom.length} 件の候補が見つかりました。`);
