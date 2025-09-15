@@ -125,6 +125,8 @@ const BUSINESS_POLICY_KEYWORDS = [
 // 【ボーナスキーワード】（+2点） - 議論のきっかけ
 const BUZZ_KEYWORDS = [ '異業種', 'コラボ', '提携', '実証実験', 'コンテスト', 'MOU', '連携', 'ソリューション', 'プラットフォーム', 'システム', '農機具', '農業機械', '農業資材' ];
 
+// === ニュース選抜から除外するキーワード ===
+const EXCLUSION_KEYWORDS = ['metagri', '農情人', 'metagri研究所', '農業aiハッカソン2025']; // キーワードは小文字で定義
 
 // === Robloxニュース選定用キーワード（英語） ===
 const ROBLOX_BUSINESS_KEYWORDS = [ // ビジネス・ブランド活用事例 (+5点)
@@ -593,9 +595,7 @@ client.once("ready", async () => {
 
   // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')XXXXXX
   cron.schedule('0 8 * * *', async () => {
- // cron.schedule('40 8 * * *', async () => {
-
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    //  cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 
     console.log('[Daily News] ニュース投稿タスクを開始します...');
     try {
@@ -640,6 +640,21 @@ client.once("ready", async () => {
         return;
       }
       console.log(`[Daily News] 直近24時間で ${recentArticles.length} 件の記事を取得しました。フィルタリングを開始します...`);
+
+       // ▼▼▼ ここからが新しい除外処理です ▼▼▼
+      const eligibleArticles = recentArticles.filter(article => {
+        const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+        // EXCLUSION_KEYWORDS のいずれかが content に含まれていたら除外 (falseを返す)
+        return !EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword.toLowerCase()));
+      });
+
+      console.log(`[Daily News] 除外キーワードに合致したため ${recentArticles.length - eligibleArticles.length} 件の記事を除外しました。`);
+      // ▲▲▲ 除外処理ここまで ▲▲▲
+
+      if (eligibleArticles.length === 0) {
+        console.log('[Daily News] フィルタリング後、候補となるニュースがありませんでした。');
+        return;
+      }
 
       // ★★★ 多段階フィルタリングロジック ★★★
       let articlesToSelectFrom = [];
