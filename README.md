@@ -361,7 +361,214 @@ graph TD
   `index.js`ファイル上部のキーワードカテゴリ定義エリアで、各カテゴリの**点数を変更する**ことで、ニュース選定の傾向を簡単にチューニングできます。
 - **キーワードの変更**:
   国内用（`CORE_AGRI_KEYWORDS`など）と海外用（`GLOBAL_AGRI_KEYWORDS`など）のキーワード配列を編集することで、収集する情報の範囲をカスタマイズできます。
-  
+
+---
+
+## 🎯 新機能: インテリジェントニュース精度向上システム
+
+このバージョンでは、以下の3つの高度な機能が追加され、ニュースの精度と関連性が大幅に向上しました。
+
+### 1. 🧠 コミュニティフィードバックベースの動的スコアリング
+
+**概要**: 過去の記事に対するコミュニティの反応（スレッド投稿数、コメント長）を学習し、スコアリングに反映します。
+
+**仕組み**:
+- Google Sheetsから過去の議論データを取得
+- 投稿数が多い記事（3件以上）のキーワードパターンを分析
+- 平均投稿数に応じてスコアボーナスを付与:
+  - 10件以上: +20% ボーナス
+  - 5-9件: +15% ボーナス
+  - 3-4件: +10% ボーナス
+- 長文コメント（平均200文字以上）の記事には追加で +10% ボーナス
+
+**効果**:
+- コミュニティの関心に自動適応
+- 議論を生み出しやすい記事を優先的に選出
+- 手動キーワード調整の工数削減
+
+### 2. 🔍 高度な重複記事検出システム
+
+**概要**: タイトルの類似度を計算し、重複または類似記事を自動検出・除外します。
+
+**仕組み**:
+- レーベンシュタイン距離アルゴリズムで文字列の類似度を測定
+- タイトルが70%以上類似している記事を自動検出
+- 類似記事グループの中で最もスコアの高い記事のみを残す
+
+**例**:
+```
+記事A: 「AI農業ロボット、北海道で実証実験開始」
+記事B: 「AI農業ロボットが北海道で実証実験」
+→ 類似度: 85% → 重複として検出
+```
+
+**効果**:
+- 同じトピックの記事が複数投稿されることを防止
+- 情報の多様性を向上
+- ユーザー体験の改善
+
+### 3. 📊 コンテキスト分析とトレンド追跡
+
+**概要**: 過去7日間のニュース傾向を分析し、AI分析時のコンテキストとして活用します。
+
+**仕組み**:
+- Google Sheetsから過去7日間のニュース履歴を取得
+- 全キーワードの出現頻度を集計し、トレンドワードを抽出
+- GPT-4oのプロンプトにトレンド情報を追加:
+  - 「過去7日間で『ドローン』(8回)、『AI』(12回)が注目トピック」
+  - 「今回のニュースが継続トレンドか、新展開かを考慮した分析」
+
+**効果**:
+- より文脈に即したAI分析
+- トレンドの連続性や変化を可視化
+- コミュニティの関心の流れを把握
+
+---
+
+## 🛠️ Google Apps Script 拡張実装ガイド
+
+新機能を有効化するには、Google Apps Script側に以下の2つのエンドポイントを追加する必要があります。
+
+### 既存のGASコードへの追加
+
+既存の`doPost`関数に以下の処理を追加してください:
+
+```javascript
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+    // === 既存の処理 ===
+    if (data.type === 'discussion') {
+      const sheet = getSheetByName(spreadsheet, "User");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["日時", "ユーザーID", "ユーザー名", "投稿内容", "元ニュースのタイトル", "元ニュースのURL", "元ニュースの投稿日", "ロール"]);
+      }
+      sheet.appendRow([ new Date(data.timestamp), data.userId, data.username, data.content, data.newsTitle, data.newsUrl, new Date(data.newsPostDate), data.userRole ]);
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    else if (data.type === 'news') {
+      const sheet = getSheetByName(spreadsheet, "News");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["投稿日時", "タイトル", "URL", "ニュースの日付", "AIの見解", "AIの質問"]);
+      }
+      sheet.appendRow([ new Date(), data.title, data.link, data.newsDate, data.metagriInsight, Array.isArray(data.discussionQuestions) ? data.discussionQuestions.join('\n') : data.discussionQuestions ]);
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    else if (data.type === 'addArticles') {
+      const sheet = getSheetByName(spreadsheet, "Posted_URLs");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["投稿日時", "URL", "タイトル", "記事の日付", "優先度", "スコア"]);
+      }
+      data.articles.forEach(article => {
+        sheet.appendRow([new Date(), article.url, article.title, article.pubDate, article.priority, article.score]);
+      });
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    else if (data.type === 'globalResearch') {
+      const sheet = getSheetByName(spreadsheet, "Global_Research");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["投稿日時", "元のタイトル", "日本語タイトル", "URL", "要約", "重要ポイント", "示唆", "記事の日付"]);
+      }
+      sheet.appendRow([new Date(), data.titleOriginal, data.titleJa, data.link, data.summary, data.keyPoints, data.implications, data.publishDate]);
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ★★★ 新機能1: 議論メトリクスの取得 ★★★
+    else if (data.type === 'getDiscussionMetrics') {
+      const sheet = spreadsheet.getSheetByName("User");
+      if (!sheet || sheet.getLastRow() <= 1) {
+        return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const allData = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+      const result = allData.map(row => ({
+        timestamp: row[0],
+        userId: row[1],
+        username: row[2],
+        content: row[3],
+        newsTitle: row[4],
+        newsUrl: row[5],
+        newsPostDate: row[6],
+        userRole: row[7]
+      }));
+
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ★★★ 新機能2: 過去7日間のニュースを取得 ★★★
+    else if (data.type === 'getRecentNews') {
+      const days = data.days || 7;
+      const sheet = spreadsheet.getSheetByName("News");
+      if (!sheet || sheet.getLastRow() <= 1) {
+        return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const allData = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - days);
+
+      const recentNews = allData
+        .filter(row => new Date(row[0]) >= cutoffDate)
+        .map(row => ({
+          publishDate: row[0],
+          title: row[1],
+          url: row[2],
+          newsDate: row[3],
+          insight: row[4],
+          questions: row[5]
+        }));
+
+      return ContentService.createTextOutput(JSON.stringify(recentNews)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": "Unknown type" })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": error.message })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  try {
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getSheetByName("Posted_URLs");
+
+    if (!sheet || sheet.getLastRow() === 0) {
+      return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const data = sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).getValues();
+    const urls = data.map(row => row[0]).filter(url => url);
+
+    return ContentService.createTextOutput(JSON.stringify(urls)).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": error.message })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function getSheetByName(spreadsheet, name) {
+  let sheet = spreadsheet.getSheetByName(name);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(name);
+  }
+  return sheet;
+}
+```
+
+### 実装後の動作確認
+
+1. GASエディタで「デプロイ」→「デプロイを管理」→バージョンを「新しいバージョン」に更新
+2. Botを再起動すると、起動時に以下のログが表示されます:
+   ```
+   [Dynamic Scoring] Fetching discussion metrics from sheet...
+   [Dynamic Scoring] Loaded metrics for X articles.
+   [Context Analysis] Fetching recent news from sheet...
+   [Context Analysis] Loaded X news from the past 7 days.
+   [Context Analysis] Trending keywords: 「AI」(12回), 「ドローン」(8回)...
+   ```
+
 ---
 
 ## 📄 ライセンス (License)
