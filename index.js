@@ -448,6 +448,17 @@ async function generateMetagriInsight(article) {
   }
 
   try {
+    // ★★★ トレンドコンテキストを構築 ★★★
+    let trendContext = '';
+    if (cachedTrendAnalysis && cachedTrendAnalysis.trendingSummary !== 'トレンドキーワードなし') {
+      trendContext = `
+# 過去7日間のトレンド情報（参考情報）
+直近1週間でコミュニティが注目しているトピック: ${cachedTrendAnalysis.trendingSummary}
+
+この情報を踏まえて、今回のニュースが「継続的なトレンド」なのか「新しい展開」なのかを考慮した分析を行ってください。
+`;
+    }
+
     const prompt = `
 # 命令書
 あなたは、日本の農業の未来を探求する先進的な組織「Metagri研究所」の主席研究員です。あなたの使命は、最新ニュースを深く分析し、私たちのコミュニティに有益な洞察と活発な議論の火種を提供することです。
@@ -457,7 +468,7 @@ async function generateMetagriInsight(article) {
 - **技術楽観主義**: テクノロジーは農業の課題を解決する力を持つと信じる。
 - **現実直視**: 導入コスト、技術的障壁、法規制など、理想だけではない現実的な課題にも目を向ける。
 - **共創の精神**: 私たちの分析は結論ではなく、コミュニティと共に未来を考えるための「たたき台」である。
-
+${trendContext}
 # 思考プロセス (この手順に従って分析してください)
 1.  **事実確認**: ニュースの【タイトル】と【概要】から、何が起きたのか（Who, What, When, Where, Why）を正確に把握する。
 2.  **重要点の抽出**: このニュースの核心は何か？「農業」と「テクノロジー」の観点から最も重要なポイントを1〜2つ特定する。
@@ -465,6 +476,7 @@ async function generateMetagriInsight(article) {
     - **影響**: この出来事は、日本の農業全体や特定の作物、地域にどのような影響を与えうるか？（短期的・長期的視点）
     - **可能性**: この技術や取り組みが持つ、未来へのポジティブな可能性は何か？
     - **課題**: 実現に向けた課題、あるいは潜在的なリスクは何か？
+    - **トレンドとの関連**: (もしトレンド情報が提供されていれば) このニュースは最近の傾向とどう関連しているか？
 4.  **総合見解の生成**: 上記の分析を基に、100〜150文字でMetagri研究所としての公式見解をまとめる。希望と現実のバランスを意識すること。
 5.  **議論の設計**: 見解を踏まえ、コミュニティメンバーが「自分ごと」として考えたくなるような、具体的で示唆に富む質問を3つ作成する。
 
@@ -585,12 +597,311 @@ async function syncPostedUrlsFromSheet() {
   }
 }
 
+/**
+ * Google Sheetsから過去の議論データを取得し、記事ごとの反応メトリクスを計算
+ * @returns {Promise<Map>} 記事URLをキーとした反応メトリクスのMap
+ */
+async function getDiscussionMetricsFromSheet() {
+  if (!GOOGLE_APPS_SCRIPT_URL) return new Map();
+
+  try {
+    console.log('[Dynamic Scoring] Fetching discussion metrics from sheet...');
+    const response = await axios.post(GOOGLE_APPS_SCRIPT_URL, {
+      type: 'getDiscussionMetrics'
+    });
+
+    if (!response.data || !Array.isArray(response.data)) {
+      console.log('[Dynamic Scoring] No discussion data available.');
+      return new Map();
+    }
+
+    // 記事URLごとに議論メトリクスを集計
+    const metricsMap = new Map();
+
+    for (const row of response.data) {
+      const { newsUrl, content } = row;
+      if (!newsUrl) continue;
+
+      if (!metricsMap.has(newsUrl)) {
+        metricsMap.set(newsUrl, {
+          postCount: 0,
+          totalContentLength: 0,
+          avgContentLength: 0
+        });
+      }
+
+      const metrics = metricsMap.get(newsUrl);
+      metrics.postCount += 1;
+      metrics.totalContentLength += (content || '').length;
+    }
+
+    // 平均コメント長を計算
+    for (const [url, metrics] of metricsMap) {
+      if (metrics.postCount > 0) {
+        metrics.avgContentLength = Math.round(metrics.totalContentLength / metrics.postCount);
+      }
+    }
+
+    console.log(`[Dynamic Scoring] Loaded metrics for ${metricsMap.size} articles.`);
+    return metricsMap;
+
+  } catch (error) {
+    console.error('[Dynamic Scoring] Failed to fetch discussion metrics:', error.message);
+    return new Map();
+  }
+}
+
+/**
+ * 過去の反応データとキーワードパターンから動的にスコアを調整
+ * @param {object} article 記事オブジェクト
+ * @param {number} baseScore 基本スコア
+ * @param {Set} matchedCategories マッチしたカテゴリのSet
+ * @param {Map} historicalMetrics 過去の記事の反応メトリクス
+ * @returns {number} 調整後のスコア
+ */
+function applyDynamicScoring(article, baseScore, matchedCategories, historicalMetrics) {
+  let adjustedScore = baseScore;
+
+  // 同じカテゴリパターンを持つ過去の記事の平均反応を計算
+  const categoryPattern = Array.from(matchedCategories).sort().join('+');
+
+  // historicalMetricsから同じようなキーワードパターンを持つ記事を探す
+  const similarArticles = [];
+
+  for (const [url, metrics] of historicalMetrics) {
+    // 簡易的に投稿数が多い記事を「良い記事」と判定
+    if (metrics.postCount >= 3) {
+      similarArticles.push(metrics);
+    }
+  }
+
+  if (similarArticles.length > 0) {
+    // 過去の反応が良かった記事の平均投稿数を計算
+    const avgPostCount = similarArticles.reduce((sum, m) => sum + m.postCount, 0) / similarArticles.length;
+    const avgContentLength = similarArticles.reduce((sum, m) => sum + m.avgContentLength, 0) / similarArticles.length;
+
+    // 投稿数が多いキーワードパターンにボーナス
+    if (avgPostCount >= 10) {
+      adjustedScore += Math.round(baseScore * 0.20); // +20%
+      console.log(`[Dynamic Scoring] High engagement pattern detected. Bonus: +20%`);
+    } else if (avgPostCount >= 5) {
+      adjustedScore += Math.round(baseScore * 0.15); // +15%
+      console.log(`[Dynamic Scoring] Good engagement pattern. Bonus: +15%`);
+    } else if (avgPostCount >= 3) {
+      adjustedScore += Math.round(baseScore * 0.10); // +10%
+      console.log(`[Dynamic Scoring] Moderate engagement. Bonus: +10%`);
+    }
+
+    // 長文コメントが多いキーワードパターンにもボーナス
+    if (avgContentLength >= 200) {
+      adjustedScore += Math.round(baseScore * 0.10); // +10%
+      console.log(`[Dynamic Scoring] Deep discussion pattern. Bonus: +10%`);
+    }
+  }
+
+  return adjustedScore;
+}
+
+/**
+ * レーベンシュタイン距離を計算（文字列の類似度を測定）
+ * @param {string} str1 比較する文字列1
+ * @param {string} str2 比較する文字列2
+ * @returns {number} 編集距離
+ */
+function calculateLevenshteinDistance(str1, str2) {
+  const len1 = str1.length;
+  const len2 = str2.length;
+  const matrix = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
+
+  for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+  for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,      // 削除
+        matrix[i][j - 1] + 1,      // 挿入
+        matrix[i - 1][j - 1] + cost // 置換
+      );
+    }
+  }
+
+  return matrix[len1][len2];
+}
+
+/**
+ * タイトルの類似度を計算（0-100のパーセンテージ）
+ * @param {string} title1 タイトル1
+ * @param {string} title2 タイトル2
+ * @returns {number} 類似度（0-100）
+ */
+function calculateTitleSimilarity(title1, title2) {
+  const maxLen = Math.max(title1.length, title2.length);
+  if (maxLen === 0) return 100;
+
+  const distance = calculateLevenshteinDistance(title1, title2);
+  const similarity = ((maxLen - distance) / maxLen) * 100;
+  return Math.round(similarity);
+}
+
+/**
+ * 記事リストから類似記事を検出してグループ化
+ * @param {Array} articles 記事の配列
+ * @param {number} threshold 類似度の閾値（デフォルト70%）
+ * @returns {Array} 重複を除いた記事配列と類似記事グループの情報
+ */
+function detectAndGroupSimilarArticles(articles, threshold = 70) {
+  const groups = [];
+  const processed = new Set();
+  const result = [];
+
+  for (let i = 0; i < articles.length; i++) {
+    if (processed.has(i)) continue;
+
+    const currentArticle = articles[i];
+    const group = {
+      representative: currentArticle,
+      similar: []
+    };
+
+    for (let j = i + 1; j < articles.length; j++) {
+      if (processed.has(j)) continue;
+
+      const similarity = calculateTitleSimilarity(
+        currentArticle.title,
+        articles[j].title
+      );
+
+      if (similarity >= threshold) {
+        group.similar.push({
+          article: articles[j],
+          similarity: similarity
+        });
+        processed.add(j);
+        console.log(`[Duplicate Detection] 類似記事を検出 (${similarity}%): "${currentArticle.title.substring(0, 40)}..." vs "${articles[j].title.substring(0, 40)}..."`);
+      }
+    }
+
+    groups.push(group);
+    result.push(currentArticle);
+    processed.add(i);
+  }
+
+  if (groups.some(g => g.similar.length > 0)) {
+    console.log(`[Duplicate Detection] ${groups.filter(g => g.similar.length > 0).length}件の類似記事グループを検出しました。`);
+  }
+
+  return { deduplicated: result, groups: groups };
+}
+
+/**
+ * Google Sheetsから過去7日間のニュースを取得
+ * @returns {Promise<Array>} 過去7日間のニュース配列
+ */
+async function getRecentNewsFromSheet() {
+  if (!GOOGLE_APPS_SCRIPT_URL) return [];
+
+  try {
+    console.log('[Context Analysis] Fetching recent news from sheet...');
+    const response = await axios.post(GOOGLE_APPS_SCRIPT_URL, {
+      type: 'getRecentNews',
+      days: 7
+    });
+
+    if (!response.data || !Array.isArray(response.data)) {
+      console.log('[Context Analysis] No recent news data available.');
+      return [];
+    }
+
+    console.log(`[Context Analysis] Loaded ${response.data.length} news from the past 7 days.`);
+    return response.data;
+
+  } catch (error) {
+    console.error('[Context Analysis] Failed to fetch recent news:', error.message);
+    return [];
+  }
+}
+
+/**
+ * 過去のニュースからトレンドキーワードを抽出
+ * @param {Array} recentNews 過去7日間のニュース
+ * @returns {Object} トレンド分析結果
+ */
+function extractTrendKeywords(recentNews) {
+  const keywordCounts = new Map();
+  const categoryKeywords = [
+    ...CORE_AGRI_KEYWORDS,
+    ...TECH_INNOVATION_KEYWORDS,
+    ...CONSUMER_EXPERIENCE_KEYWORDS,
+    ...SOCIAL_SUSTAINABILITY_KEYWORDS,
+    ...HUMAN_STORY_KEYWORDS,
+    ...BUSINESS_POLICY_KEYWORDS
+  ];
+
+  // 各ニュースのタイトルからキーワードを抽出
+  for (const news of recentNews) {
+    const text = (news.title || '').toLowerCase();
+
+    for (const keyword of categoryKeywords) {
+      if (text.includes(keyword.toLowerCase())) {
+        keywordCounts.set(keyword, (keywordCounts.get(keyword) || 0) + 1);
+      }
+    }
+  }
+
+  // カウントの多い順にソート
+  const sortedKeywords = Array.from(keywordCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10); // 上位10個
+
+  const trendingTopics = sortedKeywords
+    .filter(([keyword, count]) => count >= 2)
+    .map(([keyword, count]) => `「${keyword}」(${count}回)`);
+
+  // トレンドの増減を分析
+  const recentThreeDays = recentNews.filter(n => {
+    const newsDate = new Date(n.newsDate || n.publishDate);
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    return newsDate >= threeDaysAgo;
+  });
+
+  const recentKeywords = new Set();
+  for (const news of recentThreeDays) {
+    const text = (news.title || '').toLowerCase();
+    for (const keyword of categoryKeywords) {
+      if (text.includes(keyword.toLowerCase())) {
+        recentKeywords.add(keyword);
+      }
+    }
+  }
+
+  console.log(`[Context Analysis] Trending keywords: ${trendingTopics.join(', ')}`);
+
+  return {
+    topKeywords: sortedKeywords.slice(0, 5).map(([k, c]) => ({ keyword: k, count: c })),
+    trendingSummary: trendingTopics.length > 0
+      ? trendingTopics.slice(0, 5).join(', ')
+      : 'トレンドキーワードなし',
+    recentTopics: Array.from(recentKeywords).slice(0, 5)
+  };
+}
+
+// グローバル変数として議論メトリクスをキャッシュ
+let cachedDiscussionMetrics = new Map();
+let cachedRecentNews = [];
+let cachedTrendAnalysis = null;
+
 // Botが起動したときの処理
 client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
 
   // ▼▼▼ この行を追加 ▼▼▼
   await syncPostedUrlsFromSheet();
+  cachedDiscussionMetrics = await getDiscussionMetricsFromSheet();
+  cachedRecentNews = await getRecentNewsFromSheet();
+  cachedTrendAnalysis = extractTrendKeywords(cachedRecentNews);
   // ▲▲▲ ▲▲▲
 
   // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')XXXXXX
@@ -599,6 +910,11 @@ client.once("ready", async () => {
 
     console.log('[Daily News] ニュース投稿タスクを開始します...');
     try {
+      // ★★★ トレンド分析を毎日リフレッシュ ★★★
+      cachedRecentNews = await getRecentNewsFromSheet();
+      cachedTrendAnalysis = extractTrendKeywords(cachedRecentNews);
+      cachedDiscussionMetrics = await getDiscussionMetricsFromSheet();
+
       const channel = await client.channels.fetch(NEWS_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) {
         console.error('[Daily News] ニュース投稿用チャンネルが見つからないか、テキストチャンネルではありません。');
@@ -865,9 +1181,13 @@ for (const article of allNewArticles) {
 
   // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
   if (score > 0 && matchedCategories.has('コア農業')) {
+    // ★★★ 動的スコアリングを適用 ★★★
+    const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
+
     scoredArticles.push({
       ...article,
-      score: score,
+      baseScore: score,
+      score: dynamicScore,
       priorityLabel: Array.from(matchedCategories).join(' + ')
     });
     uniqueUrls.add(article.link);
@@ -882,8 +1202,12 @@ scoredArticles.sort((a, b) => {
   return new Date(b.isoDate) - new Date(a.isoDate);
 });
 
+// ★★★ Step 4.5: 類似記事検出と重複除去 ★★★
+console.log('[Info Gathering] 類似記事の検出を開始...');
+const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
+
 // Step 5: 最終的に上位3件を抽出
-const finalArticles = scoredArticles.slice(0, 3);
+const finalArticles = uniqueArticles.slice(0, 3);
 
 if (finalArticles.length === 0) {
   console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
