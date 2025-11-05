@@ -1111,9 +1111,9 @@ ${discussionQuestions}
   });
 
 
- // --- 2. 3時間ごとの情報収集ニュース投稿タスク (新しい機能) ---
-  // JSTで朝6時から夜6時まで、3時間ごとに実行 (6, 9, 12, 15, 18時)
-  cron.schedule('0 6-18/3 * * *', async () => {
+ // --- 2. 情報収集ニュース投稿タスク (1日4回) ---
+  // JSTで朝6時から夕方18時まで、4時間ごとに実行 (6, 10, 14, 18時)
+  cron.schedule('0 6,10,14,18 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
   console.log('[Info Gathering] 情報収集タスクを開始します...');
     try {
@@ -1157,6 +1157,7 @@ console.log('[Info Gathering] スコアリングを開始...');
 const allNewArticles = [...newAgriArticles, ...newTechArticles];
 const scoredArticles = [];
 const uniqueUrls = new Set();
+let excludedCount = 0; // 除外された記事数をカウント
 
 // すべての新規記事をスコアリング
 for (const article of allNewArticles) {
@@ -1174,11 +1175,18 @@ for (const article of allNewArticles) {
     }
   };
 
+  // 除外キーワードチェック（誤検出を防止）
+  const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
+  if (hasExclusionKeyword) {
+    excludedCount++;
+    continue; // 除外キーワードに該当する場合はスキップ
+  }
+
   // 各カテゴリのキーワードをチェックしてスコアを加算
-  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 2);
+  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
   checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
-  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 3);
-  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 3);
+  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
+  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
   checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
   checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
   checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
@@ -1197,6 +1205,8 @@ for (const article of allNewArticles) {
     uniqueUrls.add(article.link);
   }
 }
+
+console.log(`[Info Gathering] 除外キーワードに該当: ${excludedCount}件, スコアリング対象: ${scoredArticles.length}件`);
 
 // スコアの高い順、次に日付の新しい順でソート
 scoredArticles.sort((a, b) => {
@@ -1228,7 +1238,9 @@ finalArticles.forEach((article, index) => {
        const articlesToLog = [];
 
       finalArticles.forEach((article, index) => {
-        postContent += `**${index + 1}. ${article.title}**\n${article.link}\n\n`;
+        postContent += `**${index + 1}. ${article.title}**\n`;
+        postContent += `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\`\n`;
+        postContent += `${article.link}\n\n`;
         postedArticleUrls.add(article.link);
         articlesToLog.push({
           url: article.link,
