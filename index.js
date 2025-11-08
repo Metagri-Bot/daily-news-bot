@@ -908,46 +908,53 @@ async function fetchNewBooksFromOpenBD() {
   try {
     console.log('[New Book] openBD APIから新刊情報を取得中...');
 
-    // openBD APIの検索エンドポイント
-    // 過去30日以内に発売された書籍を取得するため、発売日でソートして最新100件を取得
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
+    // openBD APIは特定のISBNでの検索が主なので、
+    // ここでは主要な出版社の最近のISBNを推定する簡易的な方法を使用
+    // より確実な方法として、楽天とGoogleのAPIを優先します
 
-    // openBDの新刊一覧APIを使用（出版社別などの絞り込みも可能）
-    // ここでは汎用的に最新刊を取得
-    const response = await axios.get('https://api.openbd.jp/v1/coverage', {
-      timeout: 10000
-    });
-
-    if (!response.data || !Array.isArray(response.data)) {
-      console.log('[New Book] openBD APIから有効なデータを取得できませんでした');
-      return [];
-    }
-
-    // coverageからISBNリストを取得し、最新のものから一部を抽出
-    const isbnList = response.data.slice(-200); // 最新200件のISBN
-
-    // ISBNから書籍詳細を取得
-    const batchSize = 100; // openBD APIは一度に最大1000件まで取得可能
+    // 今年と去年のISBN範囲を試す（日本の出版社コード）
+    const currentYear = new Date().getFullYear();
     const books = [];
 
-    for (let i = 0; i < Math.min(isbnList.length, batchSize); i += 100) {
-      const batch = isbnList.slice(i, i + 100);
-      const detailResponse = await axios.post('https://api.openbd.jp/v1/get',
-        batch,
-        {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
-        }
-      );
+    // 複数の出版社コードと年を組み合わせて試す
+    const publisherPrefixes = [
+      '978-4-7981', // 技術評論社
+      '978-4-8156', // SBクリエイティブ
+      '978-4-295',  // インプレス
+      '978-4-798'   // 翔泳社
+    ];
 
-      if (detailResponse.data && Array.isArray(detailResponse.data)) {
-        books.push(...detailResponse.data.filter(book => book !== null));
+    // 各出版社の最近のISBNをランダムにサンプリング
+    const isbnSamples = [];
+    for (const prefix of publisherPrefixes) {
+      // 各出版社から10個程度のISBNをサンプリング
+      for (let i = 0; i < 10; i++) {
+        const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        isbnSamples.push(`${prefix}-${randomSuffix}`);
       }
     }
 
-    console.log(`[New Book] ${books.length}件の書籍情報を取得しました`);
+    // サンプリングしたISBNで詳細を取得
+    if (isbnSamples.length > 0) {
+      try {
+        const detailResponse = await axios.post('https://api.openbd.jp/v1/get',
+          isbnSamples,
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000
+          }
+        );
+
+        if (detailResponse.data && Array.isArray(detailResponse.data)) {
+          const validBooks = detailResponse.data.filter(book => book !== null);
+          books.push(...validBooks);
+        }
+      } catch (detailError) {
+        console.log('[New Book] openBD API詳細取得エラー:', detailError.message);
+      }
+    }
+
+    console.log(`[New Book] openBD APIから${books.length}件の書籍情報を取得しました`);
     return books;
 
   } catch (error) {
@@ -969,55 +976,62 @@ async function fetchNewBooksFromRakuten() {
   try {
     console.log('[New Book] 楽天Books APIから新刊情報を取得中...');
 
-    // 過去30日以内の新刊を取得
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
+    // 複数のキーワードで検索して結果を統合
+    const keywords = ['農業', 'AI', 'DX', 'テクノロジー', 'ビジネス', 'Web3'];
+    const allBooks = [];
 
-    // 楽天Books総合検索APIを使用
-    const response = await axios.get('https://app.rakuten.co.jp/services/api/BooksTotal/Search/20170404', {
-      params: {
-        applicationId: RAKUTEN_APP_ID,
-        sort: '-releaseDate', // 発売日の新しい順
-        hits: 100, // 最大100件
-        outOfStockFlag: 0, // 在庫ありのみ
-        booksGenreId: '001' // ジャンル: 本
-      },
-      timeout: 10000
-    });
+    for (const keyword of keywords) {
+      try {
+        // 楽天Books書籍検索APIを使用
+        const response = await axios.get('https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404', {
+          params: {
+            applicationId: RAKUTEN_APP_ID,
+            keyword: keyword,
+            sort: '-releaseDate', // 発売日の新しい順
+            hits: 20, // キーワードごとに20件
+            outOfStockFlag: 0 // 在庫ありのみ
+          },
+          timeout: 10000
+        });
 
-    if (!response.data || !response.data.Items || response.data.Items.length === 0) {
-      console.log('[New Book] 楽天Books APIから有効なデータを取得できませんでした');
-      return [];
+        if (response.data && response.data.Items && response.data.Items.length > 0) {
+          // 楽天のレスポンスを統一フォーマットに変換
+          const books = response.data.Items.map(item => {
+            const book = item.Item;
+            return {
+              source: 'rakuten',
+              summary: {
+                title: book.title || '',
+                author: book.author || '',
+                publisher: book.publisherName || '',
+                isbn: book.isbn || '',
+                pubdate: book.salesDate ? book.salesDate.replace(/-/g, '') : '',
+                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
+              },
+              onix: {
+                CollateralDetail: {
+                  TextContent: book.itemCaption ? [{
+                    TextType: '03',
+                    Text: book.itemCaption
+                  }] : []
+                }
+              },
+              rakutenUrl: book.itemUrl || ''
+            };
+          });
+
+          allBooks.push(...books);
+        }
+      } catch (keywordError) {
+        console.log(`[New Book] 楽天Books API (${keyword}) エラー:`, keywordError.message);
+      }
+
+      // レート制限を考慮して少し待つ
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    // 楽天のレスポンスを統一フォーマットに変換
-    const books = response.data.Items.map(item => {
-      const book = item.Item;
-      return {
-        source: 'rakuten',
-        summary: {
-          title: book.title || '',
-          author: book.author || '',
-          publisher: book.publisherName || '',
-          isbn: book.isbn || '',
-          pubdate: book.salesDate ? book.salesDate.replace(/-/g, '') : '',
-          cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
-        },
-        onix: {
-          CollateralDetail: {
-            TextContent: book.itemCaption ? [{
-              TextType: '03',
-              Text: book.itemCaption
-            }] : []
-          }
-        },
-        rakutenUrl: book.itemUrl || ''
-      };
-    });
-
-    console.log(`[New Book] 楽天Books APIから${books.length}件の書籍情報を取得しました`);
-    return books;
+    console.log(`[New Book] 楽天Books APIから${allBooks.length}件の書籍情報を取得しました`);
+    return allBooks;
 
   } catch (error) {
     console.error('[New Book] 楽天Books API取得エラー:', error.message);
@@ -1033,59 +1047,66 @@ async function fetchNewBooksFromGoogle() {
   try {
     console.log('[New Book] Google Books APIから新刊情報を取得中...');
 
-    // 日本語の書籍で最近出版されたものを検索
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
+    // 複数のキーワードで検索して結果を統合
+    const keywords = ['農業', 'AI', 'DX', 'テクノロジー', 'ビジネス', 'スマート農業'];
+    const allBooks = [];
 
-    // Google Books APIで新しい書籍を検索
-    const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
-      params: {
-        q: 'subject:農業 OR subject:AI OR subject:テクノロジー OR subject:ビジネス', // 関連性の高いキーワード
-        langRestrict: 'ja', // 日本語のみ
-        orderBy: 'newest', // 新しい順
-        maxResults: 40, // 最大40件
-        printType: 'books' // 書籍のみ
-      },
-      timeout: 10000
-    });
+    for (const keyword of keywords) {
+      try {
+        // Google Books APIで新しい書籍を検索
+        const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
+          params: {
+            q: keyword,
+            langRestrict: 'ja', // 日本語のみ
+            orderBy: 'newest', // 新しい順
+            maxResults: 10, // キーワードごとに10件
+            printType: 'books' // 書籍のみ
+          },
+          timeout: 10000
+        });
 
-    if (!response.data || !response.data.items || response.data.items.length === 0) {
-      console.log('[New Book] Google Books APIから有効なデータを取得できませんでした');
-      return [];
+        if (response.data && response.data.items && response.data.items.length > 0) {
+          // Googleのレスポンスを統一フォーマットに変換
+          const books = response.data.items.map(item => {
+            const volumeInfo = item.volumeInfo;
+            const industryIdentifiers = volumeInfo.industryIdentifiers || [];
+            const isbn13 = industryIdentifiers.find(id => id.type === 'ISBN_13')?.identifier || '';
+            const isbn10 = industryIdentifiers.find(id => id.type === 'ISBN_10')?.identifier || '';
+
+            return {
+              source: 'google',
+              summary: {
+                title: volumeInfo.title || '',
+                author: (volumeInfo.authors || []).join(', '),
+                publisher: volumeInfo.publisher || '',
+                isbn: isbn13 || isbn10,
+                pubdate: volumeInfo.publishedDate ? volumeInfo.publishedDate.replace(/-/g, '') : '',
+                cover: volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail || ''
+              },
+              onix: {
+                CollateralDetail: {
+                  TextContent: volumeInfo.description ? [{
+                    TextType: '03',
+                    Text: volumeInfo.description
+                  }] : []
+                }
+              },
+              googleUrl: volumeInfo.infoLink || ''
+            };
+          });
+
+          allBooks.push(...books);
+        }
+      } catch (keywordError) {
+        console.log(`[New Book] Google Books API (${keyword}) エラー:`, keywordError.message);
+      }
+
+      // レート制限を考慮して少し待つ
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    // Googleのレスポンスを統一フォーマットに変換
-    const books = response.data.items.map(item => {
-      const volumeInfo = item.volumeInfo;
-      const industryIdentifiers = volumeInfo.industryIdentifiers || [];
-      const isbn13 = industryIdentifiers.find(id => id.type === 'ISBN_13')?.identifier || '';
-      const isbn10 = industryIdentifiers.find(id => id.type === 'ISBN_10')?.identifier || '';
-
-      return {
-        source: 'google',
-        summary: {
-          title: volumeInfo.title || '',
-          author: (volumeInfo.authors || []).join(', '),
-          publisher: volumeInfo.publisher || '',
-          isbn: isbn13 || isbn10,
-          pubdate: volumeInfo.publishedDate ? volumeInfo.publishedDate.replace(/-/g, '') : '',
-          cover: volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail || ''
-        },
-        onix: {
-          CollateralDetail: {
-            TextContent: volumeInfo.description ? [{
-              TextType: '03',
-              Text: volumeInfo.description
-            }] : []
-          }
-        },
-        googleUrl: volumeInfo.infoLink || ''
-      };
-    });
-
-    console.log(`[New Book] Google Books APIから${books.length}件の書籍情報を取得しました`);
-    return books;
+    console.log(`[New Book] Google Books APIから${allBooks.length}件の書籍情報を取得しました`);
+    return allBooks;
 
   } catch (error) {
     console.error('[New Book] Google Books API取得エラー:', error.message);
