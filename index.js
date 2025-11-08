@@ -1165,22 +1165,48 @@ function filterBooksByDate(books, daysAgo, includeFuture = false) {
     const pubdate = book.summary.pubdate;
     if (!pubdate) return false;
 
-    // pubdate形式: YYYYMMDD or YYYY-MM-DD
-    const dateStr = pubdate.replace(/-/g, '');
-    if (dateStr.length < 8) return false;
+    // pubdate形式: YYYYMMDD or YYYY-MM-DD or YYYY or YYYYMM
+    const dateStr = pubdate.replace(/-/g, '').replace(/\//g, '');
+    if (dateStr.length < 4) return false; // 最低4桁（年）が必要
 
-    const year = parseInt(dateStr.substring(0, 4));
-    const month = parseInt(dateStr.substring(4, 6)) - 1; // 月は0始まり
-    const day = parseInt(dateStr.substring(6, 8));
-    const bookDate = new Date(year, month, day);
+    try {
+      let year, month, day;
 
-    // 未来日を含める場合
-    if (includeFuture) {
-      return bookDate >= cutoffDate; // cutoffDate以降（過去〜未来）
+      if (dateStr.length === 4) {
+        // 年のみ（YYYY）→ その年の1月1日として扱う
+        year = parseInt(dateStr);
+        month = 0;
+        day = 1;
+      } else if (dateStr.length === 6) {
+        // 年月のみ（YYYYMM）→ その月の1日として扱う
+        year = parseInt(dateStr.substring(0, 4));
+        month = parseInt(dateStr.substring(4, 6)) - 1;
+        day = 1;
+      } else if (dateStr.length >= 8) {
+        // 完全な日付（YYYYMMDD）
+        year = parseInt(dateStr.substring(0, 4));
+        month = parseInt(dateStr.substring(4, 6)) - 1;
+        day = parseInt(dateStr.substring(6, 8));
+      } else {
+        return false;
+      }
+
+      const bookDate = new Date(year, month, day);
+
+      // 無効な日付チェック
+      if (isNaN(bookDate.getTime())) return false;
+
+      // 未来日を含める場合
+      if (includeFuture) {
+        return bookDate >= cutoffDate; // cutoffDate以降（過去〜未来）
+      }
+
+      // 過去のみの場合
+      return bookDate >= cutoffDate && bookDate <= now;
+    } catch (e) {
+      console.log(`[Date Filter] 日付解析エラー: ${pubdate}`);
+      return false;
     }
-
-    // 過去のみの場合
-    return bookDate >= cutoffDate && bookDate <= now;
   });
 
   console.log(`[Date Filter] ${books.length}件から${daysAgo}日以内${includeFuture ? '（発売予定含む）' : ''}の書籍を${filtered.length}件抽出`);
@@ -1697,27 +1723,19 @@ async function fetchBooksWithCache() {
 }
 
 /**
- * 農業技術関連書籍を取得（1ヶ月以内、農業×テクノロジー特化）
+ * 農業技術関連書籍を取得（2ヶ月以内、農業×テクノロジー特化）
  * @returns {Promise<Array>} 農業技術書籍リスト
  */
 async function fetchAgriTechBooks() {
   console.log('[AgriTech Books] 農業技術関連書籍を取得中...');
 
-  // 農業×テクノロジーに特化したキーワード
+  // 農業×テクノロジーに特化したキーワード（厳選5個）
   const agriTechKeywords = [
-    '農業 AI',
-    '農業 DX',
-    '農業 Web3',
-    '農業 IoT',
     'スマート農業',
-    '農業 データ',
-    '農業 メタバース',
-    '農業 マーケティング',
-    '農業 ブロックチェーン',
-    '農業 ロボット',
     'アグリテック',
-    '精密農業',
-    '農業 テクノロジー'
+    '農業 DX',
+    '農業 AI',
+    '精密農業'
   ];
 
   const allBooks = [];
@@ -1731,7 +1749,7 @@ async function fetchAgriTechBooks() {
             applicationId: RAKUTEN_APP_ID,
             keyword: keyword,
             sort: '-releaseDate',
-            hits: 15,
+            hits: 30, // キーワード数を減らした分、hitsを増やす
             outOfStockFlag: 0
           },
           timeout: 10000
@@ -1766,12 +1784,12 @@ async function fetchAgriTechBooks() {
       } catch (error) {
         console.log(`[AgriTech Books] 楽天API (${keyword}) エラー:`, error.message);
       }
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 500)); // 待機時間を500msに延長
     }
   }
 
   // Google Books APIから取得
-  for (const keyword of agriTechKeywords.slice(0, 8)) { // 制限してAPI制限を回避
+  for (const keyword of agriTechKeywords) {
     try {
       const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
         params: {
@@ -1817,7 +1835,7 @@ async function fetchAgriTechBooks() {
     } catch (error) {
       console.log(`[AgriTech Books] Google API (${keyword}) エラー:`, error.message);
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 300)); // 待機時間延長
   }
 
   // openBDからも取得
@@ -1827,32 +1845,27 @@ async function fetchAgriTechBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 1ヶ月以内の書籍のみにフィルタ
-  const filtered = filterBooksByDate(merged, 30, false);
+  // 2ヶ月以内の書籍のみにフィルタ（範囲を広げて書籍を確保）
+  const filtered = filterBooksByDate(merged, 60, false);
 
   console.log(`[AgriTech Books] ${filtered.length}件の農業技術関連書籍を取得しました`);
   return filtered;
 }
 
 /**
- * 一般新刊書籍を取得（1週間以内、発売予定含む）
+ * 一般新刊書籍を取得（2週間以内、発売予定含む）
  * @returns {Promise<Array>} 一般新刊書籍リスト
  */
 async function fetchPopularBooks() {
   console.log('[Popular Books] 一般新刊書籍を取得中...');
 
-  // 一般新刊向けキーワード
+  // 一般新刊向けキーワード（厳選5個）
   const popularKeywords = [
-    'ビジネス書',
-    '小説 新刊',
     'ベストセラー',
-    '自己啓発',
     '話題の本',
-    '文学賞',
-    '経営 新刊',
-    'マネジメント',
-    '起業',
-    '働き方'
+    'ビジネス書 新刊',
+    '小説 新刊',
+    '自己啓発'
   ];
 
   const allBooks = [];
@@ -1866,7 +1879,7 @@ async function fetchPopularBooks() {
             applicationId: RAKUTEN_APP_ID,
             keyword: keyword,
             sort: '-releaseDate',
-            hits: 20,
+            hits: 30, // キーワード数を減らした分、hitsを増やす
             outOfStockFlag: 0
           },
           timeout: 10000
@@ -1901,7 +1914,7 @@ async function fetchPopularBooks() {
       } catch (error) {
         console.log(`[Popular Books] 楽天API (${keyword}) エラー:`, error.message);
       }
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 500)); // 待機時間を500msに延長
     }
   }
 
@@ -1952,14 +1965,14 @@ async function fetchPopularBooks() {
     } catch (error) {
       console.log(`[Popular Books] Google API (${keyword}) エラー:`, error.message);
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 300)); // 待機時間延長
   }
 
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 1週間以内の書籍（発売予定含む）
-  const filtered = filterBooksByDate(merged, 7, true);
+  // 2週間以内の書籍（発売予定含む、範囲を広げて書籍を確保）
+  const filtered = filterBooksByDate(merged, 14, true);
 
   console.log(`[Popular Books] ${filtered.length}件の一般新刊書籍を取得しました`);
   return filtered;
