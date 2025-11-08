@@ -128,6 +128,13 @@ function doPost(e) {
     const data = JSON.parse(e.postData.contents);
     const type = data.type;
 
+    // ========== 新刊紹介機能用の処理 ==========
+    if (type === 'newBook') {
+      logNewBook(data);
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // 既存の処理
     if (type === 'discussion') {
       logDiscussion(data);
@@ -138,21 +145,41 @@ function doPost(e) {
     } else if (type === 'globalResearch') {
       logGlobalResearch(data);
     }
-    // ========== 新刊紹介機能用の処理を追加 ==========
-    else if (type === 'newBook') {
-      logNewBook(data);
-    } else if (type === 'getPostedBooks') {
-      // 投稿済みISBNリストを返す
-      const isbns = getPostedBooks();
-      return ContentService.createTextOutput(JSON.stringify(isbns))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
 
     return ContentService.createTextOutput(JSON.stringify({ success: true }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
     Logger.log('Error in doPost: ' + error.toString());
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: error.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * GETリクエスト処理（投稿済みISBN取得用）
+ */
+function doGet(e) {
+  try {
+    const type = e.parameter.type;
+
+    if (type === 'getPostedBooks') {
+      // 投稿済みISBNリストを返す
+      const isbns = getPostedBooks();
+      return ContentService.createTextOutput(JSON.stringify(isbns))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 既存のGET処理（Posted_URLs取得など）
+    // ...
+
+    return ContentService.createTextOutput(JSON.stringify({ success: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    Logger.log('Error in doGet: ' + error.toString());
     return ContentService.createTextOutput(JSON.stringify({
       success: false,
       error: error.toString()
@@ -238,17 +265,57 @@ await logToSpreadsheet('newBook', {
 
 ## トラブルシューティング
 
+### Google Sheetsに書き込まれない場合
+
+**症状**: Botログに「[Spreadsheet] タイプ 'newBook' のログ書き込みに成功しました。」と表示されるが、シートに反映されない
+
+**原因と解決策**:
+
+1. **GASコードの確認**
+   - `logNewBook(data)`関数が正しく実装されているか確認
+   - `Posted_Books`シートが存在するか確認
+   - GASの実行ログ（`Logger.log`）を確認
+
+2. **GAS再デプロイ**
+   ```
+   1. GASエディタで「デプロイ」→「デプロイを管理」
+   2. 既存のデプロイの右側の鉛筆アイコンをクリック
+   3. 「バージョン」を「新バージョン」に変更
+   4. 「デプロイ」をクリック
+   ```
+
+3. **権限の確認**
+   - GASがGoogle Sheetsへの書き込み権限を持っているか確認
+   - 初回実行時に権限承認が必要
+
+4. **デバッグ方法**
+   ```javascript
+   // GASのlogNewBook関数の先頭に追加
+   Logger.log('[logNewBook] データ受信: ' + JSON.stringify(data));
+   ```
+
 ### ISBNが重複して投稿される場合
 
 1. `Posted_Books`シートが正しく作成されているか確認
-2. GASの`doPost`関数が正しくデプロイされているか確認
+2. GASの`doGet`関数が正しく実装されているか確認
 3. Bot起動ログで「X件の投稿済み書籍を読み込みました」と表示されるか確認
+4. GASのURLが正しく設定されているか確認
 
 ### 書籍が全く投稿されない場合
 
 1. 環境変数`NEW_BOOK_CHANNEL_ID`と`POPULAR_BOOK_CHANNEL_ID`が設定されているか確認
 2. スコアリングで基準を満たす書籍があるか確認
 3. 投稿済みチェックで全て除外されていないか確認
+4. APIから書籍を取得できているか確認（Botログ）
+
+### 楽天API 429エラー（レート制限）
+
+**症状**: `[New Book] 楽天Books API (XX) エラー: Request failed with status code 429`
+
+**解決策**:
+- **既に実装済み**: 書籍データキャッシュにより、2つのタスクが同じAPIを2回叩くことを防止
+- キャッシュは1時間有効
+- 9:00と10:00の実行で同じデータを共有
 
 ## メンテナンス
 
