@@ -1292,15 +1292,8 @@ async function postDailyNewBook() {
       return;
     }
 
-    // 複数のソースから新刊情報を並行取得
-    const [openBDBooks, rakutenBooks, googleBooks] = await Promise.all([
-      fetchNewBooksFromOpenBD(),
-      fetchNewBooksFromRakuten(),
-      fetchNewBooksFromGoogle()
-    ]);
-
-    // 書籍を統合（重複除去）
-    const books = mergeBooks(openBDBooks, rakutenBooks, googleBooks);
+    // キャッシュから書籍データを取得（API呼び出し削減）
+    const books = await fetchBooksWithCache();
 
     if (books.length === 0) {
       console.log('[New Book] すべてのAPIから書籍を取得できませんでした');
@@ -1469,15 +1462,8 @@ async function postDailyPopularBook() {
       return;
     }
 
-    // 複数のソースから新刊情報を並行取得
-    const [openBDBooks, rakutenBooks, googleBooks] = await Promise.all([
-      fetchNewBooksFromOpenBD(),
-      fetchNewBooksFromRakuten(),
-      fetchNewBooksFromGoogle()
-    ]);
-
-    // 書籍を統合（重複除去）
-    const books = mergeBooks(openBDBooks, rakutenBooks, googleBooks);
+    // キャッシュから書籍データを取得（API呼び出し削減）
+    const books = await fetchBooksWithCache();
 
     if (books.length === 0) {
       console.log('[Popular Book] すべてのAPIから書籍を取得できませんでした');
@@ -1634,6 +1620,44 @@ let cachedTrendAnalysis = null;
 // 投稿済み書籍のISBNをキャッシュ（重複防止用）
 const postedBookIsbns = new Set();
 
+// 書籍データのキャッシュ（API呼び出し削減用）
+let cachedBooks = [];
+let cachedBooksTimestamp = null;
+const BOOK_CACHE_DURATION = 60 * 60 * 1000; // 1時間有効
+
+/**
+ * 書籍データを取得（キャッシュ使用）
+ * @returns {Promise<Array>} 書籍リスト
+ */
+async function fetchBooksWithCache() {
+  const now = Date.now();
+
+  // キャッシュが有効な場合はキャッシュを返す
+  if (cachedBooks.length > 0 && cachedBooksTimestamp && (now - cachedBooksTimestamp < BOOK_CACHE_DURATION)) {
+    console.log(`[Book Cache] キャッシュから${cachedBooks.length}件の書籍を返却`);
+    return cachedBooks;
+  }
+
+  console.log('[Book Cache] 新しい書籍データを取得中...');
+
+  // 複数のソースから新刊情報を並行取得
+  const [openBDBooks, rakutenBooks, googleBooks] = await Promise.all([
+    fetchNewBooksFromOpenBD(),
+    fetchNewBooksFromRakuten(),
+    fetchNewBooksFromGoogle()
+  ]);
+
+  // 書籍を統合（重複除去）
+  const books = mergeBooks(openBDBooks, rakutenBooks, googleBooks);
+
+  // キャッシュを更新
+  cachedBooks = books;
+  cachedBooksTimestamp = now;
+
+  console.log(`[Book Cache] ${books.length}件の書籍をキャッシュに保存`);
+  return books;
+}
+
 /**
  * GASから投稿済み書籍のISBNリストを取得
  * @returns {Promise<Set>} 投稿済みISBNのSet
@@ -1646,17 +1670,30 @@ async function syncPostedBooksFromSheet() {
 
   try {
     console.log('[Book Sync] GASから投稿済み書籍リストを取得中...');
-    const response = await axios.post(GOOGLE_APPS_SCRIPT_URL, {
-      type: 'getPostedBooks'
+    // GETリクエストでISBNリストを取得
+    const response = await axios.get(GOOGLE_APPS_SCRIPT_URL, {
+      params: {
+        type: 'getPostedBooks'
+      },
+      timeout: 10000
     });
 
     if (response.data && Array.isArray(response.data)) {
       postedBookIsbns.clear();
-      response.data.forEach(isbn => postedBookIsbns.add(isbn));
+      response.data.forEach(isbn => {
+        if (isbn && isbn.toString().trim() !== '') {
+          postedBookIsbns.add(isbn.toString());
+        }
+      });
       console.log(`[Book Sync] ${postedBookIsbns.size}件の投稿済み書籍を読み込みました`);
+    } else {
+      console.log('[Book Sync] レスポンスが配列ではありません:', typeof response.data);
     }
   } catch (error) {
     console.error('[Book Sync] 投稿済み書籍の取得エラー:', error.message);
+    if (error.response) {
+      console.error('[Book Sync] レスポンス:', error.response.data);
+    }
   }
 }
 
