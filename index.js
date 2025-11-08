@@ -1833,6 +1833,7 @@ finalArticles.forEach((article, index) => {
 
   // === 新刊紹介タスク（毎日朝9時） ===
   cron.schedule('0 9 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyNewBook();
   }, {
     timezone: "Asia/Tokyo"
