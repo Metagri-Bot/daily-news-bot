@@ -2347,6 +2347,7 @@ finalArticles.forEach((article, index) => {
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
   cron.schedule('0 10 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
     timezone: "Asia/Tokyo"
