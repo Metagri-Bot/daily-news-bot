@@ -1364,15 +1364,14 @@ async function postDailyNewBook() {
       return;
     }
 
-    // スコアリングと投稿済みチェック
-    const scoredBooks = [];
+    // 投稿可能な書籍をフィルタ（スコアリングは無効化）
+    const availableBooks = [];
     for (const book of books) {
-      const { score, categories } = scoreBook(book);
       const isbn = book.summary.isbn;
-
-      // スコアが-1（除外）でなく、かつ投稿済みでない書籍のみ（スコア0も許容）
-      if (score >= 0 && isbn && !postedBookIsbns.has(isbn)) {
-        scoredBooks.push({
+      // ISBNがあり、投稿済みでない書籍はすべて許容
+      if (isbn && !postedBookIsbns.has(isbn)) {
+        const { score, categories } = scoreBook(book);
+        availableBooks.push({
           book,
           score,
           categories
@@ -1380,16 +1379,27 @@ async function postDailyNewBook() {
       }
     }
 
-    if (scoredBooks.length === 0) {
-      console.log('[New Book] 基準を満たす未投稿の書籍がありませんでした');
-      return;
+    if (availableBooks.length === 0) {
+      console.log('[New Book] 投稿可能な未投稿の書籍がありませんでした');
+      // 投稿済みでも最新の書籍を1つ投稿（確実に1日1冊投稿するため）
+      if (books.length > 0) {
+        console.log('[New Book] 投稿済み書籍から最新の1冊を再投稿します');
+        const { score, categories } = scoreBook(books[0]);
+        availableBooks.push({
+          book: books[0],
+          score,
+          categories
+        });
+      } else {
+        return;
+      }
     }
 
-    // スコアでソート
-    scoredBooks.sort((a, b) => b.score - a.score);
+    // スコアでソート（高い順）
+    availableBooks.sort((a, b) => b.score - a.score);
 
     // 最高スコアの書籍を選択
-    const selected = scoredBooks[0];
+    const selected = availableBooks[0];
     const bookData = selected.book.summary;
     const onix = selected.book.onix || {};
 
@@ -1534,15 +1544,14 @@ async function postDailyPopularBook() {
       return;
     }
 
-    // スコアリングと投稿済みチェック
-    const scoredBooks = [];
+    // 投稿可能な書籍をフィルタ（スコアリングは無効化）
+    const availableBooks = [];
     for (const book of books) {
-      const { score, categories } = scorePopularBook(book);
       const isbn = book.summary.isbn;
-
-      // スコアが-1（除外）でなく、かつ投稿済みでない書籍のみ（スコア0も許容）
-      if (score >= 0 && isbn && !postedBookIsbns.has(isbn)) {
-        scoredBooks.push({
+      // ISBNがあり、投稿済みでない書籍はすべて許容
+      if (isbn && !postedBookIsbns.has(isbn)) {
+        const { score, categories } = scorePopularBook(book);
+        availableBooks.push({
           book,
           score,
           categories
@@ -1550,16 +1559,27 @@ async function postDailyPopularBook() {
       }
     }
 
-    if (scoredBooks.length === 0) {
-      console.log('[Popular Book] 基準を満たす未投稿の書籍がありませんでした');
-      return;
+    if (availableBooks.length === 0) {
+      console.log('[Popular Book] 投稿可能な未投稿の書籍がありませんでした');
+      // 投稿済みでも最新の書籍を1つ投稿（確実に1日1冊投稿するため）
+      if (books.length > 0) {
+        console.log('[Popular Book] 投稿済み書籍から最新の1冊を再投稿します');
+        const { score, categories } = scorePopularBook(books[0]);
+        availableBooks.push({
+          book: books[0],
+          score,
+          categories
+        });
+      } else {
+        return;
+      }
     }
 
-    // スコアでソート
-    scoredBooks.sort((a, b) => b.score - a.score);
+    // スコアでソート（高い順）
+    availableBooks.sort((a, b) => b.score - a.score);
 
     // 最高スコアの書籍を選択
-    const selected = scoredBooks[0];
+    const selected = availableBooks[0];
     const bookData = selected.book.summary;
     const onix = selected.book.onix || {};
 
@@ -1723,7 +1743,7 @@ async function fetchBooksWithCache() {
 }
 
 /**
- * 農業技術関連書籍を取得（6ヶ月以内、フォールバック有り）
+ * 農業技術関連書籍を取得（日付フィルタなし）
  * @returns {Promise<Array>} 農業技術書籍リスト
  */
 async function fetchAgriTechBooks() {
@@ -1799,21 +1819,13 @@ async function fetchAgriTechBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 6ヶ月以内の書籍のみにフィルタ（範囲を大幅に拡大）
-  let filtered = filterBooksByDate(merged, 180, false);
-
-  // フィルタ後に書籍が5件未満の場合、フィルタなしで全件を返す
-  if (filtered.length < 5) {
-    console.log(`[AgriTech Books] フィルタ後の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
-    filtered = merged;
-  }
-
-  console.log(`[AgriTech Books] ${filtered.length}件の農業技術関連書籍を取得しました`);
-  return filtered;
+  // 日付フィルタは完全に無効化（確実に書籍を取得するため）
+  console.log(`[AgriTech Books] ${merged.length}件の農業技術関連書籍を取得しました（日付フィルタなし）`);
+  return merged;
 }
 
 /**
- * 一般新刊書籍を取得（3ヶ月以内、発売予定含む、フォールバック有り）
+ * 一般新刊書籍を取得（日付フィルタなし）
  * @returns {Promise<Array>} 一般新刊書籍リスト
  */
 async function fetchPopularBooks() {
@@ -1884,17 +1896,9 @@ async function fetchPopularBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 3ヶ月以内の書籍（発売予定含む、範囲を大幅に拡大）
-  let filtered = filterBooksByDate(merged, 90, true);
-
-  // フィルタ後に書籍が5件未満の場合、フィルタなしで全件を返す
-  if (filtered.length < 5) {
-    console.log(`[Popular Books] フィルタ後の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
-    filtered = merged;
-  }
-
-  console.log(`[Popular Books] ${filtered.length}件の一般新刊書籍を取得しました`);
-  return filtered;
+  // 日付フィルタは完全に無効化（確実に書籍を取得するため）
+  console.log(`[Popular Books] ${merged.length}件の一般新刊書籍を取得しました（日付フィルタなし）`);
+  return merged;
 }
 
 /**
