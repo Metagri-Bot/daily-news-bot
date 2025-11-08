@@ -1370,8 +1370,8 @@ async function postDailyNewBook() {
       const { score, categories } = scoreBook(book);
       const isbn = book.summary.isbn;
 
-      // スコアが0より大きく、かつ投稿済みでない書籍のみ
-      if (score > 0 && isbn && !postedBookIsbns.has(isbn)) {
+      // スコアが-1（除外）でなく、かつ投稿済みでない書籍のみ（スコア0も許容）
+      if (score >= 0 && isbn && !postedBookIsbns.has(isbn)) {
         scoredBooks.push({
           book,
           score,
@@ -1540,8 +1540,8 @@ async function postDailyPopularBook() {
       const { score, categories } = scorePopularBook(book);
       const isbn = book.summary.isbn;
 
-      // スコアが0より大きく、かつ投稿済みでない書籍のみ
-      if (score > 0 && isbn && !postedBookIsbns.has(isbn)) {
+      // スコアが-1（除外）でなく、かつ投稿済みでない書籍のみ（スコア0も許容）
+      if (score >= 0 && isbn && !postedBookIsbns.has(isbn)) {
         scoredBooks.push({
           book,
           score,
@@ -1723,72 +1723,26 @@ async function fetchBooksWithCache() {
 }
 
 /**
- * 農業技術関連書籍を取得（2ヶ月以内、農業×テクノロジー特化）
+ * 農業技術関連書籍を取得（6ヶ月以内、フォールバック有り）
  * @returns {Promise<Array>} 農業技術書籍リスト
  */
 async function fetchAgriTechBooks() {
   console.log('[AgriTech Books] 農業技術関連書籍を取得中...');
 
-  // 農業×テクノロジーに特化したキーワード（厳選5個）
+  // 農業×テクノロジーに特化したキーワード（厳選7個）
   const agriTechKeywords = [
     'スマート農業',
     'アグリテック',
     '農業 DX',
     '農業 AI',
-    '精密農業'
+    '精密農業',
+    '農業 IoT',
+    '農業技術'
   ];
 
   const allBooks = [];
 
-  // 楽天Books APIから取得
-  if (RAKUTEN_APP_ID) {
-    for (const keyword of agriTechKeywords) {
-      try {
-        const response = await axios.get('https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404', {
-          params: {
-            applicationId: RAKUTEN_APP_ID,
-            keyword: keyword,
-            sort: '-releaseDate',
-            hits: 30, // キーワード数を減らした分、hitsを増やす
-            outOfStockFlag: 0
-          },
-          timeout: 10000
-        });
-
-        if (response.data && response.data.Items && response.data.Items.length > 0) {
-          const books = response.data.Items.map(item => {
-            const book = item.Item;
-            return {
-              source: 'rakuten',
-              summary: {
-                title: book.title || '',
-                author: book.author || '',
-                publisher: book.publisherName || '',
-                isbn: book.isbn || '',
-                pubdate: book.salesDate ? book.salesDate.replace(/-/g, '') : '',
-                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
-              },
-              onix: {
-                CollateralDetail: {
-                  TextContent: book.itemCaption ? [{
-                    TextType: '03',
-                    Text: book.itemCaption
-                  }] : []
-                }
-              },
-              rakutenUrl: book.itemUrl || ''
-            };
-          });
-          allBooks.push(...books);
-        }
-      } catch (error) {
-        console.log(`[AgriTech Books] 楽天API (${keyword}) エラー:`, error.message);
-      }
-      await new Promise(resolve => setTimeout(resolve, 500)); // 待機時間を500msに延長
-    }
-  }
-
-  // Google Books APIから取得
+  // Google Books APIから取得（楽天APIは429エラー回避のため使用停止）
   for (const keyword of agriTechKeywords) {
     try {
       const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
@@ -1796,7 +1750,7 @@ async function fetchAgriTechBooks() {
           q: keyword,
           langRestrict: 'ja',
           orderBy: 'newest',
-          maxResults: 10,
+          maxResults: 20, // maxResultsを増やす
           printType: 'books'
         },
         timeout: 10000
@@ -1835,7 +1789,7 @@ async function fetchAgriTechBooks() {
     } catch (error) {
       console.log(`[AgriTech Books] Google API (${keyword}) エラー:`, error.message);
     }
-    await new Promise(resolve => setTimeout(resolve, 300)); // 待機時間延長
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   // openBDからも取得
@@ -1845,80 +1799,39 @@ async function fetchAgriTechBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 2ヶ月以内の書籍のみにフィルタ（範囲を広げて書籍を確保）
-  const filtered = filterBooksByDate(merged, 60, false);
+  // 6ヶ月以内の書籍のみにフィルタ（範囲を大幅に拡大）
+  let filtered = filterBooksByDate(merged, 180, false);
+
+  // フィルタ後に書籍が5件未満の場合、フィルタなしで全件を返す
+  if (filtered.length < 5) {
+    console.log(`[AgriTech Books] フィルタ後の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    filtered = merged;
+  }
 
   console.log(`[AgriTech Books] ${filtered.length}件の農業技術関連書籍を取得しました`);
   return filtered;
 }
 
 /**
- * 一般新刊書籍を取得（2週間以内、発売予定含む）
+ * 一般新刊書籍を取得（3ヶ月以内、発売予定含む、フォールバック有り）
  * @returns {Promise<Array>} 一般新刊書籍リスト
  */
 async function fetchPopularBooks() {
   console.log('[Popular Books] 一般新刊書籍を取得中...');
 
-  // 一般新刊向けキーワード（厳選5個）
+  // 一般新刊向けキーワード（厳選6個）
   const popularKeywords = [
     'ベストセラー',
     '話題の本',
-    'ビジネス書 新刊',
-    '小説 新刊',
-    '自己啓発'
+    'ビジネス書',
+    '小説',
+    '自己啓発',
+    '経済'
   ];
 
   const allBooks = [];
 
-  // 楽天Books APIから取得
-  if (RAKUTEN_APP_ID) {
-    for (const keyword of popularKeywords) {
-      try {
-        const response = await axios.get('https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404', {
-          params: {
-            applicationId: RAKUTEN_APP_ID,
-            keyword: keyword,
-            sort: '-releaseDate',
-            hits: 30, // キーワード数を減らした分、hitsを増やす
-            outOfStockFlag: 0
-          },
-          timeout: 10000
-        });
-
-        if (response.data && response.data.Items && response.data.Items.length > 0) {
-          const books = response.data.Items.map(item => {
-            const book = item.Item;
-            return {
-              source: 'rakuten',
-              summary: {
-                title: book.title || '',
-                author: book.author || '',
-                publisher: book.publisherName || '',
-                isbn: book.isbn || '',
-                pubdate: book.salesDate ? book.salesDate.replace(/-/g, '') : '',
-                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
-              },
-              onix: {
-                CollateralDetail: {
-                  TextContent: book.itemCaption ? [{
-                    TextType: '03',
-                    Text: book.itemCaption
-                  }] : []
-                }
-              },
-              rakutenUrl: book.itemUrl || ''
-            };
-          });
-          allBooks.push(...books);
-        }
-      } catch (error) {
-        console.log(`[Popular Books] 楽天API (${keyword}) エラー:`, error.message);
-      }
-      await new Promise(resolve => setTimeout(resolve, 500)); // 待機時間を500msに延長
-    }
-  }
-
-  // Google Books APIから取得
+  // Google Books APIから取得（楽天APIは429エラー回避のため使用停止）
   for (const keyword of popularKeywords) {
     try {
       const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
@@ -1926,7 +1839,7 @@ async function fetchPopularBooks() {
           q: keyword,
           langRestrict: 'ja',
           orderBy: 'newest',
-          maxResults: 15,
+          maxResults: 20, // maxResultsを増やす
           printType: 'books'
         },
         timeout: 10000
@@ -1965,14 +1878,20 @@ async function fetchPopularBooks() {
     } catch (error) {
       console.log(`[Popular Books] Google API (${keyword}) エラー:`, error.message);
     }
-    await new Promise(resolve => setTimeout(resolve, 300)); // 待機時間延長
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 2週間以内の書籍（発売予定含む、範囲を広げて書籍を確保）
-  const filtered = filterBooksByDate(merged, 14, true);
+  // 3ヶ月以内の書籍（発売予定含む、範囲を大幅に拡大）
+  let filtered = filterBooksByDate(merged, 90, true);
+
+  // フィルタ後に書籍が5件未満の場合、フィルタなしで全件を返す
+  if (filtered.length < 5) {
+    console.log(`[Popular Books] フィルタ後の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    filtered = merged;
+  }
 
   console.log(`[Popular Books] ${filtered.length}件の一般新刊書籍を取得しました`);
   return filtered;
