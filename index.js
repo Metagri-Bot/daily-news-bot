@@ -1364,15 +1364,14 @@ async function postDailyNewBook() {
       return;
     }
 
-    // スコアリングと投稿済みチェック
-    const scoredBooks = [];
+    // 投稿可能な書籍をフィルタ（スコアリングは無効化）
+    const availableBooks = [];
     for (const book of books) {
-      const { score, categories } = scoreBook(book);
       const isbn = book.summary.isbn;
-
-      // スコアが-1（除外）でなく、かつ投稿済みでない書籍のみ（スコア0も許容）
-      if (score >= 0 && isbn && !postedBookIsbns.has(isbn)) {
-        scoredBooks.push({
+      // ISBNがあり、投稿済みでない書籍はすべて許容
+      if (isbn && !postedBookIsbns.has(isbn)) {
+        const { score, categories } = scoreBook(book);
+        availableBooks.push({
           book,
           score,
           categories
@@ -1380,16 +1379,27 @@ async function postDailyNewBook() {
       }
     }
 
-    if (scoredBooks.length === 0) {
-      console.log('[New Book] 基準を満たす未投稿の書籍がありませんでした');
-      return;
+    if (availableBooks.length === 0) {
+      console.log('[New Book] 投稿可能な未投稿の書籍がありませんでした');
+      // 投稿済みでも最新の書籍を1つ投稿（確実に1日1冊投稿するため）
+      if (books.length > 0) {
+        console.log('[New Book] 投稿済み書籍から最新の1冊を再投稿します');
+        const { score, categories } = scoreBook(books[0]);
+        availableBooks.push({
+          book: books[0],
+          score,
+          categories
+        });
+      } else {
+        return;
+      }
     }
 
-    // スコアでソート
-    scoredBooks.sort((a, b) => b.score - a.score);
+    // スコアでソート（高い順）
+    availableBooks.sort((a, b) => b.score - a.score);
 
     // 最高スコアの書籍を選択
-    const selected = scoredBooks[0];
+    const selected = availableBooks[0];
     const bookData = selected.book.summary;
     const onix = selected.book.onix || {};
 
@@ -1534,15 +1544,14 @@ async function postDailyPopularBook() {
       return;
     }
 
-    // スコアリングと投稿済みチェック
-    const scoredBooks = [];
+    // 投稿可能な書籍をフィルタ（スコアリングは無効化）
+    const availableBooks = [];
     for (const book of books) {
-      const { score, categories } = scorePopularBook(book);
       const isbn = book.summary.isbn;
-
-      // スコアが-1（除外）でなく、かつ投稿済みでない書籍のみ（スコア0も許容）
-      if (score >= 0 && isbn && !postedBookIsbns.has(isbn)) {
-        scoredBooks.push({
+      // ISBNがあり、投稿済みでない書籍はすべて許容
+      if (isbn && !postedBookIsbns.has(isbn)) {
+        const { score, categories } = scorePopularBook(book);
+        availableBooks.push({
           book,
           score,
           categories
@@ -1550,16 +1559,27 @@ async function postDailyPopularBook() {
       }
     }
 
-    if (scoredBooks.length === 0) {
-      console.log('[Popular Book] 基準を満たす未投稿の書籍がありませんでした');
-      return;
+    if (availableBooks.length === 0) {
+      console.log('[Popular Book] 投稿可能な未投稿の書籍がありませんでした');
+      // 投稿済みでも最新の書籍を1つ投稿（確実に1日1冊投稿するため）
+      if (books.length > 0) {
+        console.log('[Popular Book] 投稿済み書籍から最新の1冊を再投稿します');
+        const { score, categories } = scorePopularBook(books[0]);
+        availableBooks.push({
+          book: books[0],
+          score,
+          categories
+        });
+      } else {
+        return;
+      }
     }
 
-    // スコアでソート
-    scoredBooks.sort((a, b) => b.score - a.score);
+    // スコアでソート（高い順）
+    availableBooks.sort((a, b) => b.score - a.score);
 
     // 最高スコアの書籍を選択
-    const selected = scoredBooks[0];
+    const selected = availableBooks[0];
     const bookData = selected.book.summary;
     const onix = selected.book.onix || {};
 
@@ -1723,7 +1743,7 @@ async function fetchBooksWithCache() {
 }
 
 /**
- * 農業技術関連書籍を取得（6ヶ月以内、フォールバック有り）
+ * 農業技術関連書籍を取得（日付フィルタなし）
  * @returns {Promise<Array>} 農業技術書籍リスト
  */
 async function fetchAgriTechBooks() {
@@ -1799,21 +1819,13 @@ async function fetchAgriTechBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 6ヶ月以内の書籍のみにフィルタ（範囲を大幅に拡大）
-  let filtered = filterBooksByDate(merged, 180, false);
-
-  // フィルタ後に書籍が5件未満の場合、フィルタなしで全件を返す
-  if (filtered.length < 5) {
-    console.log(`[AgriTech Books] フィルタ後の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
-    filtered = merged;
-  }
-
-  console.log(`[AgriTech Books] ${filtered.length}件の農業技術関連書籍を取得しました`);
-  return filtered;
+  // 日付フィルタは完全に無効化（確実に書籍を取得するため）
+  console.log(`[AgriTech Books] ${merged.length}件の農業技術関連書籍を取得しました（日付フィルタなし）`);
+  return merged;
 }
 
 /**
- * 一般新刊書籍を取得（3ヶ月以内、発売予定含む、フォールバック有り）
+ * 一般新刊書籍を取得（日付フィルタなし）
  * @returns {Promise<Array>} 一般新刊書籍リスト
  */
 async function fetchPopularBooks() {
@@ -1884,17 +1896,9 @@ async function fetchPopularBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 3ヶ月以内の書籍（発売予定含む、範囲を大幅に拡大）
-  let filtered = filterBooksByDate(merged, 90, true);
-
-  // フィルタ後に書籍が5件未満の場合、フィルタなしで全件を返す
-  if (filtered.length < 5) {
-    console.log(`[Popular Books] フィルタ後の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
-    filtered = merged;
-  }
-
-  console.log(`[Popular Books] ${filtered.length}件の一般新刊書籍を取得しました`);
-  return filtered;
+  // 日付フィルタは完全に無効化（確実に書籍を取得するため）
+  console.log(`[Popular Books] ${merged.length}件の一般新刊書籍を取得しました（日付フィルタなし）`);
+  return merged;
 }
 
 /**
@@ -2306,10 +2310,12 @@ finalArticles.forEach((article, index) => {
   });
 
 // === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
+  // ※ ユーザーリクエストにより無効化（2025年）
+  if (false) {
   cron.schedule('0 10,19 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Global Research] 海外文献収集タスクを開始します...');
-    
+
     if (!GLOBAL_RESEARCH_CHANNEL_ID || GLOBAL_RSS_FEEDS.length === 0) {
       console.log('[Global Research] チャンネルIDまたはRSSフィードが設定されていません。');
       return;
@@ -2341,7 +2347,7 @@ finalArticles.forEach((article, index) => {
         }
       });
       const feeds = await Promise.all(feedPromises);
-      
+
       for (const feed of feeds) {
         if (feed && feed.items) {
           allGlobalArticles.push(...feed.items);
@@ -2355,7 +2361,7 @@ finalArticles.forEach((article, index) => {
 
       const fortyEightHoursAgo = new Date();
       fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
-      
+
       const recentGlobalArticles = allGlobalArticles.filter(article => {
         const articleDate = new Date(article.isoDate || article.pubDate);
         return articleDate && articleDate >= fortyEightHoursAgo;
@@ -2369,7 +2375,7 @@ finalArticles.forEach((article, index) => {
       }
 
       const filteredArticles = filterGlobalArticles(newGlobalArticles);
-      
+
       if (filteredArticles.length === 0) {
         console.log('[Global Research] 条件に合致する海外文献が見つかりませんでした。');
         return;
@@ -2393,17 +2399,17 @@ finalArticles.forEach((article, index) => {
         console.log('[Global Research] 翻訳に失敗しました。');
         return;
       }
-      
+
       // Discord投稿用のメッセージを作成
       const currentHour = new Date().getHours();
       const greeting = currentHour < 12 ? 'おはようございます' : 'こんばんは';
-      
+
       let postContent = `## 🌍 **Metagri Global Research Digest**\n\n${greeting}！世界の農業技術研究の最新動向をお届けします。\n\n`;
       const embeds = [];
-      
+
       for (let i = 0; i < translatedArticles.length; i++) {
         const { original, translated } = translatedArticles[i];
-        
+
         const embed = new EmbedBuilder()
           .setColor(0x4A90E2)
           .setTitle(`${i + 1}. ${translated.titleJa}`)
@@ -2415,7 +2421,7 @@ finalArticles.forEach((article, index) => {
           )
           .setFooter({ text: `Source: ${new URL(original.link).hostname}` })
           .setTimestamp(new Date(original.isoDate || original.pubDate));
-        
+
         embeds.push(embed);
         postedGlobalArticleUrls.add(original.link);
       }
@@ -2423,7 +2429,7 @@ finalArticles.forEach((article, index) => {
       let technicalTermsSection = '\n**📚 今回の専門用語解説**\n';
       const allTerms = {};
       translatedArticles.forEach(({ translated }) => Object.assign(allTerms, translated.technicalTerms));
-      
+
       if (Object.keys(allTerms).length > 0) {
         Object.entries(allTerms).slice(0, 5).forEach(([en, ja]) => {
           technicalTermsSection += `• **${en}**: ${ja}\n`;
@@ -2456,7 +2462,8 @@ finalArticles.forEach((article, index) => {
     }
   }, {
     timezone: "Asia/Tokyo"
-  }); // ← 抜けていた閉じ括弧
+  }); // ← cron.schedule の閉じ括弧
+  } // if (false) の閉じ括弧
 
 
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
