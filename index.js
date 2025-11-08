@@ -30,6 +30,7 @@ const ROBLOX_RSS_FEEDS = process.env.ROBLOX_RSS_FEEDS ? process.env.ROBLOX_RSS_F
 
 // === 新刊紹介機能用の環境変数 ===
 const NEW_BOOK_CHANNEL_ID = process.env.NEW_BOOK_CHANNEL_ID;
+const POPULAR_BOOK_CHANNEL_ID = process.env.POPULAR_BOOK_CHANNEL_ID;
 const RAKUTEN_APP_ID = process.env.RAKUTEN_APP_ID;
 
 // OpenAI API設定（.envに追加が必要）
@@ -1200,7 +1201,80 @@ function scoreBook(book) {
 }
 
 /**
- * 毎日の新刊投稿処理
+ * 一般新刊（小説・ビジネス書・話題の本）をスコアリング
+ * @param {Object} book 書籍オブジェクト
+ * @returns {Object} スコアとマッチしたカテゴリを含むオブジェクト
+ */
+function scorePopularBook(book) {
+  if (!book || !book.summary) return { score: 0, categories: [] };
+
+  const title = (book.summary.title || '').toLowerCase();
+  const author = (book.summary.author || '').toLowerCase();
+  const publisher = (book.summary.publisher || '').toLowerCase();
+
+  // 全テキストを結合
+  const fullText = `${title} ${author} ${publisher}`;
+
+  let score = 0;
+  const matchedCategories = new Set();
+
+  // 除外キーワードチェック
+  for (const keyword of EXCLUSION_KEYWORDS) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['除外'] }; // 除外対象
+    }
+  }
+
+  // 一般新刊用のカテゴリ別スコアリング
+  const checkKeywords = (keywords, categoryName, points) => {
+    for (const keyword of keywords) {
+      if (fullText.includes(keyword.toLowerCase())) {
+        score += points;
+        matchedCategories.add(categoryName);
+        break;
+      }
+    }
+  };
+
+  // ビジネス・自己啓発
+  const businessKeywords = ['ビジネス', '経営', 'マネジメント', 'リーダーシップ', '起業',
+    '自己啓発', '成功', '仕事術', 'キャリア', '働き方'];
+  checkKeywords(businessKeywords, 'ビジネス', 5);
+
+  // 小説・文学
+  const fictionKeywords = ['小説', '物語', 'ストーリー', '文学', 'ノベル',
+    '推理', 'ミステリー', 'SF', 'ファンタジー', '恋愛'];
+  checkKeywords(fictionKeywords, '小説・文学', 5);
+
+  // 話題性・ベストセラー関連
+  const trendingKeywords = ['話題', 'ベストセラー', '大賞', '受賞', '映画化',
+    'ドラマ化', '累計', '万部', '注目'];
+  checkKeywords(trendingKeywords, '話題の本', 8);
+
+  // 実用書
+  const practicalKeywords = ['入門', '図解', 'わかる', '完全ガイド', '教科書',
+    '実践', 'テクニック', 'ノウハウ', '解説'];
+  checkKeywords(practicalKeywords, '実用書', 4);
+
+  // エッセイ・ノンフィクション
+  const essayKeywords = ['エッセイ', 'ノンフィクション', '伝記', '回顧録',
+    '体験記', 'ルポ', 'ドキュメント'];
+  checkKeywords(essayKeywords, 'エッセイ・ノンフィクション', 4);
+
+  // 最低スコアを設定（全く関連性のない本は除外）
+  if (score === 0) {
+    score = 1; // 最低限のスコアを付与（新刊であることに価値がある）
+    matchedCategories.add('一般新刊');
+  }
+
+  return {
+    score,
+    categories: Array.from(matchedCategories)
+  };
+}
+
+/**
+ * 毎日の新刊投稿処理（農業・Web3・先端技術関連）
  */
 async function postDailyNewBook() {
   console.log('[New Book] 新刊紹介タスクを開始します...');
@@ -1233,11 +1307,14 @@ async function postDailyNewBook() {
       return;
     }
 
-    // スコアリング
+    // スコアリングと投稿済みチェック
     const scoredBooks = [];
     for (const book of books) {
       const { score, categories } = scoreBook(book);
-      if (score > 0) {
+      const isbn = book.summary.isbn;
+
+      // スコアが0より大きく、かつ投稿済みでない書籍のみ
+      if (score > 0 && isbn && !postedBookIsbns.has(isbn)) {
         scoredBooks.push({
           book,
           score,
@@ -1247,7 +1324,7 @@ async function postDailyNewBook() {
     }
 
     if (scoredBooks.length === 0) {
-      console.log('[New Book] 基準を満たす書籍がありませんでした');
+      console.log('[New Book] 基準を満たす未投稿の書籍がありませんでした');
       return;
     }
 
@@ -1350,6 +1427,11 @@ async function postDailyNewBook() {
     await channel.send({ embeds: [embed] });
     console.log(`[New Book] 新刊を投稿しました: ${bookData.title}`);
 
+    // 投稿済みISBNをキャッシュに追加
+    if (bookData.isbn) {
+      postedBookIsbns.add(bookData.isbn);
+    }
+
     // Google Sheetsに記録
     await logToSpreadsheet('newBook', {
       title: bookData.title,
@@ -1359,6 +1441,7 @@ async function postDailyNewBook() {
       pubdate: bookData.pubdate || '',
       score: selected.score,
       categories: selected.categories.join(', '),
+      bookType: 'agritech', // 農業・Web3・先端技術関連
       postedDate: new Date().toISOString()
     });
 
@@ -1367,10 +1450,215 @@ async function postDailyNewBook() {
   }
 }
 
+/**
+ * 毎日の一般新刊投稿処理（小説・ビジネス書・話題の本）
+ */
+async function postDailyPopularBook() {
+  console.log('[Popular Book] 一般新刊紹介タスクを開始します...');
+
+  try {
+    // チャンネル取得
+    if (!POPULAR_BOOK_CHANNEL_ID) {
+      console.error('[Popular Book] POPULAR_BOOK_CHANNEL_IDが設定されていません');
+      return;
+    }
+
+    const channel = await client.channels.fetch(POPULAR_BOOK_CHANNEL_ID);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      console.error('[Popular Book] チャンネルが見つからないか、テキストチャンネルではありません');
+      return;
+    }
+
+    // 複数のソースから新刊情報を並行取得
+    const [openBDBooks, rakutenBooks, googleBooks] = await Promise.all([
+      fetchNewBooksFromOpenBD(),
+      fetchNewBooksFromRakuten(),
+      fetchNewBooksFromGoogle()
+    ]);
+
+    // 書籍を統合（重複除去）
+    const books = mergeBooks(openBDBooks, rakutenBooks, googleBooks);
+
+    if (books.length === 0) {
+      console.log('[Popular Book] すべてのAPIから書籍を取得できませんでした');
+      return;
+    }
+
+    // スコアリングと投稿済みチェック
+    const scoredBooks = [];
+    for (const book of books) {
+      const { score, categories } = scorePopularBook(book);
+      const isbn = book.summary.isbn;
+
+      // スコアが0より大きく、かつ投稿済みでない書籍のみ
+      if (score > 0 && isbn && !postedBookIsbns.has(isbn)) {
+        scoredBooks.push({
+          book,
+          score,
+          categories
+        });
+      }
+    }
+
+    if (scoredBooks.length === 0) {
+      console.log('[Popular Book] 基準を満たす未投稿の書籍がありませんでした');
+      return;
+    }
+
+    // スコアでソート
+    scoredBooks.sort((a, b) => b.score - a.score);
+
+    // 最高スコアの書籍を選択
+    const selected = scoredBooks[0];
+    const bookData = selected.book.summary;
+    const onix = selected.book.onix || {};
+
+    // Embed作成
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)  // Discord Blurple
+      .setTitle(`📖 今日のおすすめ新刊`)
+      .setDescription(`**${bookData.title}**`)
+      .setTimestamp();
+
+    // 著者
+    if (bookData.author) {
+      embed.addFields({ name: '✍️ 著者', value: bookData.author, inline: true });
+    }
+
+    // 出版社
+    if (bookData.publisher) {
+      embed.addFields({ name: '🏢 出版社', value: bookData.publisher, inline: true });
+    }
+
+    // 発売日
+    if (bookData.pubdate) {
+      const pubDate = bookData.pubdate.replace(/(\d{4})(\d{2})(\d{2})/, '$1年$2月$3日');
+      embed.addFields({ name: '📅 発売日', value: pubDate, inline: true });
+    }
+
+    // マッチカテゴリ
+    if (selected.categories.length > 0) {
+      embed.addFields({
+        name: '🏷️ カテゴリ',
+        value: selected.categories.join(' + '),
+        inline: false
+      });
+    }
+
+    // スコア
+    embed.addFields({ name: '⭐ スコア', value: `${selected.score}点`, inline: true });
+
+    // ISBN
+    if (bookData.isbn) {
+      embed.addFields({ name: '📖 ISBN', value: bookData.isbn, inline: true });
+    }
+
+    // 書籍の説明（あれば）
+    if (onix.CollateralDetail && onix.CollateralDetail.TextContent) {
+      const textContent = onix.CollateralDetail.TextContent.find(
+        tc => tc.TextType === '03' || tc.TextType === '02'
+      );
+      if (textContent && textContent.Text) {
+        const description = textContent.Text.substring(0, 300);
+        embed.addFields({ name: '📝 概要', value: description, inline: false });
+      }
+    }
+
+    // サムネイル画像
+    if (bookData.cover) {
+      embed.setThumbnail(bookData.cover);
+    }
+
+    // 購入リンク
+    const purchaseLinks = [];
+
+    // 楽天の直接リンク
+    if (selected.book.rakutenUrl) {
+      purchaseLinks.push(`[楽天ブックス](${selected.book.rakutenUrl})`);
+    } else if (bookData.isbn) {
+      const isbn = bookData.isbn.replace(/-/g, '');
+      purchaseLinks.push(`[楽天ブックス](https://books.rakuten.co.jp/search?sitem=${isbn})`);
+    }
+
+    // Amazonリンク
+    if (bookData.isbn) {
+      const isbn = bookData.isbn.replace(/-/g, '');
+      purchaseLinks.push(`[Amazon](https://www.amazon.co.jp/dp/${isbn})`);
+    }
+
+    // Google Booksのリンク
+    if (selected.book.googleUrl) {
+      purchaseLinks.push(`[Google Books](${selected.book.googleUrl})`);
+    }
+
+    if (purchaseLinks.length > 0) {
+      embed.addFields({
+        name: '🔗 購入リンク',
+        value: purchaseLinks.join(' | '),
+        inline: false
+      });
+    }
+
+    // Discord投稿
+    await channel.send({ embeds: [embed] });
+    console.log(`[Popular Book] 一般新刊を投稿しました: ${bookData.title}`);
+
+    // 投稿済みISBNをキャッシュに追加
+    if (bookData.isbn) {
+      postedBookIsbns.add(bookData.isbn);
+    }
+
+    // Google Sheetsに記録
+    await logToSpreadsheet('newBook', {
+      title: bookData.title,
+      author: bookData.author || '',
+      publisher: bookData.publisher || '',
+      isbn: bookData.isbn || '',
+      pubdate: bookData.pubdate || '',
+      score: selected.score,
+      categories: selected.categories.join(', '),
+      bookType: 'popular', // 一般新刊
+      postedDate: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('[Popular Book] タスク実行中にエラーが発生しました:', error);
+  }
+}
+
 // グローバル変数として議論メトリクスをキャッシュ
 let cachedDiscussionMetrics = new Map();
 let cachedRecentNews = [];
 let cachedTrendAnalysis = null;
+
+// 投稿済み書籍のISBNをキャッシュ（重複防止用）
+const postedBookIsbns = new Set();
+
+/**
+ * GASから投稿済み書籍のISBNリストを取得
+ * @returns {Promise<Set>} 投稿済みISBNのSet
+ */
+async function syncPostedBooksFromSheet() {
+  if (!GOOGLE_APPS_SCRIPT_URL) {
+    console.log('[Book Sync] GOOGLE_APPS_SCRIPT_URLが設定されていません');
+    return;
+  }
+
+  try {
+    console.log('[Book Sync] GASから投稿済み書籍リストを取得中...');
+    const response = await axios.post(GOOGLE_APPS_SCRIPT_URL, {
+      type: 'getPostedBooks'
+    });
+
+    if (response.data && Array.isArray(response.data)) {
+      postedBookIsbns.clear();
+      response.data.forEach(isbn => postedBookIsbns.add(isbn));
+      console.log(`[Book Sync] ${postedBookIsbns.size}件の投稿済み書籍を読み込みました`);
+    }
+  } catch (error) {
+    console.error('[Book Sync] 投稿済み書籍の取得エラー:', error.message);
+  }
+}
 
 // Botが起動したときの処理
 client.once("ready", async () => {
@@ -1378,6 +1666,7 @@ client.once("ready", async () => {
 
   // ▼▼▼ この行を追加 ▼▼▼
   await syncPostedUrlsFromSheet();
+  await syncPostedBooksFromSheet(); // 投稿済み書籍リストを同期
   cachedDiscussionMetrics = await getDiscussionMetricsFromSheet();
   cachedRecentNews = await getRecentNewsFromSheet();
   cachedTrendAnalysis = extractTrendKeywords(cachedRecentNews);
@@ -2048,10 +2337,17 @@ finalArticles.forEach((article, index) => {
     timezone: "Asia/Tokyo"
   });
 
-  // === 新刊紹介タスク（毎日朝9時） ===
+  // === 農業・Web3関連新刊紹介タスク（毎日朝9時） ===
   cron.schedule('0 9 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyNewBook();
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+
+  // === 一般新刊紹介タスク（毎日朝10時） ===
+  cron.schedule('0 10 * * *', async () => {
+    await postDailyPopularBook();
   }, {
     timezone: "Asia/Tokyo"
   });
@@ -2061,7 +2357,8 @@ finalArticles.forEach((article, index) => {
   console.log('- Info Gathering: 6:00-18:00 JST (every 3h)');
   console.log('- Global Research Digest: 10:00, 19:00 JST');
   console.log('- Roblox News Digest: 7:00 JST');
-  console.log('- New Book Recommendation: 9:00 JST');
+  console.log('- AgriTech Book Recommendation: 9:00 JST');
+  console.log('- Popular Book Recommendation: 10:00 JST');
 }); 
 
 
