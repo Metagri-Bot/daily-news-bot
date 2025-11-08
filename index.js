@@ -28,6 +28,9 @@ const GLOBAL_RSS_FEEDS = process.env.GLOBAL_RSS_FEEDS ? process.env.GLOBAL_RSS_F
 const ROBLOX_NEWS_CHANNEL_ID = process.env.ROBLOX_NEWS_CHANNEL_ID;
 const ROBLOX_RSS_FEEDS = process.env.ROBLOX_RSS_FEEDS ? process.env.ROBLOX_RSS_FEEDS.split(',') : [];
 
+// === 新刊紹介機能用の環境変数 ===
+const NEW_BOOK_CHANNEL_ID = process.env.NEW_BOOK_CHANNEL_ID;
+
 // OpenAI API設定（.envに追加が必要）
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -892,6 +895,261 @@ function extractTrendKeywords(recentNews) {
   };
 }
 
+// ========================================
+// 新刊紹介機能
+// ========================================
+
+/**
+ * openBD APIから最近の新刊情報を取得
+ * @returns {Promise<Array>} 新刊書籍のリスト
+ */
+async function fetchNewBooksFromOpenBD() {
+  try {
+    console.log('[New Book] openBD APIから新刊情報を取得中...');
+
+    // openBD APIの検索エンドポイント
+    // 過去30日以内に発売された書籍を取得するため、発売日でソートして最新100件を取得
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+
+    // openBDの新刊一覧APIを使用（出版社別などの絞り込みも可能）
+    // ここでは汎用的に最新刊を取得
+    const response = await axios.get('https://api.openbd.jp/v1/coverage', {
+      timeout: 10000
+    });
+
+    if (!response.data || !Array.isArray(response.data)) {
+      console.log('[New Book] openBD APIから有効なデータを取得できませんでした');
+      return [];
+    }
+
+    // coverageからISBNリストを取得し、最新のものから一部を抽出
+    const isbnList = response.data.slice(-200); // 最新200件のISBN
+
+    // ISBNから書籍詳細を取得
+    const batchSize = 100; // openBD APIは一度に最大1000件まで取得可能
+    const books = [];
+
+    for (let i = 0; i < Math.min(isbnList.length, batchSize); i += 100) {
+      const batch = isbnList.slice(i, i + 100);
+      const detailResponse = await axios.post('https://api.openbd.jp/v1/get',
+        batch,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000
+        }
+      );
+
+      if (detailResponse.data && Array.isArray(detailResponse.data)) {
+        books.push(...detailResponse.data.filter(book => book !== null));
+      }
+    }
+
+    console.log(`[New Book] ${books.length}件の書籍情報を取得しました`);
+    return books;
+
+  } catch (error) {
+    console.error('[New Book] openBD API取得エラー:', error.message);
+    return [];
+  }
+}
+
+/**
+ * 書籍をキーワードでスコアリング
+ * @param {Object} book openBDから取得した書籍オブジェクト
+ * @returns {Object} スコアとマッチしたカテゴリを含むオブジェクト
+ */
+function scoreBook(book) {
+  if (!book || !book.summary) return { score: 0, categories: [] };
+
+  const title = (book.summary.title || '').toLowerCase();
+  const author = (book.summary.author || '').toLowerCase();
+  const publisher = (book.summary.publisher || '').toLowerCase();
+  const series = (book.summary.series || '').toLowerCase();
+
+  // 全テキストを結合
+  const fullText = `${title} ${author} ${publisher} ${series}`;
+
+  let score = 0;
+  const matchedCategories = new Set();
+
+  // 除外キーワードチェック
+  for (const keyword of EXCLUSION_KEYWORDS) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['除外'] }; // 除外対象
+    }
+  }
+
+  // カテゴリ別スコアリング
+  const checkKeywords = (keywords, categoryName, points) => {
+    for (const keyword of keywords) {
+      if (fullText.includes(keyword.toLowerCase())) {
+        score += points;
+        matchedCategories.add(categoryName);
+        break; // 同じカテゴリで複数マッチしても加点は1回のみ
+      }
+    }
+  };
+
+  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
+  checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
+  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 5);
+  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
+  checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト・ストーリー', 4);
+  checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス・政策', 3);
+  checkKeywords(BUZZ_KEYWORDS, 'バズワード', 2);
+
+  return {
+    score,
+    categories: Array.from(matchedCategories)
+  };
+}
+
+/**
+ * 毎日の新刊投稿処理
+ */
+async function postDailyNewBook() {
+  console.log('[New Book] 新刊紹介タスクを開始します...');
+
+  try {
+    // チャンネル取得
+    if (!NEW_BOOK_CHANNEL_ID) {
+      console.error('[New Book] NEW_BOOK_CHANNEL_IDが設定されていません');
+      return;
+    }
+
+    const channel = await client.channels.fetch(NEW_BOOK_CHANNEL_ID);
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      console.error('[New Book] チャンネルが見つからないか、テキストチャンネルではありません');
+      return;
+    }
+
+    // 新刊情報を取得
+    const books = await fetchNewBooksFromOpenBD();
+    if (books.length === 0) {
+      console.log('[New Book] 取得できた書籍がありません');
+      return;
+    }
+
+    // スコアリング
+    const scoredBooks = [];
+    for (const book of books) {
+      const { score, categories } = scoreBook(book);
+      if (score > 0) {
+        scoredBooks.push({
+          book,
+          score,
+          categories
+        });
+      }
+    }
+
+    if (scoredBooks.length === 0) {
+      console.log('[New Book] 基準を満たす書籍がありませんでした');
+      return;
+    }
+
+    // スコアでソート
+    scoredBooks.sort((a, b) => b.score - a.score);
+
+    // 最高スコアの書籍を選択
+    const selected = scoredBooks[0];
+    const bookData = selected.book.summary;
+    const onix = selected.book.onix || {};
+
+    // Embed作成
+    const embed = new EmbedBuilder()
+      .setColor(0xFF6B6B)
+      .setTitle(`📚 今日の一冊`)
+      .setDescription(`**${bookData.title}**`)
+      .setTimestamp();
+
+    // 著者
+    if (bookData.author) {
+      embed.addFields({ name: '✍️ 著者', value: bookData.author, inline: true });
+    }
+
+    // 出版社
+    if (bookData.publisher) {
+      embed.addFields({ name: '🏢 出版社', value: bookData.publisher, inline: true });
+    }
+
+    // 発売日
+    if (bookData.pubdate) {
+      const pubDate = bookData.pubdate.replace(/(\d{4})(\d{2})(\d{2})/, '$1年$2月$3日');
+      embed.addFields({ name: '📅 発売日', value: pubDate, inline: true });
+    }
+
+    // マッチカテゴリ
+    if (selected.categories.length > 0) {
+      embed.addFields({
+        name: '🏷️ カテゴリ',
+        value: selected.categories.join(' + '),
+        inline: false
+      });
+    }
+
+    // スコア
+    embed.addFields({ name: '⭐ スコア', value: `${selected.score}点`, inline: true });
+
+    // ISBN
+    if (bookData.isbn) {
+      embed.addFields({ name: '📖 ISBN', value: bookData.isbn, inline: true });
+    }
+
+    // 書籍の説明（あれば）
+    if (onix.CollateralDetail && onix.CollateralDetail.TextContent) {
+      const textContent = onix.CollateralDetail.TextContent.find(
+        tc => tc.TextType === '03' || tc.TextType === '02'
+      );
+      if (textContent && textContent.Text) {
+        const description = textContent.Text.substring(0, 300);
+        embed.addFields({ name: '📝 概要', value: description, inline: false });
+      }
+    }
+
+    // サムネイル画像（openBDのカバー画像）
+    if (bookData.cover) {
+      embed.setThumbnail(bookData.cover);
+    }
+
+    // 購入リンク
+    const purchaseLinks = [];
+    if (bookData.isbn) {
+      const isbn = bookData.isbn.replace(/-/g, '');
+      purchaseLinks.push(`[楽天ブックス](https://books.rakuten.co.jp/search?sitem=${isbn})`);
+      purchaseLinks.push(`[Amazon](https://www.amazon.co.jp/dp/${isbn})`);
+    }
+    if (purchaseLinks.length > 0) {
+      embed.addFields({
+        name: '🔗 購入リンク',
+        value: purchaseLinks.join(' | '),
+        inline: false
+      });
+    }
+
+    // Discord投稿
+    await channel.send({ embeds: [embed] });
+    console.log(`[New Book] 新刊を投稿しました: ${bookData.title}`);
+
+    // Google Sheetsに記録
+    await logToSpreadsheet('newBook', {
+      title: bookData.title,
+      author: bookData.author || '',
+      publisher: bookData.publisher || '',
+      isbn: bookData.isbn || '',
+      pubdate: bookData.pubdate || '',
+      score: selected.score,
+      categories: selected.categories.join(', '),
+      postedDate: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('[New Book] タスク実行中にエラーが発生しました:', error);
+  }
+}
+
 // グローバル変数として議論メトリクスをキャッシュ
 let cachedDiscussionMetrics = new Map();
 let cachedRecentNews = [];
@@ -1572,12 +1830,20 @@ finalArticles.forEach((article, index) => {
   }, {
     timezone: "Asia/Tokyo"
   });
-  
-  console.log(' - Roblox News Digest: 7:00 JST');
+
+  // === 新刊紹介タスク（毎日朝9時） ===
+  cron.schedule('0 9 * * *', async () => {
+    await postDailyNewBook();
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00-18:00 JST (every 3h)');
   console.log('- Global Research Digest: 10:00, 19:00 JST');
+  console.log('- Roblox News Digest: 7:00 JST');
+  console.log('- New Book Recommendation: 9:00 JST');
 }); 
 
 
