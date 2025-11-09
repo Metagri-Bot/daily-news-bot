@@ -1743,7 +1743,7 @@ async function fetchBooksWithCache() {
 }
 
 /**
- * 農業技術関連書籍を取得（日付フィルタなし）
+ * 農業技術関連書籍を取得（過去1ヶ月〜未来1ヶ月優先、段階的拡大）
  * @returns {Promise<Array>} 農業技術書籍リスト
  */
 async function fetchAgriTechBooks() {
@@ -1819,13 +1819,30 @@ async function fetchAgriTechBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 日付フィルタは完全に無効化（確実に書籍を取得するため）
-  console.log(`[AgriTech Books] ${merged.length}件の農業技術関連書籍を取得しました（日付フィルタなし）`);
-  return merged;
+  // 新刊フィルタ：過去1ヶ月〜未来1ヶ月を優先、段階的に範囲を拡大
+  let filtered = filterBooksByDate(merged, 30, true); // 過去30日〜未来含む
+
+  if (filtered.length < 3) {
+    console.log(`[AgriTech Books] 1ヶ月以内の書籍が${filtered.length}件のため、範囲を3ヶ月に拡大します`);
+    filtered = filterBooksByDate(merged, 90, true); // 過去90日〜未来含む
+  }
+
+  if (filtered.length < 3) {
+    console.log(`[AgriTech Books] 3ヶ月以内の書籍が${filtered.length}件のため、範囲を6ヶ月に拡大します`);
+    filtered = filterBooksByDate(merged, 180, true); // 過去180日〜未来含む
+  }
+
+  if (filtered.length < 3) {
+    console.log(`[AgriTech Books] 6ヶ月以内の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    filtered = merged;
+  }
+
+  console.log(`[AgriTech Books] ${filtered.length}件の農業技術関連書籍を取得しました`);
+  return filtered;
 }
 
 /**
- * 一般新刊書籍を取得（日付フィルタなし）
+ * 一般新刊書籍を取得（過去1ヶ月〜未来1ヶ月優先、段階的拡大）
  * @returns {Promise<Array>} 一般新刊書籍リスト
  */
 async function fetchPopularBooks() {
@@ -1896,9 +1913,26 @@ async function fetchPopularBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 日付フィルタは完全に無効化（確実に書籍を取得するため）
-  console.log(`[Popular Books] ${merged.length}件の一般新刊書籍を取得しました（日付フィルタなし）`);
-  return merged;
+  // 新刊フィルタ：過去1ヶ月〜未来1ヶ月を優先、段階的に範囲を拡大
+  let filtered = filterBooksByDate(merged, 30, true); // 過去30日〜未来含む
+
+  if (filtered.length < 3) {
+    console.log(`[Popular Books] 1ヶ月以内の書籍が${filtered.length}件のため、範囲を3ヶ月に拡大します`);
+    filtered = filterBooksByDate(merged, 90, true); // 過去90日〜未来含む
+  }
+
+  if (filtered.length < 3) {
+    console.log(`[Popular Books] 3ヶ月以内の書籍が${filtered.length}件のため、範囲を6ヶ月に拡大します`);
+    filtered = filterBooksByDate(merged, 180, true); // 過去180日〜未来含む
+  }
+
+  if (filtered.length < 3) {
+    console.log(`[Popular Books] 6ヶ月以内の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    filtered = merged;
+  }
+
+  console.log(`[Popular Books] ${filtered.length}件の一般新刊書籍を取得しました`);
+  return filtered;
 }
 
 /**
