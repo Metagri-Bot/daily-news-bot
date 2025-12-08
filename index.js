@@ -1083,53 +1083,62 @@ async function fetchNewBooksFromNDL(keywords = ['農業', 'テクノロジー', 
     const allBooks = [];
     const today = new Date();
     const currentYear = today.getFullYear();
-    const currentMonth = today.getMonth() + 1;
 
     for (const keyword of keywords) {
       try {
-        // NDL Search APIでキーワード検索（最近3ヶ月の書籍）
-        // dpid=iss-ndl-opac で国内刊行図書のみ
-        const response = await axios.get('https://iss.ndl.go.jp/api/sru', {
+        // NDL Search APIでキーワード検索（OpenSearch形式を使用）
+        const response = await axios.get('https://iss.ndl.go.jp/api/opensearch', {
           params: {
-            operation: 'searchRetrieve',
-            query: `title any "${keyword}" AND from="${currentYear - 1}"`,
-            recordSchema: 'dcndl',
-            maximumRecords: 30,
-            recordPacking: 'xml'
+            title: keyword,
+            from: `${currentYear - 1}`,
+            cnt: 30,
+            mediatype: 1  // 本のみ
           },
           timeout: 15000
         });
 
         if (response.data) {
-          // XMLレスポンスをパース
           const xmlData = response.data;
 
-          // 簡易的なXMLパース（正規表現使用）
-          const records = xmlData.match(/<recordData>([\s\S]*?)<\/recordData>/g) || [];
+          // OpenSearch形式のXMLパース
+          const items = xmlData.match(/<item>([\s\S]*?)<\/item>/g) || [];
+          console.log(`[New Book] NDL API (${keyword}): ${items.length}件のレコード`);
 
-          for (const record of records) {
+          for (const item of items) {
             try {
               // タイトル抽出
-              const titleMatch = record.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/);
+              const titleMatch = item.match(/<title>([^<]+)<\/title>/);
               const title = titleMatch ? titleMatch[1].trim() : '';
 
               // 著者抽出
-              const authorMatch = record.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/);
+              const authorMatch = item.match(/<author>([^<]+)<\/author>/);
               const author = authorMatch ? authorMatch[1].trim() : '';
 
               // 出版社抽出
-              const publisherMatch = record.match(/<dc:publisher[^>]*>([^<]+)<\/dc:publisher>/);
+              const publisherMatch = item.match(/<dc:publisher>([^<]+)<\/dc:publisher>/);
               const publisher = publisherMatch ? publisherMatch[1].trim() : '';
 
-              // ISBN抽出
-              const isbnMatch = record.match(/<dc:identifier[^>]*xsi:type="dcndl:ISBN"[^>]*>([^<]+)<\/dc:identifier>/);
-              const isbn = isbnMatch ? isbnMatch[1].replace(/-/g, '').trim() : '';
+              // ISBN抽出（複数形式に対応）
+              let isbn = '';
+              const isbnMatch = item.match(/<dc:identifier[^>]*>(?:ISBN:)?(\d{10,13})<\/dc:identifier>/i);
+              if (isbnMatch) {
+                isbn = isbnMatch[1].replace(/-/g, '').trim();
+              } else {
+                // 別形式のISBN
+                const isbn2Match = item.match(/ISBN[:\s]*(\d[\d-]{9,})/i);
+                if (isbn2Match) {
+                  isbn = isbn2Match[1].replace(/-/g, '').trim();
+                }
+              }
 
               // 発行日抽出
-              const dateMatch = record.match(/<dc:date[^>]*>([^<]+)<\/dc:date>/);
-              const pubdate = dateMatch ? dateMatch[1].replace(/-/g, '').replace(/\./g, '').trim() : '';
+              const dateMatch = item.match(/<pubDate>([^<]+)<\/pubDate>/);
+              let pubdate = '';
+              if (dateMatch) {
+                pubdate = dateMatch[1].replace(/[-\.\/]/g, '').trim();
+              }
 
-              if (title && isbn) {
+              if (title && isbn && isbn.length >= 10) {
                 allBooks.push({
                   source: 'ndl',
                   summary: {
@@ -1138,7 +1147,7 @@ async function fetchNewBooksFromNDL(keywords = ['農業', 'テクノロジー', 
                     publisher: publisher,
                     isbn: isbn,
                     pubdate: pubdate,
-                    cover: '' // NDLはカバー画像なし
+                    cover: ''
                   },
                   onix: {
                     CollateralDetail: {
@@ -1156,7 +1165,7 @@ async function fetchNewBooksFromNDL(keywords = ['農業', 'テクノロジー', 
         console.log(`[New Book] NDL API (${keyword}) エラー:`, keywordError.message);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 500)); // NDLはレート制限が厳しめ
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     // 重複除去
@@ -1611,8 +1620,25 @@ function calculateFreshnessBonus(book) {
   }
 }
 
+// 農業技術選定用の除外キーワード（農業に無関係な技術書を除外）
+const AGRI_TECH_EXCLUSION_KEYWORDS = [
+  'linux', 'リナックス', 'windows', 'java', 'python入門', 'ruby',
+  'c++', 'c#', 'php', 'javascript入門', 'html', 'css',
+  'ネットワークエンジニア', 'インフラエンジニア', 'webエンジニア',
+  '異世界', 'ファンタジー', '小説', '漫画', 'コミック', 'ラノベ',
+  '恋愛', 'ホラー', 'ミステリー', '推理', 'レシピ', '料理'
+];
+
+// 農業関連の必須キーワード（これらがないと農業技術書籍としてスコアが低くなる）
+const AGRI_REQUIRED_KEYWORDS = [
+  '農業', '農家', '農産物', '畜産', '酪農', '栽培', '圃場', '収穫',
+  '食料', '食糧', 'フード', 'アグリ', '農林', '漁業', '林業',
+  'ja', '農協', '農学', '品種', '作物', '肥料', '農薬', '灌漑',
+  'スマート農業', 'アグリテック', 'agritech', 'farmtech'
+];
+
 /**
- * 書籍をキーワードでスコアリング
+ * 書籍をキーワードでスコアリング（農業技術書籍用）
  * @param {Object} book openBDから取得した書籍オブジェクト
  * @returns {Object} スコアとマッチしたカテゴリを含むオブジェクト
  */
@@ -1630,11 +1656,33 @@ function scoreBook(book) {
   let score = 0;
   const matchedCategories = new Set();
 
-  // 除外キーワードチェック
+  // 除外キーワードチェック（基本）
   for (const keyword of EXCLUSION_KEYWORDS) {
     if (fullText.includes(keyword.toLowerCase())) {
-      return { score: -1, categories: ['除外'] }; // 除外対象
+      return { score: -1, categories: ['除外'] };
     }
+  }
+
+  // 農業技術用除外キーワードチェック（農業に無関係な技術書）
+  for (const keyword of AGRI_TECH_EXCLUSION_KEYWORDS) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['農業外技術'] };
+    }
+  }
+
+  // 農業関連キーワードのチェック（必須条件）
+  let hasAgriKeyword = false;
+  for (const keyword of AGRI_REQUIRED_KEYWORDS) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      hasAgriKeyword = true;
+      break;
+    }
+  }
+
+  // 農業関連キーワードがない場合はスコアを大幅に下げる
+  if (!hasAgriKeyword) {
+    score -= 5; // ペナルティ
+    matchedCategories.add('農業関連キーワードなし');
   }
 
   // カテゴリ別スコアリング
@@ -1643,7 +1691,7 @@ function scoreBook(book) {
       if (fullText.includes(keyword.toLowerCase())) {
         score += points;
         matchedCategories.add(categoryName);
-        break; // 同じカテゴリで複数マッチしても加点は1回のみ
+        break;
       }
     }
   };
