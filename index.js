@@ -1814,9 +1814,16 @@ async function postDailyNewBook() {
     const availableBooks = [];
     for (const book of books) {
       const isbn = book.summary.isbn;
-      // ISBNがあり、投稿済みでない書籍はすべて許容
+      // ISBNがあり、投稿済みでない書籍
       if (isbn && !postedBookIsbns.has(isbn)) {
         const { score: keywordScore, categories } = scoreBook(book);
+
+        // 除外対象（score = -1）の書籍はスキップ
+        if (keywordScore < 0) {
+          console.log(`[New Book] 除外: ${book.summary.title} (${categories.join(', ')})`);
+          continue;
+        }
+
         const freshnessBonus = calculateFreshnessBonus(book);
         // 最終スコア = キーワードスコア + 発売日ボーナス
         const totalScore = keywordScore + freshnessBonus;
@@ -2284,11 +2291,12 @@ async function fetchAgriTechBooks() {
   }
 
   // === 3. NDL Search API（国立国会図書館）から取得 ===
-  console.log('[AgriTech Books] NDL Search APIから取得中...');
-  const ndlKeywords = ['農業', 'スマート農業', 'アグリテック', 'DX'];
-  const ndlBooks = await fetchNewBooksFromNDL(ndlKeywords);
-  allBooks.push(...ndlBooks);
-  console.log(`[AgriTech Books] NDLから${ndlBooks.length}件取得`);
+  // 注: NDL APIはXMLパースの問題があるため一時的に無効化
+  // console.log('[AgriTech Books] NDL Search APIから取得中...');
+  // const ndlKeywords = ['農業', 'スマート農業', 'アグリテック', 'DX'];
+  // const ndlBooks = await fetchNewBooksFromNDL(ndlKeywords);
+  // allBooks.push(...ndlBooks);
+  // console.log(`[AgriTech Books] NDLから${ndlBooks.length}件取得`);
 
   // === 4. 版元ドットコム（openBD経由）から取得 ===
   console.log('[AgriTech Books] 版元ドットコムAPIから取得中...');
@@ -2407,11 +2415,12 @@ async function fetchPopularBooks() {
   }
 
   // === 3. NDL Search API（国立国会図書館）から取得 ===
-  console.log('[Popular Books] NDL Search APIから取得中...');
-  const ndlKeywords = ['小説', 'ビジネス', '経済', '新書'];
-  const ndlBooks = await fetchNewBooksFromNDL(ndlKeywords);
-  allBooks.push(...ndlBooks);
-  console.log(`[Popular Books] NDLから${ndlBooks.length}件取得`);
+  // 注: NDL APIはXMLパースの問題があるため一時的に無効化
+  // console.log('[Popular Books] NDL Search APIから取得中...');
+  // const ndlKeywords = ['小説', 'ビジネス', '経済', '新書'];
+  // const ndlBooks = await fetchNewBooksFromNDL(ndlKeywords);
+  // allBooks.push(...ndlBooks);
+  // console.log(`[Popular Books] NDLから${ndlBooks.length}件取得`);
 
   // === 4. 版元ドットコム（openBD経由）から取得 ===
   console.log('[Popular Books] 版元ドットコムAPIから取得中...');
