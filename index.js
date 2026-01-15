@@ -2822,7 +2822,7 @@ console.log('[Info Gathering] 類似記事の検出を開始...');
 const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
 
 // Step 5: 最終的に上位3件を抽出
-const finalArticles = uniqueArticles.slice(0, 3);
+const finalArticles = uniqueArticles.slice(0, 5);
 
 if (finalArticles.length === 0) {
   console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
