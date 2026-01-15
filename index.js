@@ -2712,159 +2712,156 @@ ${discussionQuestions}
   });
 
 
- // --- 2. 情報収集ニュース投稿タスク (1日4回) ---
-  // JSTで朝6時から夕方18時まで、4時間ごとに実行 (6, 10, 14, 18時)
-  cron.schedule('0 6,10,14,18 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
-  console.log('[Info Gathering] 情報収集タスクを開始します...');
-    try {
-      if (!INFO_GATHERING_CHANNEL_ID) { return; }
-      const channel = await client.channels.fetch(INFO_GATHERING_CHANNEL_ID);
-      if (!channel || channel.type !== ChannelType.GuildText) { return; }
+// --- 2. 情報収集ニュース投稿タスク (1日1回：朝6時) ---
+// 毎日 AM 6:00 JST に実行し、厳選した5件を届ける
+// cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+cron.schedule('0 6 * * *', async () => {
+  console.log('[Info Gathering] 日刊・情報収集タスクを開始します...');
+  try {
+    if (!INFO_GATHERING_CHANNEL_ID) { return; }
+    const channel = await client.channels.fetch(INFO_GATHERING_CHANNEL_ID);
+    if (!channel || channel.type !== ChannelType.GuildText) { return; }
 
-      // Step 0: カテゴリ別に記事を並行取得
-      const fetchArticles = async (urls) => {
-        const promises = urls.map(async (url) => {
-          try {
-            const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            return await parser.parseString(response.data);
-          } catch {
-            return null;
-          }
-        });
-        const feeds = await Promise.all(promises);
-        return feeds.filter(f => f && f.items).flatMap(f => f.items);
-      };
-      
-      const allAgriArticles = await fetchArticles(NEWS_RSS_FEEDS_AGRICULTURE);
-      const allTechArticles = await fetchArticles(NEWS_RSS_FEEDS_WEB3);
-     
-       // Step 1: 直近24時間の記事のみを対象にする
-      const twentyFourHoursAgo = new Date();
-      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-      
-      const recentAgriArticles = allAgriArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
-      const recentTechArticles = allTechArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
-
-      // Step 2: ★★★ 投稿済みの記事を除外する ★★★
-      // ▼▼▼ postedArticleUrls が空だと意味がないので、起動時に同期処理を呼び出す必要があります ▲▲▲
-      const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
-      const newTechArticles = recentTechArticles.filter(a => !postedArticleUrls.has(a.link));
-      console.log(`[Info Gathering] 新規記事候補: 農業関連=${newAgriArticles.length}件, 技術関連=${newTechArticles.length}件`);
-
-      // Step 3: フィルタリングと優先順位付け
-      // ▼▼▼ Step 3 & 4: スコアリング方式による新しい選定ロジック ▼▼▼
-console.log('[Info Gathering] スコアリングを開始...');
-const allNewArticles = [...newAgriArticles, ...newTechArticles];
-const scoredArticles = [];
-const uniqueUrls = new Set();
-let excludedCount = 0; // 除外された記事数をカウント
-
-// すべての新規記事をスコアリング
-for (const article of allNewArticles) {
-  if (!article.link || uniqueUrls.has(article.link)) continue;
-
-  const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
-  let score = 0;
-  let matchedCategories = new Set();
-
-  // Helper function to check keywords and update score/labels
-  const checkKeywords = (keywords, categoryName, points) => {
-    if (keywords.some(k => content.includes(k.toLowerCase()))) {
-      score += points;
-      matchedCategories.add(categoryName);
-    }
-  };
-
-  // 除外キーワードチェック（誤検出を防止）
-  const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
-  if (hasExclusionKeyword) {
-    excludedCount++;
-    continue; // 除外キーワードに該当する場合はスキップ
-  }
-
-  // 各カテゴリのキーワードをチェックしてスコアを加算
-  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
-  checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
-  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
-  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
-  checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
-  checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
-  checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
-
-  // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
-  if (score > 0 && matchedCategories.has('コア農業')) {
-    // ★★★ 動的スコアリングを適用 ★★★
-    const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
-
-    scoredArticles.push({
-      ...article,
-      baseScore: score,
-      score: dynamicScore,
-      priorityLabel: Array.from(matchedCategories).join(' + ')
-    });
-    uniqueUrls.add(article.link);
-  }
-}
-
-console.log(`[Info Gathering] 除外キーワードに該当: ${excludedCount}件, スコアリング対象: ${scoredArticles.length}件`);
-
-// スコアの高い順、次に日付の新しい順でソート
-scoredArticles.sort((a, b) => {
-  if (b.score !== a.score) {
-    return b.score - a.score;
-  }
-  return new Date(b.isoDate) - new Date(a.isoDate);
-});
-
-// ★★★ Step 4.5: 類似記事検出と重複除去 ★★★
-console.log('[Info Gathering] 類似記事の検出を開始...');
-const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
-
-// Step 5: 最終的に上位3件を抽出
-const finalArticles = uniqueArticles.slice(0, 5);
-
-if (finalArticles.length === 0) {
-  console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
-  return;
-}
-
-console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
-finalArticles.forEach((article, index) => {
-  console.log(`  ${index + 1}. [Score: ${article.score}] [${article.priorityLabel}] ${article.title}`);
-});
-// ▲▲▲ 新しいロジックここまで ▲▲▲
-
-      let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
-       const articlesToLog = [];
-
-      finalArticles.forEach((article, index) => {
-        postContent += `**${index + 1}. ${article.title}**\n`;
-        postContent += `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\`\n`;
-        postContent += `${article.link}\n\n`;
-        postedArticleUrls.add(article.link);
-        articlesToLog.push({
-          url: article.link,
-          title: article.title,
-          pubDate: article.isoDate,
-          priority: article.priorityLabel,
-          score: article.score // ▼▼▼ この行を追加 ▼▼▼
-        });
+    // Step 0: カテゴリ別に記事を並行取得
+    const fetchArticles = async (urls) => {
+      const promises = urls.map(async (url) => {
+        try {
+          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 });
+          return await parser.parseString(response.data);
+        } catch (err) {
+          console.error(`RSS取得エラー: ${url}`);
+          return null;
+        }
       });
+      const feeds = await Promise.all(promises);
+      return feeds.filter(f => f && f.items).flatMap(f => f.items);
+    };
 
-      await channel.send({ content: postContent });
-      console.log(`[Info Gathering] ${finalArticles.length}件のニュースを投稿しました。`);
+    const allAgriArticles = await fetchArticles(NEWS_RSS_FEEDS_AGRICULTURE);
+    const allTechArticles = await fetchArticles(NEWS_RSS_FEEDS_WEB3);
 
-      if (articlesToLog.length > 0) {
-        await logToSpreadsheet('addArticles', { articles: articlesToLog });
+    // Step 1: 直近24時間の記事のみを対象にする
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+    const recentAgriArticles = allAgriArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+    const recentTechArticles = allTechArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+
+    // Step 2: 投稿済みの記事を除外する
+    const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
+    const newTechArticles = recentTechArticles.filter(a => !postedArticleUrls.has(a.link));
+    console.log(`[Info Gathering] 新規記事候補: 農業関連=${newAgriArticles.length}件, 技術関連=${newTechArticles.length}件`);
+
+    // Step 3: フィルタリングと優先順位付け
+    console.log('[Info Gathering] スコアリングを開始...');
+    const allNewArticles = [...newAgriArticles, ...newTechArticles];
+    const scoredArticles = [];
+    const uniqueUrls = new Set();
+    let excludedCount = 0;
+
+    for (const article of allNewArticles) {
+      if (!article.link || uniqueUrls.has(article.link)) continue;
+
+      const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+      let score = 0;
+      let matchedCategories = new Set();
+
+      const checkKeywords = (keywords, categoryName, points) => {
+        if (keywords.some(k => content.includes(k.toLowerCase()))) {
+          score += points;
+          matchedCategories.add(categoryName);
+        }
+      };
+
+      // 除外キーワードチェック
+      const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
+      if (hasExclusionKeyword) {
+        excludedCount++;
+        continue;
       }
 
-    } catch (error) {
-      console.error('[Info Gathering] タスク実行中にエラーが発生しました:', error);
+      // スコア計算
+      checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
+      checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
+      checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
+      checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
+      checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
+      checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
+      checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
+
+      // 「コア農業」カテゴリを含み、かつスコアが正の場合のみ候補へ
+      if (score > 0 && matchedCategories.has('コア農業')) {
+        const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
+
+        scoredArticles.push({
+          ...article,
+          baseScore: score,
+          score: dynamicScore,
+          priorityLabel: Array.from(matchedCategories).join(' + ')
+        });
+        uniqueUrls.add(article.link);
+      }
     }
-  }, {
-    timezone: "Asia/Tokyo"
-  });
+
+    console.log(`[Info Gathering] 除外: ${excludedCount}件, 候補: ${scoredArticles.length}件`);
+
+    // スコアの高い順、次に日付の新しい順でソート
+    scoredArticles.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return new Date(b.isoDate) - new Date(a.isoDate);
+    });
+
+    // Step 4.5: 類似記事検出と重複除去
+    console.log('[Info Gathering] 類似記事の検出を開始...');
+    const { deduplicated: uniqueArticles } = detectAndGroupSimilarArticles(scoredArticles);
+
+    // Step 5: 最終的に上位5件を抽出（1日分の全候補からベスト5を選ぶため精度が上がります）
+    const finalArticles = uniqueArticles.slice(0, 5);
+
+    if (finalArticles.length === 0) {
+      console.log('[Info Gathering] 本日の投稿対象記事はありませんでした。');
+      return;
+    }
+
+    console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
+    finalArticles.forEach((article, index) => {
+      console.log(`  ${index + 1}. [Score: ${article.score}] ${article.title}`);
+    });
+
+    // メッセージ作成
+    let postContent = `### 🌅 日刊：厳選情報ヘッドライン（${new Date().toLocaleDateString('ja-JP')}）\n---\n`;
+    const articlesToLog = [];
+
+    finalArticles.forEach((article, index) => {
+      postContent += `**${index + 1}. ${article.title}**\n`;
+      postContent += `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\`\n`;
+      postContent += `${article.link}\n\n`;
+      
+      postedArticleUrls.add(article.link);
+      articlesToLog.push({
+        url: article.link,
+        title: article.title,
+        pubDate: article.isoDate,
+        priority: article.priorityLabel,
+        score: article.score
+      });
+    });
+
+    await channel.send({ content: postContent });
+    console.log(`[Info Gathering] ${finalArticles.length}件の厳選ニュースを投稿しました。`);
+
+    if (articlesToLog.length > 0) {
+      await logToSpreadsheet('addArticles', { articles: articlesToLog });
+    }
+
+  } catch (error) {
+    console.error('[Info Gathering] タスク実行中にエラーが発生しました:', error);
+  }
+}, {
+  timezone: "Asia/Tokyo"
+});
 
 // === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
   // ※ ユーザーリクエストにより無効化（2025年）
@@ -3099,7 +3096,7 @@ finalArticles.forEach((article, index) => {
       const finalArticles = scoredArticles
         .filter(a => a.score >= MINIMUM_SCORE)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 3); // 最大3件まで
+        .slice(0, 5); // 最大5件まで
 
          if (finalArticles.length === 0) {
         console.log('[Roblox News] 翻訳対象の重要ニュースはありませんでした。');
@@ -3186,8 +3183,8 @@ finalArticles.forEach((article, index) => {
   });
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
-  cron.schedule('0 10 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('0 10 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
     timezone: "Asia/Tokyo"
@@ -3195,7 +3192,7 @@ finalArticles.forEach((article, index) => {
 
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
-  console.log('- Info Gathering: 6:00-18:00 JST (every 3h)');
+  console.log('- Info Gathering: 6:00 JST');
   console.log('- Global Research Digest: 10:00, 19:00 JST');
   console.log('- Roblox News Digest: 7:00 JST');
   console.log('- AgriTech Book Recommendation: 9:00 JST');
