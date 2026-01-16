@@ -3179,21 +3179,22 @@ const finalArticles = uniqueArticles.slice(0, 5);
 
       // スコアの高い順にソートし、最低スコア（例: 5点以上）で足切り
       const MINIMUM_SCORE = 5; 
-      const finalArticles = scoredArticles
+      // ▼▼▼ 名前を変更 (finalArticles -> finalRobloxArticles) ▼▼▼
+      const finalRobloxArticles = scoredArticles 
         .filter(a => a.score >= MINIMUM_SCORE)
         .sort((a, b) => b.score - a.score)
         .slice(0, 5); // 最大5件まで
 
-         if (finalArticles.length === 0) {
+         if (finalRobloxArticles.length === 0) {
         console.log('[Roblox News] 翻訳対象の重要ニュースはありませんでした。');
         return;
       }
       
       // ▼▼▼ ここからが新しい処理です ▼▼▼
       // --- ステップ3: AIによる翻訳と要約 ---
-      console.log(`[Roblox News] ${finalArticles.length}件の重要ニュースを翻訳します...`);
+      console.log(`[Roblox News] ${finalRobloxArticles.length}件の重要ニュースを翻訳します...`);
       const translatedArticles = [];
-      for (const article of finalArticles) {
+      for (const article of finalRobloxArticles) {
         const translation = await translateAndSummarizeRobloxArticle(article);
         if (translation) {
           translatedArticles.push({
@@ -3269,8 +3270,8 @@ const finalArticles = uniqueArticles.slice(0, 5);
   });
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
-  // cron.schedule('0 10 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('0 10 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
     timezone: "Asia/Tokyo"
