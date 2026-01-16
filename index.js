@@ -3275,49 +3275,123 @@ cron.schedule('0 6 * * *', async () => {
         return;
       }
 
-      // 記事の概要を生成（OpenAI使用）
-      const contentSnippet = latestArticle.contentSnippet || latestArticle.content || '';
-      let summary = '';
+      // 記事ページから本文を取得
+      let articleContent = latestArticle.contentSnippet || latestArticle.content || '';
+      try {
+        const articleResponse = await axios.get(latestArticle.link, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          },
+          timeout: 15000
+        });
+        const $ = cheerio.load(articleResponse.data);
 
-      if (contentSnippet && OPENAI_API_KEY) {
+        // WordPressの記事本文を取得（一般的なセレクタを試行）
+        const selectors = ['.entry-content', '.post-content', 'article .content', '.article-content', 'main article'];
+        for (const selector of selectors) {
+          const content = $(selector).text().trim();
+          if (content && content.length > 200) {
+            articleContent = content;
+            break;
+          }
+        }
+        console.log(`[AI Guide] 記事本文を取得しました (${articleContent.length}文字)`);
+      } catch (scrapeError) {
+        console.log('[AI Guide] 記事本文の取得に失敗、RSSの内容を使用します:', scrapeError.message);
+      }
+
+      // AIによる要約と要点抽出
+      let summary = '';
+      let keyPoints = [];
+
+      if (articleContent && OPENAI_API_KEY) {
         try {
           const completion = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
             messages: [
               {
                 role: 'system',
-                content: 'あなたは農業とAI技術に詳しい専門家です。記事の内容を簡潔に要約してください。'
+                content: `あなたは農業とAI技術に詳しい専門家です。記事を分析し、以下のJSON形式で出力してください：
+{
+  "summary": "3〜4文の要約（農業従事者向けに分かりやすく）",
+  "keyPoints": ["要点1", "要点2", "要点3"],
+  "actionable": "この記事から得られる実践的なヒント（1文）"
+}`
               },
               {
                 role: 'user',
-                content: `以下の記事を3〜4文で要約してください。農業従事者にとって重要なポイントを強調してください。\n\nタイトル: ${latestArticle.title}\n\n内容: ${contentSnippet.substring(0, 2000)}`
+                content: `以下の記事を分析してください。\n\nタイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}`
               }
             ],
-            max_tokens: 300,
+            max_tokens: 500,
             temperature: 0.7
           });
-          summary = completion.choices[0].message.content;
+
+          const aiResponse = completion.choices[0].message.content;
+          // JSONをパース（マークダウンのコードブロックを除去）
+          const jsonStr = aiResponse.replace(/```json\n?|\n?```/g, '').trim();
+          const parsed = JSON.parse(jsonStr);
+          summary = parsed.summary || '';
+          keyPoints = parsed.keyPoints || [];
+          const actionable = parsed.actionable || '';
+
+          // Discord投稿を作成（強化版）
+          const embed = new EmbedBuilder()
+            .setColor(0x00AA00)
+            .setTitle(`🌾 ${latestArticle.title}`)
+            .setURL(latestArticle.link)
+            .setDescription(summary)
+            .setFooter({ text: '農業AI通信 | metagri-labo.com' })
+            .setTimestamp(articleDate);
+
+          // 要点をフィールドとして追加
+          if (keyPoints.length > 0) {
+            embed.addFields({
+              name: '📌 この記事のポイント',
+              value: keyPoints.map((p, i) => `${i + 1}. ${p}`).join('\n'),
+              inline: false
+            });
+          }
+
+          // 実践的ヒントを追加
+          if (actionable) {
+            embed.addFields({
+              name: '💡 実践のヒント',
+              value: actionable,
+              inline: false
+            });
+          }
+
+          const postContent = `### 📡 農業AI通信 - 本日の記事\n農業×AIの最新情報をお届けします！`;
+
+          await channel.send({ content: postContent, embeds: [embed] });
+          console.log(`[AI Guide] 記事を投稿しました: ${latestArticle.title}`);
+
         } catch (aiError) {
           console.error('[AI Guide] AI要約生成エラー:', aiError.message);
-          summary = contentSnippet.substring(0, 200) + '...';
+          // フォールバック: シンプルな投稿
+          const embed = new EmbedBuilder()
+            .setColor(0x00AA00)
+            .setTitle(`🌾 ${latestArticle.title}`)
+            .setURL(latestArticle.link)
+            .setDescription(articleContent.substring(0, 300) + '...')
+            .setFooter({ text: '農業AI通信 | metagri-labo.com' })
+            .setTimestamp(articleDate);
+
+          await channel.send({ content: `### 📡 農業AI通信 - 本日の記事`, embeds: [embed] });
         }
       } else {
-        summary = contentSnippet.substring(0, 200) + '...';
+        // OpenAI APIキーがない場合のフォールバック
+        const embed = new EmbedBuilder()
+          .setColor(0x00AA00)
+          .setTitle(`🌾 ${latestArticle.title}`)
+          .setURL(latestArticle.link)
+          .setDescription(articleContent.substring(0, 300) + '...')
+          .setFooter({ text: '農業AI通信 | metagri-labo.com' })
+          .setTimestamp(articleDate);
+
+        await channel.send({ content: `### 📡 農業AI通信 - 本日の記事`, embeds: [embed] });
       }
-
-      // Discord投稿を作成
-      const embed = new EmbedBuilder()
-        .setColor(0x00AA00)
-        .setTitle(`🌾 ${latestArticle.title}`)
-        .setURL(latestArticle.link)
-        .setDescription(summary)
-        .setFooter({ text: '農業AI通信 | metagri-labo.com' })
-        .setTimestamp(articleDate);
-
-      const postContent = `### 📡 農業AI通信 - 本日の記事\n農業×AIの最新情報をお届けします！`;
-
-      await channel.send({ content: postContent, embeds: [embed] });
-      console.log(`[AI Guide] 記事を投稿しました: ${latestArticle.title}`);
 
     } catch (error) {
       console.error('[AI Guide] タスク実行中にエラーが発生しました:', error.message);
