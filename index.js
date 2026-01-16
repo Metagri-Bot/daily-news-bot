@@ -18,6 +18,11 @@ const NEWS_CHANNEL_ID = process.env.NEWS_CHANNEL_ID;
 const GOOGLE_APPS_SCRIPT_URL = process.env.GOOGLE_APPS_SCRIPT_URL;
 const NEWS_RSS_FEEDS_AGRICULTURE = process.env.NEWS_RSS_FEEDS_AGRICULTURE.split(',');
 const NEWS_RSS_FEEDS_WEB3 = process.env.NEWS_RSS_FEEDS_WEB3.split(',');
+
+// === AIツール動向専用RSSフィード（新規追加） ===
+const NEWS_RSS_FEEDS_AI_TOOLS = [
+  'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml'  // ITmedia AI+
+];
 const INFO_GATHERING_CHANNEL_ID = process.env.INFO_GATHERING_CHANNEL_ID;
 
 // === 海外文献用の新しい環境変数 ===
@@ -84,20 +89,46 @@ const CORE_AGRI_KEYWORDS =  [
 
 // 【2. テクノロジー・革新キーワード】（+5点） - Metagriらしさ
 const TECH_INNOVATION_KEYWORDS = [
-  // AI / 生成AI 関連
-  'AI', '人工知能', '生成AI', 'LLM', 'ChatGPT',  'Gemini', 'Claude', 'エージェント', 'Vibe Coding', '動画生成AI', '画像生成AI', '3Dモデル',
+  // AI / 生成AI 関連（基本）
+  'AI', '人工知能', '生成AI', 'LLM', 'エージェント',
 
   // Web3 / ブロックチェーン 関連
-  'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース','ウォレット', 'RWA', 'DeFi', 'スマートコントラクト', 'トークンエコノミー', 'トークン', 'デジタルツイン', 'デジタルツイン農業',
+  'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース', 'ウォレット', 'RWA', 'DeFi', 'スマートコントラクト', 'トークンエコノミー', 'トークン', 'デジタルツイン', 'デジタルツイン農業',
+
+  // ★ Web3の日常利用・決済関連（新規追加）
+  'ステーブルコイン', 'JPYC', 'USDC', 'USDT', 'QR決済', 'マイナウォレット', 'デジタル円', 'CBDC', 'デジタル通貨', '暗号資産決済', 'クリプト決済',
+  '商店街DAO', '地域DAO', 'コミュニティDAO', 'ガバナンス', '分散型', '自律分散',
 
   // スマート農業 / IoT 関連
   'スマート農業', 'IoT', 'ドローン', 'ロボット', '自動化', '衛星', 'DX', 'デジタル', 'フードテック', 'アグリテック', '農業DX', '精密農業', 'センサー', 'コンピュータビジョン', 'データ解析', '気象予測', 'リモートセンシング', '画像解析', '農業用ドローン', '農業用ロボット',
 
   // バイオ・環境技術 関連
-  'カーボンクレジット', 'ゲノム編集', 'フードテック', '培養肉', '代替肉','バイオ炭',
+  'カーボンクレジット', 'ゲノム編集', 'フードテック', '培養肉', '代替肉', 'バイオ炭',
 
   // その他（概念・手法）
   'VR', 'ソリューション', 'プラットフォーム', 'システム'
+];
+
+// 【2.5 AIツール動向キーワード】（+6点） - 最先端AIツールのアップデートとビジネス活用
+const AI_TOOLS_KEYWORDS = [
+  // 主要AIサービス・企業
+  'ChatGPT', 'GPT-4', 'GPT-5', 'OpenAI', 'Claude', 'Anthropic', 'Gemini', 'Google AI', 'Copilot', 'Microsoft AI',
+  'Perplexity', 'Llama', 'Meta AI', 'Mistral', 'Grok', 'xAI',
+
+  // 動画・画像・音声生成AI
+  'Runway', 'Gen-4', 'Gen-5', 'Sora', 'Pika', 'Midjourney', 'DALL-E', 'Stable Diffusion', 'Flux',
+  '動画生成AI', '画像生成AI', '音声生成AI', '3Dモデル生成', 'テキスト読み上げ', 'ボイスクローン',
+
+  // コーディング・開発支援AI
+  'Vibe Coding', 'バイブコーディング', 'Cursor', 'Windsurf', 'Devin', 'GitHub Copilot', 'Cline', 'Aider',
+  'AIコーディング', 'AIプログラミング', 'コード生成',
+
+  // AI活用・実務関連
+  '利用上限', 'API', 'プロンプト', 'ファインチューニング', 'RAG', 'エンベディング',
+  'AI活用', 'AI導入', 'AI実装', '業務効率化', '生産性向上', 'AIエージェント', 'マルチモーダル',
+
+  // AI関連トレンドワード
+  'AGI', '汎用人工知能', 'AI規制', 'AI倫理', 'AIガバナンス'
 ];
 
 // 【3. 消費者・体験キーワード】（+5点） - 新しい価値
@@ -110,11 +141,18 @@ const CONSUMER_EXPERIENCE_KEYWORDS = [
 
 // 【4. 社会課題・サステナビリティキーワード】（+4点） - 大義
 const SOCIAL_SUSTAINABILITY_KEYWORDS = [
-  
-  'オーガニック',  '食料危機', '規格外', '食品ロス', 'ゼロ廃棄', '環境再生型', 'サステナブル', '熱中症対策' , 'サステナブル', '有機農業', '環境保全', 'SDGs', '食料危機', '食料安全保障', '食料自給率',
-  '食品ロス', 'フードロス', '食料廃棄', '鳥獣害', '病害虫', '気候変動', '中山間地域', '過疎地域', '限界集落', '地域活性化', '地方創生',
-// 現場の課題
-  '人手不足', '規格外', '古米', '耕作放棄地', '高齢化', '後継者不足', '労働力不足', '担い手不足', '農地集約', '農地中間管理機構', '農業従事者', '農業労働力', '農業就業人口'
+  // 環境・サステナビリティ
+  'オーガニック', '食料危機', '規格外', '食品ロス', 'ゼロ廃棄', '環境再生型', 'サステナブル', '熱中症対策', '有機農業', '環境保全', 'SDGs', '食料安全保障', '食料自給率',
+  'フードロス', '食料廃棄', '鳥獣害', '病害虫', '気候変動',
+
+  // ★ 地方創生・地域活性化（強化）
+  '地方創生', '地域活性化', '地域振興', '中山間地域', '過疎地域', '限界集落', '関係人口', '移住促進', '地域課題', '地域DX', 'ローカルDX',
+
+  // ★ 実用化・導入支援（新規追加）
+  '補助金', '助成金', '実証実験', '導入事例', '活用事例', '成功事例', '右腕', 'サポート', 'アシスタント', '業務支援', '経営支援', '営農支援',
+
+  // 現場の課題
+  '人手不足', '古米', '耕作放棄地', '高齢化', '後継者不足', '労働力不足', '担い手不足', '農地集約', '農地中間管理機構', '農業従事者', '農業労働力', '農業就業人口'
 ];
 
 // 【5. ヒト・ストーリーキーワード】（+4点） - 共感
@@ -2772,6 +2810,41 @@ cron.schedule('0 6 * * *', async () => {
           matchedCategories.add(categoryName);
         }
       };
+      
+      const allAgriArticles = await fetchArticles(NEWS_RSS_FEEDS_AGRICULTURE);
+      const allTechArticles = await fetchArticles(NEWS_RSS_FEEDS_WEB3);
+      const allAiToolsArticles = await fetchArticles(NEWS_RSS_FEEDS_AI_TOOLS);  // ★ AIツール専用RSS追加
+
+       // Step 1: 直近24時間の記事のみを対象にする
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+      const recentAgriArticles = allAgriArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+      const recentTechArticles = allTechArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+      const recentAiToolsArticles = allAiToolsArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);  // ★ AIツール
+
+      // Step 2: ★★★ 投稿済みの記事を除外する ★★★
+      // ▼▼▼ postedArticleUrls が空だと意味がないので、起動時に同期処理を呼び出す必要があります ▲▲▲
+      const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
+      const newTechArticles = recentTechArticles.filter(a => !postedArticleUrls.has(a.link));
+      const newAiToolsArticles = recentAiToolsArticles.filter(a => !postedArticleUrls.has(a.link));  // ★ AIツール
+      console.log(`[Info Gathering] 新規記事候補: 農業関連=${newAgriArticles.length}件, 技術関連=${newTechArticles.length}件, AIツール=${newAiToolsArticles.length}件`);
+
+      // Step 3: フィルタリングと優先順位付け
+      // ▼▼▼ Step 3 & 4: スコアリング方式による新しい選定ロジック ▼▼▼
+console.log('[Info Gathering] スコアリングを開始...');
+const allNewArticles = [...newAgriArticles, ...newTechArticles, ...newAiToolsArticles];  // ★ AIツール追加
+const scoredArticles = [];
+const uniqueUrls = new Set();
+let excludedCount = 0; // 除外された記事数をカウント
+
+// すべての新規記事をスコアリング
+for (const article of allNewArticles) {
+  if (!article.link || uniqueUrls.has(article.link)) continue;
+
+  const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+  let score = 0;
+  let matchedCategories = new Set();
 
       // 除外キーワードチェック
       const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
@@ -2805,12 +2878,27 @@ cron.schedule('0 6 * * *', async () => {
 
     console.log(`[Info Gathering] 除外: ${excludedCount}件, 候補: ${scoredArticles.length}件`);
 
-    // スコアの高い順、次に日付の新しい順でソート
-    scoredArticles.sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-      return new Date(b.isoDate) - new Date(a.isoDate);
+  // 各カテゴリのキーワードをチェックしてスコアを加算
+  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
+  checkKeywords(AI_TOOLS_KEYWORDS, 'AIツール', 6);  // ★ 新カテゴリ：最優先
+  checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
+  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
+  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
+  checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
+  checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
+  checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
+
+  // 「コア農業」または「AIツール」カテゴリにマッチする記事を対象（関連性を担保）
+  const hasRelevantCategory = matchedCategories.has('コア農業') || matchedCategories.has('AIツール');
+  if (score > 0 && hasRelevantCategory) {
+    // ★★★ 動的スコアリングを適用 ★★★
+    const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
+
+    scoredArticles.push({
+      ...article,
+      baseScore: score,
+      score: dynamicScore,
+      priorityLabel: Array.from(matchedCategories).join(' + ')
     });
 
     // Step 4.5: 類似記事検出と重複除去
@@ -2825,10 +2913,8 @@ cron.schedule('0 6 * * *', async () => {
       return;
     }
 
-    console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
-    finalArticles.forEach((article, index) => {
-      console.log(`  ${index + 1}. [Score: ${article.score}] ${article.title}`);
-    });
+// Step 5: 最終的に上位5件を抽出
+const finalArticles = uniqueArticles.slice(0, 5);
 
     // メッセージ作成
     let postContent = `### 🌅 日刊：厳選情報ヘッドライン（${new Date().toLocaleDateString('ja-JP')}）\n---\n`;
