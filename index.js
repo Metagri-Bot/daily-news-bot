@@ -2231,86 +2231,86 @@ ${discussionQuestions}
 
       // Step 3: フィルタリングと優先順位付け
       // ▼▼▼ Step 3 & 4: スコアリング方式による新しい選定ロジック ▼▼▼
-console.log('[Info Gathering] スコアリングを開始...');
-const allNewArticles = [...newAgriArticles, ...newTechArticles];
-const scoredArticles = [];
-const uniqueUrls = new Set();
-let excludedCount = 0; // 除外された記事数をカウント
+      console.log('[Info Gathering] スコアリングを開始...');
+      const allNewArticles = [...newAgriArticles, ...newTechArticles];
+      const scoredArticles = [];
+      const uniqueUrls = new Set();
+      let excludedCount = 0; // 除外された記事数をカウント
 
-// すべての新規記事をスコアリング
-for (const article of allNewArticles) {
-  if (!article.link || uniqueUrls.has(article.link)) continue;
+      // すべての新規記事をスコアリング
+      for (const article of allNewArticles) {
+        if (!article.link || uniqueUrls.has(article.link)) continue;
 
-  const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
-  let score = 0;
-  let matchedCategories = new Set();
+        const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+        let score = 0;
+        let matchedCategories = new Set();
 
-  // Helper function to check keywords and update score/labels
-  const checkKeywords = (keywords, categoryName, points) => {
-    if (keywords.some(k => content.includes(k.toLowerCase()))) {
-      score += points;
-      matchedCategories.add(categoryName);
-    }
-  };
+        // Helper function to check keywords and update score/labels
+        const checkKeywords = (keywords, categoryName, points) => {
+          if (keywords.some(k => content.includes(k.toLowerCase()))) {
+            score += points;
+            matchedCategories.add(categoryName);
+          }
+        };
 
-  // 除外キーワードチェック（誤検出を防止）
-  const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
-  if (hasExclusionKeyword) {
-    excludedCount++;
-    continue; // 除外キーワードに該当する場合はスキップ
-  }
+        // 除外キーワードチェック（誤検出を防止）
+        const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
+        if (hasExclusionKeyword) {
+          excludedCount++;
+          continue; // 除外キーワードに該当する場合はスキップ
+        }
 
-  // 各カテゴリのキーワードをチェックしてスコアを加算
-  checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
-  checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
-  checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
-  checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
-  checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
-  checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
-  checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
+        // 各カテゴリのキーワードをチェックしてスコアを加算
+        checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
+        checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
+        checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
+        checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
+        checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
+        checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
+        checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
 
-  // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
-  if (score > 0 && matchedCategories.has('コア農業')) {
-    // ★★★ 動的スコアリングを適用 ★★★
-    const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
+        // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
+        if (score > 0 && matchedCategories.has('コア農業')) {
+          // ★★★ 動的スコアリングを適用 ★★★
+          const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
 
-    scoredArticles.push({
-      ...article,
-      baseScore: score,
-      score: dynamicScore,
-      priorityLabel: Array.from(matchedCategories).join(' + ')
-    });
-    uniqueUrls.add(article.link);
-  }
-}
+          scoredArticles.push({
+            ...article,
+            baseScore: score,
+            score: dynamicScore,
+            priorityLabel: Array.from(matchedCategories).join(' + ')
+          });
+          uniqueUrls.add(article.link);
+        }
+      }
 
-console.log(`[Info Gathering] 除外キーワードに該当: ${excludedCount}件, スコアリング対象: ${scoredArticles.length}件`);
+      console.log(`[Info Gathering] 除外キーワードに該当: ${excludedCount}件, スコアリング対象: ${scoredArticles.length}件`);
 
-// スコアの高い順、次に日付の新しい順でソート
-scoredArticles.sort((a, b) => {
-  if (b.score !== a.score) {
-    return b.score - a.score;
-  }
-  return new Date(b.isoDate) - new Date(a.isoDate);
-});
+      // スコアの高い順、次に日付の新しい順でソート
+      scoredArticles.sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return new Date(b.isoDate) - new Date(a.isoDate);
+      });
 
-// ★★★ Step 4.5: 類似記事検出と重複除去 ★★★
-console.log('[Info Gathering] 類似記事の検出を開始...');
-const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
+      // ★★★ Step 4.5: 類似記事検出と重複除去 ★★★
+      console.log('[Info Gathering] 類似記事の検出を開始...');
+      const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
 
-// Step 5: 最終的に上位3件を抽出
-const finalArticles = uniqueArticles.slice(0, 3);
+      // Step 5: 最終的に上位3件を抽出
+      const finalArticles = uniqueArticles.slice(0, 3);
 
-if (finalArticles.length === 0) {
-  console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
-  return;
-}
+      if (finalArticles.length === 0) {
+        console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
+        return;
+      }
 
-console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
-finalArticles.forEach((article, index) => {
-  console.log(`  ${index + 1}. [Score: ${article.score}] [${article.priorityLabel}] ${article.title}`);
-});
-// ▲▲▲ 新しいロジックここまで ▲▲▲
+      console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
+      finalArticles.forEach((article, index) => {
+        console.log(`  ${index + 1}. [Score: ${article.score}] [${article.priorityLabel}] ${article.title}`);
+      });
+      // ▲▲▲ 新しいロジックここまで ▲▲▲
 
       let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
        const articlesToLog = [];
