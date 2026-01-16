@@ -37,7 +37,10 @@ jobs:
           echo "GLOBAL_RSS_FEEDS=${{ secrets.GLOBAL_RSS_FEEDS }}" >> .env
           echo "ROBLOX_NEWS_CHANNEL_ID=${{ secrets.ROBLOX_NEWS_CHANNEL_ID }}" >> .env
           echo "ROBLOX_RSS_FEEDS=${{ secrets.ROBLOX_RSS_FEEDS }}" >> .env     
-      # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
+          echo "NEW_BOOK_CHANNEL_ID=${{ secrets.NEW_BOOK_CHANNEL_ID }}" >> .env     
+          echo "RAKUTEN_APP_ID=${{ secrets.RAKUTEN_APP_ID }}" >> .env     
+          echo "POPULAR_BOOK_CHANNEL_ID=${{ secrets.POPULAR_BOOK_CHANNEL_ID }}" >> .env     
+          # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d
         env:
