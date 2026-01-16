@@ -38,6 +38,10 @@ const NEW_BOOK_CHANNEL_ID = process.env.NEW_BOOK_CHANNEL_ID;
 const POPULAR_BOOK_CHANNEL_ID = process.env.POPULAR_BOOK_CHANNEL_ID;
 const RAKUTEN_APP_ID = process.env.RAKUTEN_APP_ID;
 
+// === 農業AI通信（AI Guide）用の設定 ===
+const AI_GUIDE_CHANNEL_ID = '952206763539714088';
+const AI_GUIDE_RSS_URL = 'https://metagri-labo.com/ai-guide/feed/';
+
 // OpenAI API設定（.envに追加が必要）
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -3232,6 +3236,96 @@ cron.schedule('0 6 * * *', async () => {
     timezone: "Asia/Tokyo"
   });
 
+  // === 農業AI通信タスク（毎日正午12時） ===
+  cron.schedule('0 12 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    console.log('[AI Guide] 農業AI通信の配信タスクを開始します...');
+
+    try {
+      const channel = await client.channels.fetch(AI_GUIDE_CHANNEL_ID);
+      if (!channel || channel.type !== ChannelType.GuildText) {
+        console.log('[AI Guide] チャンネルが見つかりません。');
+        return;
+      }
+
+      // RSSフィードを取得
+      const response = await axios.get(AI_GUIDE_RSS_URL, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        },
+        timeout: 15000
+      });
+      const feed = await parser.parseString(response.data);
+
+      if (!feed.items || feed.items.length === 0) {
+        console.log('[AI Guide] 記事が取得できませんでした。');
+        return;
+      }
+
+      // 最新の記事を取得
+      const latestArticle = feed.items[0];
+      const articleDate = new Date(latestArticle.isoDate || latestArticle.pubDate);
+      const now = new Date();
+      const hoursSincePublished = (now - articleDate) / (1000 * 60 * 60);
+
+      // 48時間以内の記事のみ配信（新しい記事がない場合はスキップ）
+      if (hoursSincePublished > 48) {
+        console.log('[AI Guide] 48時間以内の新しい記事がありません。');
+        return;
+      }
+
+      // 記事の概要を生成（OpenAI使用）
+      const contentSnippet = latestArticle.contentSnippet || latestArticle.content || '';
+      let summary = '';
+
+      if (contentSnippet && OPENAI_API_KEY) {
+        try {
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: 'あなたは農業とAI技術に詳しい専門家です。記事の内容を簡潔に要約してください。'
+              },
+              {
+                role: 'user',
+                content: `以下の記事を3〜4文で要約してください。農業従事者にとって重要なポイントを強調してください。\n\nタイトル: ${latestArticle.title}\n\n内容: ${contentSnippet.substring(0, 2000)}`
+              }
+            ],
+            max_tokens: 300,
+            temperature: 0.7
+          });
+          summary = completion.choices[0].message.content;
+        } catch (aiError) {
+          console.error('[AI Guide] AI要約生成エラー:', aiError.message);
+          summary = contentSnippet.substring(0, 200) + '...';
+        }
+      } else {
+        summary = contentSnippet.substring(0, 200) + '...';
+      }
+
+      // Discord投稿を作成
+      const embed = new EmbedBuilder()
+        .setColor(0x00AA00)
+        .setTitle(`🌾 ${latestArticle.title}`)
+        .setURL(latestArticle.link)
+        .setDescription(summary)
+        .setFooter({ text: '農業AI通信 | metagri-labo.com' })
+        .setTimestamp(articleDate);
+
+      const postContent = `### 📡 農業AI通信 - 本日の記事\n農業×AIの最新情報をお届けします！`;
+
+      await channel.send({ content: postContent, embeds: [embed] });
+      console.log(`[AI Guide] 記事を投稿しました: ${latestArticle.title}`);
+
+    } catch (error) {
+      console.error('[AI Guide] タスク実行中にエラーが発生しました:', error.message);
+    }
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00 JST');
@@ -3239,6 +3333,7 @@ cron.schedule('0 6 * * *', async () => {
   console.log('- Roblox News Digest: 7:00 JST');
   console.log('- AgriTech Book Recommendation: 9:00 JST');
   console.log('- Popular Book Recommendation: 10:00 JST');
+  console.log('- AI Guide (農業AI通信): 12:00 JST');
 }); 
 
 
