@@ -1,0 +1,203 @@
+// ====================================================================
+//  設定項目 (変更なし)
+// ====================================================================
+
+// 【ロール '0' ユーザー】の転記先情報
+const DESTINATION_SPREADSHEET_ID_ROLE0 = '1j9jLPuGYI8ym5ex0AD4Y9UOoCgN3WH8oq-491dEA5hA';
+const DESTINATION_SHEET_NAME_ROLE0 = 'News';
+
+// 【ロール '1' ユーザー】の転記先情報
+const DESTINATION_SPREADSHEET_ID_ROLE1 = '1paukHk9Fi1sjjT2fquFQ8Zrks32iwqNyrXm1H1rjkQ4';
+const DESTINATION_SHEET_NAME_ROLE1 = 'News';
+
+
+// ====================================================================
+//  メインロジック (Botからのリクエスト受信)
+// ====================================================================
+
+/**
+ * BotからのPOSTリクエストを処理する関数
+ * 主にデータの【書き込み】や【複雑な取得】を行う
+ */
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+    // ログ記録処理
+    if (data.type === 'discussion') {
+      const sheet = getSheetByName(spreadsheet, "User");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["日時", "ユーザーID", "ユーザー名", "投稿内容", "元ニュースのタイトル", "元ニュースのURL", "元ニュースの投稿日", "ロール"]);
+      }
+      sheet.appendRow([ new Date(data.timestamp), data.userId, data.username, data.content, data.newsTitle, data.newsUrl, new Date(data.newsPostDate), data.userRole ]);
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    else if (data.type === 'news') {
+      const sheet = getSheetByName(spreadsheet, "News");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["投稿日時", "タイトル", "URL", "ニュースの日付", "AIの見解", "AIの質問"]);
+      }
+      sheet.appendRow([ new Date(), data.title, data.link, data.newsDate, data.metagriInsight, Array.isArray(data.discussionQuestions) ? data.discussionQuestions.join('\n') : data.discussionQuestions ]);
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    else if (data.type === 'addArticles') {
+      const sheet = getSheetByName(spreadsheet, "Posted_URLs");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["投稿日時", "URL", "タイトル", "記事の日付", "優先度", "スコア"]);
+      }
+      const now = new Date();
+      const rows = data.articles.map(article => [now, article.url, article.title, new Date(article.pubDate), article.priority, article.score]);
+      if (rows.length > 0) {
+        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+      }
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+    else if (data.type === 'globalResearch') {
+      const sheet = getSheetByName(spreadsheet, "GlobalResearch");
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["投稿日時", "原文タイトル", "日本語タイトル", "URL", "要約", "重要ポイント", "日本の農業への示唆", "原文公開日"]);
+      }
+      const keyPoints = Array.isArray(data.keyPoints) ? data.keyPoints.join('\n') : data.keyPoints;
+      sheet.appendRow([ new Date(), data.titleOriginal, data.titleJa, data.link, data.summary, keyPoints, data.implications, new Date(data.publishDate) ]);
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ★★★ 新機能1: 議論メトリクスの取得 ★★★
+    else if (data.type === 'getDiscussionMetrics') {
+      const sheet = spreadsheet.getSheetByName("User");
+      if (!sheet || sheet.getLastRow() <= 1) {
+        return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
+      }
+      const allData = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+      const result = allData.map(row => ({
+        timestamp: row[0], userId: row[1], username: row[2], content: row[3],
+        newsTitle: row[4], newsUrl: row[5], newsPostDate: row[6], userRole: row[7]
+      }));
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ★★★ 新機能2: 過去7日間のニュースを取得 ★★★
+    else if (data.type === 'getRecentNews') {
+      const days = data.days || 7;
+      const sheet = spreadsheet.getSheetByName("News");
+      if (!sheet || sheet.getLastRow() <= 1) {
+        return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
+      }
+      const allData = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - days);
+      const recentNews = allData
+        .filter(row => new Date(row[0]) >= cutoffDate)
+        .map(row => ({
+          publishDate: row[0], title: row[1], url: row[2],
+          newsDate: row[3], insight: row[4], questions: row[5]
+        }));
+      return ContentService.createTextOutput(JSON.stringify(recentNews)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ★★★ 新機能3: 新刊書籍の記録 ★★★
+    else if (data.type === 'newBook') {
+      logNewBook(data); // 新しい書籍情報を記録する関数を呼び出す
+      return ContentService.createTextOutput(JSON.stringify({ "result": "success" })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // どのタイプにも一致しない場合
+    Logger.log("Received unknown data type: " + data.type);
+    return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": "Unknown type" })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    Logger.log("Error in doPost: " + error.message);
+    return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": error.message })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+
+/**
+ * BotからのGETリクエストに応答する関数
+ * 主に単純なデータの【読み取り】を行う
+ * 【修正箇所】typeパラメータに応じて処理を分岐するように変更
+ */
+function doGet(e) {
+  try {
+    // === 投稿済み書籍リストの取得（?type=getPostedBooks）===
+    if (e.parameter.type === 'getPostedBooks') {
+      const isbns = getPostedBooks();
+      return ContentService.createTextOutput(JSON.stringify(isbns))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // === 投稿済みURLリストの取得（type指定なし or それ以外）===
+    else {
+      const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Posted_URLs");
+      if (!sheet || sheet.getLastRow() < 2) {
+        return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
+      }
+      const data = sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).getValues();
+      const urls = data.map(row => row[0]).filter(url => url);
+      return ContentService.createTextOutput(JSON.stringify(urls)).setMimeType(ContentService.MimeType.JSON);
+    }
+
+  } catch (error) {
+    Logger.log("Error in doGet: " + error.message);
+    return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": error.message })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+
+// ====================================================================
+//  ヘルパー関数
+// ====================================================================
+
+function getSheetByName(spreadsheet, name) {
+  let sheet = spreadsheet.getSheetByName(name);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(name);
+  }
+  return sheet;
+}
+
+// ========================================
+//  新刊紹介機能の関数
+// ========================================
+
+function getPostedBooks() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Posted_Books');
+  if (!sheet || sheet.getLastRow() <= 1) {
+    return [];
+  }
+  const isbnRange = sheet.getRange(2, 2, sheet.getLastRow() - 1, 1);
+  const isbnValues = isbnRange.getValues();
+  const isbns = isbnValues.map(row => row[0]).filter(isbn => isbn && isbn.toString().trim() !== '');
+  Logger.log(`[getPostedBooks] ${isbns.length}件の投稿済みISBNを返却`);
+  return isbns;
+}
+
+function logNewBook(data) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = 'Posted_Books';
+  let sheet = ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    sheet.appendRow([
+      'timestamp', 'isbn', 'title', 'author', 'publisher', 'pubdate',
+      'score', 'categories', 'bookType', 'postedDate'
+    ]);
+  }
+
+  sheet.appendRow([
+    new Date(),
+    data.isbn || '',
+    data.title || '',
+    Array.isArray(data.author) ? data.author.join(', ') : (data.author || ''),
+    data.publisher || '',
+    data.pubdate || '',
+    data.score || 0,
+    Array.isArray(data.categories) ? data.categories.join(', ') : (data.categories || ''),
+    data.bookType || '',
+    data.postedDate || new Date().toISOString()
+  ]);
+  Logger.log(`[logNewBook] 新刊を記録しました: ${data.title} (ISBN: ${data.isbn})`);
+}
