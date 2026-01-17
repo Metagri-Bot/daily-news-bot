@@ -3220,8 +3220,8 @@ cron.schedule('0 6 * * *', async () => {
     timezone: "Asia/Tokyo"
   });
 
-  // === 農業・Web3関連新刊紹介タスク（毎日朝9時） ===
-  cron.schedule('0 9 * * *', async () => {
+  // === 農業・Web3関連新刊紹介タスク（毎日朝10時） ===
+  cron.schedule('0 10 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyNewBook();
   }, {
@@ -3405,7 +3405,7 @@ cron.schedule('0 6 * * *', async () => {
   console.log('- Info Gathering: 6:00 JST');
   console.log('- Global Research Digest: 10:00, 19:00 JST');
   console.log('- Roblox News Digest: 7:00 JST');
-  console.log('- AgriTech Book Recommendation: 9:00 JST');
+  console.log('- AgriTech Book Recommendation: 10:00 JST');
   console.log('- Popular Book Recommendation: 10:00 JST');
   console.log('- AI Guide (農業AI通信): 12:00 JST');
 }); 
