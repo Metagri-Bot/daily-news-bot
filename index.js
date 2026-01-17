@@ -2911,7 +2911,7 @@ cron.schedule('0 6 * * *', async () => {
 // === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
   // ※ ユーザーリクエストにより無効化（2025年）
   if (false) {
-  cron.schedule('0 10,19 * * *', async () => {
+  cron.schedule('10 10,19 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Global Research] 海外文献収集タスクを開始します...');
 
@@ -3229,7 +3229,7 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
-  cron.schedule('0 10 * * *', async () => {
+  cron.schedule('5 10 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
