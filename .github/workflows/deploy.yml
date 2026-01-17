@@ -21,7 +21,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      # 3. サーバーで使う .env ファイルをSecretsから生成
+      # 3. サーバーで使う .env ファイルをSecretsから生成する
       - name: Write .env file
         run: |
           echo "DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}" >> .env
