@@ -1509,10 +1509,14 @@ function mergeBooks(openBDBooks, rakutenBooks, googleBooks) {
  * @param {boolean} includeFuture 発売予定（未来日）を含めるか
  * @returns {Array} フィルタ済み書籍リスト
  */
-function filterBooksByDate(books, daysAgo, includeFuture = false) {
+function filterBooksByDate(books, daysAgo, includeFuture = false, maxFutureDays = 7) {
   const now = new Date();
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysAgo);
+
+  // 未来の最大日付（デフォルト7日後まで）
+  const maxFutureDate = new Date();
+  maxFutureDate.setDate(maxFutureDate.getDate() + maxFutureDays);
 
   const filtered = books.filter(book => {
     const pubdate = book.summary.pubdate;
@@ -1549,9 +1553,16 @@ function filterBooksByDate(books, daysAgo, includeFuture = false) {
       // 無効な日付チェック
       if (isNaN(bookDate.getTime())) return false;
 
+      // 異常な未来日付を除外（1年以上先は除外）
+      const oneYearFromNow = new Date();
+      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+      if (bookDate > oneYearFromNow) {
+        return false; // 1年以上先の日付は除外
+      }
+
       // 未来日を含める場合
       if (includeFuture) {
-        return bookDate >= cutoffDate; // cutoffDate以降（過去〜未来）
+        return bookDate >= cutoffDate && bookDate <= maxFutureDate;
       }
 
       // 過去のみの場合
@@ -1562,7 +1573,7 @@ function filterBooksByDate(books, daysAgo, includeFuture = false) {
     }
   });
 
-  console.log(`[Date Filter] ${books.length}件から${daysAgo}日以内${includeFuture ? '（発売予定含む）' : ''}の書籍を${filtered.length}件抽出`);
+  console.log(`[Date Filter] ${books.length}件から${daysAgo}日前〜${includeFuture ? maxFutureDays + '日後' : '今日'}の書籍を${filtered.length}件抽出`);
   return filtered;
 }
 
@@ -1758,7 +1769,7 @@ function scoreBook(book) {
  * @returns {Object} スコアとマッチしたカテゴリを含むオブジェクト
  */
 function scorePopularBook(book) {
-  if (!book || !book.summary) return { score: 0, categories: [] };
+  if (!book || !book.summary) return { score: -1, categories: ['無効'] };
 
   const title = (book.summary.title || '').toLowerCase();
   const author = (book.summary.author || '').toLowerCase();
@@ -1777,6 +1788,29 @@ function scorePopularBook(book) {
     }
   }
 
+  // ★★★ ライトノベル・Web小説・異世界もの除外キーワード ★★★
+  const lightNovelExclusionKeywords = [
+    // タイトルパターン
+    '異世界', '転生', '追放', '無双', 'チート', '最強', '俺tueee',
+    '悪役令嬢', '婚約破棄', '聖女', '魔王', '勇者', '冒険者', 'ギルド',
+    'スキル', 'レベル', 'ステータス', '召喚', 'ダンジョン', 'モンスター',
+    '成り上がり', 'ハーレム', '奴隷', '従魔', '使い魔', 'テイマー',
+    '盗賊', '怪盗', '暗殺者', 'アサシン', 'スローライフ',
+    // 出版社（ライトノベル専門）
+    '一迅社', '一二三書房', 'オーバーラップ', 'mfブックス', 'カドカワbooks',
+    'ファミ通文庫', '電撃文庫', 'ga文庫', 'mf文庫', 'スニーカー文庫',
+    'ヒーロー文庫', 'hj文庫', 'ガガガ文庫', 'ダッシュエックス文庫',
+    'アルファポリス', 'カクヨム', 'なろう系', 'web小説',
+    // その他
+    'コミカライズ', '漫画版', 'コミック版'
+  ];
+
+  for (const keyword of lightNovelExclusionKeywords) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['ラノベ除外'] };
+    }
+  }
+
   // 一般新刊用のカテゴリ別スコアリング
   const checkKeywords = (keywords, categoryName, points) => {
     for (const keyword of keywords) {
@@ -1788,35 +1822,39 @@ function scorePopularBook(book) {
     }
   };
 
-  // ビジネス・自己啓発
+  // ビジネス・自己啓発（高スコア）
   const businessKeywords = ['ビジネス', '経営', 'マネジメント', 'リーダーシップ', '起業',
-    '自己啓発', '成功', '仕事術', 'キャリア', '働き方'];
-  checkKeywords(businessKeywords, 'ビジネス', 5);
+    '自己啓発', '成功', '仕事術', 'キャリア', '働き方', '投資', '資産', '経済学',
+    'マーケティング', '戦略', 'イノベーション', 'スタートアップ'];
+  checkKeywords(businessKeywords, 'ビジネス', 8);
 
-  // 小説・文学
-  const fictionKeywords = ['小説', '物語', 'ストーリー', '文学', 'ノベル',
-    '推理', 'ミステリー', 'SF', 'ファンタジー', '恋愛'];
-  checkKeywords(fictionKeywords, '小説・文学', 5);
+  // 文芸・純文学（高スコア）
+  const literaryKeywords = ['直木賞', '芥川賞', '本屋大賞', '文学賞', '受賞作',
+    '純文学', '文藝', '新潮', '文春', '講談社文庫', '角川文庫'];
+  checkKeywords(literaryKeywords, '文芸', 10);
 
-  // 話題性・ベストセラー関連
-  const trendingKeywords = ['話題', 'ベストセラー', '大賞', '受賞', '映画化',
-    'ドラマ化', '累計', '万部', '注目'];
-  checkKeywords(trendingKeywords, '話題の本', 8);
+  // 話題性・ベストセラー関連（最高スコア）
+  const trendingKeywords = ['ベストセラー', '大賞', '受賞', '映画化',
+    'ドラマ化', '累計', '万部', '注目', 'テレビ', 'メディア'];
+  checkKeywords(trendingKeywords, '話題の本', 12);
 
-  // 実用書
-  const practicalKeywords = ['入門', '図解', 'わかる', '完全ガイド', '教科書',
-    '実践', 'テクニック', 'ノウハウ', '解説'];
-  checkKeywords(practicalKeywords, '実用書', 4);
+  // 実用書・専門書
+  const practicalKeywords = ['入門', '図解', '完全ガイド', '教科書',
+    '実践', 'ノウハウ', '解説', '専門', '技術', '科学'];
+  checkKeywords(practicalKeywords, '実用書', 6);
 
   // エッセイ・ノンフィクション
   const essayKeywords = ['エッセイ', 'ノンフィクション', '伝記', '回顧録',
-    '体験記', 'ルポ', 'ドキュメント'];
-  checkKeywords(essayKeywords, 'エッセイ・ノンフィクション', 4);
+    '体験記', 'ルポ', 'ドキュメント', '自伝'];
+  checkKeywords(essayKeywords, 'エッセイ', 5);
 
-  // 最低スコアを設定（全く関連性のない本は除外）
+  // 新書（信頼性の高いジャンル）
+  const shinshoKeywords = ['新書', '岩波', '中公', 'ちくま', '講談社現代'];
+  checkKeywords(shinshoKeywords, '新書', 7);
+
+  // スコアが0の場合は除外（カテゴリにマッチしない本は推薦しない）
   if (score === 0) {
-    score = 1; // 最低限のスコアを付与（新刊であることに価値がある）
-    matchedCategories.add('一般新刊');
+    return { score: -1, categories: ['カテゴリ外'] };
   }
 
   return {
@@ -2475,21 +2513,21 @@ async function fetchPopularBooks() {
   // 重複除去
   const merged = mergeBooks([], allBooks, []);
 
-  // 新刊フィルタ：過去2週間〜未来1ヶ月を優先（より厳しく）
-  let filtered = filterBooksByDate(merged, 14, true); // 過去14日〜未来含む
+  // ★★★ 新刊フィルタ：過去7日〜未来7日以内（1週間以内に発売）★★★
+  let filtered = filterBooksByDate(merged, 7, true, 7); // 過去7日〜未来7日
+
+  if (filtered.length < 3) {
+    console.log(`[Popular Books] 1週間以内の書籍が${filtered.length}件のため、範囲を2週間に拡大します`);
+    filtered = filterBooksByDate(merged, 14, true, 14);
+  }
 
   if (filtered.length < 3) {
     console.log(`[Popular Books] 2週間以内の書籍が${filtered.length}件のため、範囲を1ヶ月に拡大します`);
-    filtered = filterBooksByDate(merged, 30, true);
+    filtered = filterBooksByDate(merged, 30, true, 30);
   }
 
   if (filtered.length < 3) {
-    console.log(`[Popular Books] 1ヶ月以内の書籍が${filtered.length}件のため、範囲を3ヶ月に拡大します`);
-    filtered = filterBooksByDate(merged, 90, true);
-  }
-
-  if (filtered.length < 3) {
-    console.log(`[Popular Books] 3ヶ月以内の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    console.log(`[Popular Books] 1ヶ月以内の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
     filtered = merged;
   }
 
