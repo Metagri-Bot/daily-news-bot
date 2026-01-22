@@ -3405,30 +3405,95 @@ cron.schedule('0 6 * * *', async () => {
           await channel.send({ content: postContent, embeds: [embed] });
           console.log(`[AI Guide] 記事を投稿しました: ${latestArticle.title}`);
 
+          // スプレッドシートに記録
+          if (process.env.GOOGLE_APPS_SCRIPT_URL) {
+            try {
+              await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
+                type: 'aiGuide',
+                title: latestArticle.title,
+                url: latestArticle.link,
+                summary: summary,
+                keyPoints: keyPoints,
+                actionable: actionable,
+                articleDate: articleDate.toISOString()
+              }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 10000
+              });
+              console.log('[AI Guide] スプレッドシートに記録しました');
+            } catch (logError) {
+              console.error('[AI Guide] スプレッドシート記録エラー:', logError.message);
+            }
+          }
+
         } catch (aiError) {
           console.error('[AI Guide] AI要約生成エラー:', aiError.message);
           // フォールバック: シンプルな投稿
+          const fallbackDescription = articleContent.substring(0, 300) + '...';
           const embed = new EmbedBuilder()
             .setColor(0x00AA00)
             .setTitle(`🌾 ${latestArticle.title}`)
             .setURL(latestArticle.link)
-            .setDescription(articleContent.substring(0, 300) + '...')
+            .setDescription(fallbackDescription)
             .setFooter({ text: '農業AI通信 | metagri-labo.com' })
             .setTimestamp(articleDate);
 
           await channel.send({ content: `### 📡 農業AI通信 - 本日の記事`, embeds: [embed] });
+
+          // スプレッドシートに記録（フォールバック時）
+          if (process.env.GOOGLE_APPS_SCRIPT_URL) {
+            try {
+              await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
+                type: 'aiGuide',
+                title: latestArticle.title,
+                url: latestArticle.link,
+                summary: fallbackDescription,
+                keyPoints: [],
+                actionable: '',
+                articleDate: articleDate.toISOString()
+              }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 10000
+              });
+              console.log('[AI Guide] スプレッドシートに記録しました（フォールバック）');
+            } catch (logError) {
+              console.error('[AI Guide] スプレッドシート記録エラー:', logError.message);
+            }
+          }
         }
       } else {
         // OpenAI APIキーがない場合のフォールバック
+        const fallbackDescription = articleContent.substring(0, 300) + '...';
         const embed = new EmbedBuilder()
           .setColor(0x00AA00)
           .setTitle(`🌾 ${latestArticle.title}`)
           .setURL(latestArticle.link)
-          .setDescription(articleContent.substring(0, 300) + '...')
+          .setDescription(fallbackDescription)
           .setFooter({ text: '農業AI通信 | metagri-labo.com' })
           .setTimestamp(articleDate);
 
         await channel.send({ content: `### 📡 農業AI通信 - 本日の記事`, embeds: [embed] });
+
+        // スプレッドシートに記録（API キーなしフォールバック時）
+        if (process.env.GOOGLE_APPS_SCRIPT_URL) {
+          try {
+            await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
+              type: 'aiGuide',
+              title: latestArticle.title,
+              url: latestArticle.link,
+              summary: fallbackDescription,
+              keyPoints: [],
+              actionable: '',
+              articleDate: articleDate.toISOString()
+            }, {
+              headers: { 'Content-Type': 'application/json' },
+              timeout: 10000
+            });
+            console.log('[AI Guide] スプレッドシートに記録しました（API キーなし）');
+          } catch (logError) {
+            console.error('[AI Guide] スプレッドシート記録エラー:', logError.message);
+          }
+        }
       }
 
     } catch (error) {

@@ -19,6 +19,13 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    // ========== 農業AI通信機能用の処理 ==========
+    if (type === 'aiGuide') {
+      logAiGuide(data);
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     // 既存の処理
     if (type === 'discussion') {
       logDiscussion(data);
@@ -171,6 +178,62 @@ function logNewBook(data) {
   sheet.appendRow(row);
 
   Logger.log(`[logNewBook] 新刊を記録しました: ${data.title} (ISBN: ${data.isbn})`);
+}
+
+// ========================================
+// 農業AI通信機能
+// ========================================
+
+/**
+ * 農業AI通信の投稿記録を保存
+ * @param {Object} data 農業AI通信データ
+ */
+function logAiGuide(data) {
+  const ss = SpreadsheetApp.openById('1175r6MLXn9renkA1tvvKWovhKDa3r_axmv081WjFSoo');
+
+  Logger.log('[logAiGuide] データ受信: ' + JSON.stringify(data));
+
+  // AI_Guide_Logシートを取得（なければ作成）
+  let sheet = ss.getSheetByName('AI_Guide_Log');
+  if (!sheet) {
+    Logger.log('[logAiGuide] AI_Guide_Logシートを新規作成');
+    sheet = ss.insertSheet('AI_Guide_Log');
+    // ヘッダー行を追加
+    sheet.appendRow([
+      'timestamp',
+      'title',
+      'url',
+      'summary',
+      'keyPoints',
+      'actionable',
+      'articleDate'
+    ]);
+    // ヘッダー行のフォーマット
+    sheet.getRange(1, 1, 1, 7).setFontWeight('bold');
+  }
+
+  // 要点を文字列に変換（配列の場合）
+  let keyPointsStr = '';
+  if (Array.isArray(data.keyPoints)) {
+    keyPointsStr = data.keyPoints.join('\n');
+  } else if (data.keyPoints) {
+    keyPointsStr = data.keyPoints;
+  }
+
+  // データを追加
+  const row = [
+    new Date(),
+    data.title || '',
+    data.url || '',
+    data.summary || '',
+    keyPointsStr,
+    data.actionable || '',
+    data.articleDate || ''
+  ];
+
+  sheet.appendRow(row);
+
+  Logger.log(`[logAiGuide] 農業AI通信を記録しました: ${data.title}`);
 }
 
 // ========================================
