@@ -1553,11 +1553,11 @@ function filterBooksByDate(books, daysAgo, includeFuture = false, maxFutureDays 
       // 無効な日付チェック
       if (isNaN(bookDate.getTime())) return false;
 
-      // 異常な未来日付を除外（1年以上先は除外）
-      const oneYearFromNow = new Date();
-      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-      if (bookDate > oneYearFromNow) {
-        return false; // 1年以上先の日付は除外
+      // 異常な未来日付を除外（1ヶ月以上先は除外）
+      const oneMonthFromNow = new Date();
+      oneMonthFromNow.setMonth(oneMonthFromNow.getMonth() + 1);
+      if (bookDate > oneMonthFromNow) {
+        return false; // 1ヶ月以上先の日付は除外
       }
 
       // 未来日を含める場合
