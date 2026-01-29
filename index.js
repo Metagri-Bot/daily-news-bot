@@ -1553,11 +1553,11 @@ function filterBooksByDate(books, daysAgo, includeFuture = false, maxFutureDays 
       // 無効な日付チェック
       if (isNaN(bookDate.getTime())) return false;
 
-      // 異常な未来日付を除外（1ヶ月以上先は除外）
-      const oneMonthFromNow = new Date();
-      oneMonthFromNow.setMonth(oneMonthFromNow.getMonth() + 1);
-      if (bookDate > oneMonthFromNow) {
-        return false; // 1ヶ月以上先の日付は除外
+      // 異常な未来日付を除外（1年以上先は除外）
+      const oneYearFromNow = new Date();
+      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+      if (bookDate > oneYearFromNow) {
+        return false; // 1年以上先の日付は除外
       }
 
       // 未来日を含める場合
@@ -3275,8 +3275,8 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 農業AI通信タスク（毎日正午12時） ===
-  cron.schedule('0 12 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('0 12 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[AI Guide] 農業AI通信の配信タスクを開始します...');
 
     try {
@@ -3345,7 +3345,7 @@ cron.schedule('0 6 * * *', async () => {
       if (articleContent && OPENAI_API_KEY) {
         try {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5-mini-2025-08-07',
             messages: [
               {
                 role: 'system',
@@ -3408,14 +3408,14 @@ cron.schedule('0 6 * * *', async () => {
           // スプレッドシートに記録
           if (process.env.GOOGLE_APPS_SCRIPT_URL) {
             try {
-              // URLから?utm以降を除去
-              const cleanUrl = latestArticle.link.split('?utm')[0];
               await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
-                url: cleanUrl,
+                url: latestArticle.link,
                 summary: summary,
-                keyPoints: keyPoints
+                keyPoints: keyPoints,
+                actionable: actionable,
+                articleDate: articleDate.toISOString()
               }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
@@ -3443,14 +3443,14 @@ cron.schedule('0 6 * * *', async () => {
           // スプレッドシートに記録（フォールバック時）
           if (process.env.GOOGLE_APPS_SCRIPT_URL) {
             try {
-              // URLから?utm以降を除去
-              const cleanUrl = latestArticle.link.split('?utm')[0];
               await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
-                url: cleanUrl,
+                url: latestArticle.link,
                 summary: fallbackDescription,
-                keyPoints: []
+                keyPoints: [],
+                actionable: '',
+                articleDate: articleDate.toISOString()
               }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
@@ -3477,14 +3477,14 @@ cron.schedule('0 6 * * *', async () => {
         // スプレッドシートに記録（API キーなしフォールバック時）
         if (process.env.GOOGLE_APPS_SCRIPT_URL) {
           try {
-            // URLから?utm以降を除去
-            const cleanUrl = latestArticle.link.split('?utm')[0];
             await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
               type: 'aiGuide',
               title: latestArticle.title,
-              url: cleanUrl,
+              url: latestArticle.link,
               summary: fallbackDescription,
-              keyPoints: []
+              keyPoints: [],
+              actionable: '',
+              articleDate: articleDate.toISOString()
             }, {
               headers: { 'Content-Type': 'application/json' },
               timeout: 10000
