@@ -3325,9 +3325,17 @@ cron.schedule('0 6 * * *', async () => {
         const $ = cheerio.load(articleResponse.data);
 
         // WordPressの記事本文を取得（一般的なセレクタを試行）
+        // 不要な要素を先に削除
+        $('script, style, nav, header, footer, .date, .meta, .tags, .category, .breadcrumb, .social-share, .author-info, time').remove();
+
         const selectors = ['.entry-content', '.post-content', 'article .content', '.article-content', 'main article'];
         for (const selector of selectors) {
-          const content = $(selector).text().trim();
+          const content = $(selector).text().trim()
+            // 連続する空白・改行を整理
+            .replace(/\s+/g, ' ')
+            // 日付パターンを除去（例: 2026年1月29日, 2026/1/29）
+            .replace(/\d{4}[年\/\-]\d{1,2}[月\/\-]\d{1,2}日?/g, '')
+            .trim();
           if (content && content.length > 200) {
             articleContent = content;
             break;
@@ -3430,8 +3438,12 @@ cron.schedule('0 6 * * *', async () => {
 
         } catch (aiError) {
           console.error('[AI Guide] AI要約生成エラー:', aiError.message);
-          // フォールバック: シンプルな投稿
-          const fallbackDescription = articleContent.substring(0, 300) + '...';
+          // フォールバック: RSSのcontentSnippetを優先的に使用
+          const cleanSnippet = (latestArticle.contentSnippet || articleContent || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .substring(0, 300);
+          const fallbackDescription = cleanSnippet ? cleanSnippet + '...' : '記事の詳細はリンクをご覧ください。';
           const embed = new EmbedBuilder()
             .setColor(0x00AA00)
             .setTitle(`🌾 ${latestArticle.title}`)
@@ -3467,7 +3479,11 @@ cron.schedule('0 6 * * *', async () => {
         }
       } else {
         // OpenAI APIキーがない場合のフォールバック
-        const fallbackDescription = articleContent.substring(0, 300) + '...';
+        const cleanSnippet = (latestArticle.contentSnippet || articleContent || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .substring(0, 300);
+        const fallbackDescription = cleanSnippet ? cleanSnippet + '...' : '記事の詳細はリンクをご覧ください。';
         const embed = new EmbedBuilder()
           .setColor(0x00AA00)
           .setTitle(`🌾 ${latestArticle.title}`)
