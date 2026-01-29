@@ -3275,8 +3275,8 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 農業AI通信タスク（毎日正午12時） ===
-  // cron.schedule('0 12 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('0 12 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[AI Guide] 農業AI通信の配信タスクを開始します...');
 
     try {
