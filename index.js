@@ -3275,8 +3275,8 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 農業AI通信タスク（毎日正午12時） ===
-  cron.schedule('0 12 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('0 12 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[AI Guide] 農業AI通信の配信タスクを開始します...');
 
     try {
@@ -3345,7 +3345,7 @@ cron.schedule('0 6 * * *', async () => {
       if (articleContent && OPENAI_API_KEY) {
         try {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5-mini-2025-08-07',
             messages: [
               {
                 role: 'system',
@@ -3413,9 +3413,11 @@ cron.schedule('0 6 * * *', async () => {
               await axios.post(process.env.AI_GUIDE_GAS_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
-                url: cleanUrl,
+                url: latestArticle.link,
                 summary: summary,
-                keyPoints: keyPoints
+                keyPoints: keyPoints,
+                actionable: actionable,
+                articleDate: articleDate.toISOString()
               }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
@@ -3448,9 +3450,11 @@ cron.schedule('0 6 * * *', async () => {
               await axios.post(process.env.AI_GUIDE_GAS_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
-                url: cleanUrl,
+                url: latestArticle.link,
                 summary: fallbackDescription,
-                keyPoints: []
+                keyPoints: [],
+                actionable: '',
+                articleDate: articleDate.toISOString()
               }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
@@ -3482,9 +3486,11 @@ cron.schedule('0 6 * * *', async () => {
             await axios.post(process.env.AI_GUIDE_GAS_URL, {
               type: 'aiGuide',
               title: latestArticle.title,
-              url: cleanUrl,
+              url: latestArticle.link,
               summary: fallbackDescription,
-              keyPoints: []
+              keyPoints: [],
+              actionable: '',
+              articleDate: articleDate.toISOString()
             }, {
               headers: { 'Content-Type': 'application/json' },
               timeout: 10000
