@@ -3405,10 +3405,12 @@ cron.schedule('0 6 * * *', async () => {
           await channel.send({ content: postContent, embeds: [embed] });
           console.log(`[AI Guide] 記事を投稿しました: ${latestArticle.title}`);
 
-          // スプレッドシートに記録
-          if (process.env.GOOGLE_APPS_SCRIPT_URL) {
+          // スプレッドシートに記録（専用GAS）
+          if (process.env.AI_GUIDE_GAS_URL) {
             try {
-              await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
+              // URLから?utm以降を除去
+              const cleanUrl = latestArticle.link.split('?utm')[0];
+              await axios.post(process.env.AI_GUIDE_GAS_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
                 url: latestArticle.link,
@@ -3440,10 +3442,12 @@ cron.schedule('0 6 * * *', async () => {
 
           await channel.send({ content: `### 📡 農業AI通信 - 本日の記事`, embeds: [embed] });
 
-          // スプレッドシートに記録（フォールバック時）
-          if (process.env.GOOGLE_APPS_SCRIPT_URL) {
+          // スプレッドシートに記録（フォールバック時・専用GAS）
+          if (process.env.AI_GUIDE_GAS_URL) {
             try {
-              await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
+              // URLから?utm以降を除去
+              const cleanUrl = latestArticle.link.split('?utm')[0];
+              await axios.post(process.env.AI_GUIDE_GAS_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
                 url: latestArticle.link,
@@ -3474,10 +3478,12 @@ cron.schedule('0 6 * * *', async () => {
 
         await channel.send({ content: `### 📡 農業AI通信 - 本日の記事`, embeds: [embed] });
 
-        // スプレッドシートに記録（API キーなしフォールバック時）
-        if (process.env.GOOGLE_APPS_SCRIPT_URL) {
+        // スプレッドシートに記録（API キーなしフォールバック時・専用GAS）
+        if (process.env.AI_GUIDE_GAS_URL) {
           try {
-            await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
+            // URLから?utm以降を除去
+            const cleanUrl = latestArticle.link.split('?utm')[0];
+            await axios.post(process.env.AI_GUIDE_GAS_URL, {
               type: 'aiGuide',
               title: latestArticle.title,
               url: latestArticle.link,
