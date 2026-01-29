@@ -189,49 +189,38 @@ function logNewBook(data) {
  * @param {Object} data 農業AI通信データ
  */
 function logAiGuide(data) {
-  const ss = SpreadsheetApp.openById('1175r6MLXn9renkA1tvvKWovhKDa3r_axmv081WjFSoo');
+  const ss = SpreadsheetApp.openById('1FVcqS0Ze2bouVIqHpHger3WaU5x8TSYqqHk8ZKAhSEU');
 
   Logger.log('[logAiGuide] データ受信: ' + JSON.stringify(data));
 
-  // AI_Guide_Logシートを取得（なければ作成）
-  let sheet = ss.getSheetByName('AI_Guide_Log');
-  if (!sheet) {
-    Logger.log('[logAiGuide] AI_Guide_Logシートを新規作成');
-    sheet = ss.insertSheet('AI_Guide_Log');
-    // ヘッダー行を追加
-    sheet.appendRow([
-      'timestamp',
-      'title',
-      'url',
-      'summary',
-      'keyPoints',
-      'actionable',
-      'articleDate'
-    ]);
-    // ヘッダー行のフォーマット
-    sheet.getRange(1, 1, 1, 7).setFontWeight('bold');
-  }
+  // 最初のシート（gid=1834867434）を使用
+  const sheet = ss.getSheets()[0];
 
   // 要点を文字列に変換（配列の場合）
   let keyPointsStr = '';
   if (Array.isArray(data.keyPoints)) {
-    keyPointsStr = data.keyPoints.join('\n');
+    keyPointsStr = data.keyPoints.map((p, i) => `${i + 1}. ${p}`).join('\n');
   } else if (data.keyPoints) {
     keyPointsStr = data.keyPoints;
   }
 
-  // データを追加
-  const row = [
-    new Date(),
+  // 記事情報: title、summary、keyPointsを改行で結合
+  const articleInfo = [
     data.title || '',
-    data.url || '',
+    '',
     data.summary || '',
-    keyPointsStr,
-    data.actionable || '',
-    data.articleDate || ''
-  ];
+    '',
+    keyPointsStr
+  ].join('\n');
 
-  sheet.appendRow(row);
+  // URL: ?utm以降をトリミング
+  let cleanUrl = data.url || '';
+  if (cleanUrl.includes('?utm')) {
+    cleanUrl = cleanUrl.split('?utm')[0];
+  }
+
+  // 縦並びでデータを追加（A列: 記事情報、B列: URL）
+  sheet.appendRow([articleInfo, cleanUrl]);
 
   Logger.log(`[logAiGuide] 農業AI通信を記録しました: ${data.title}`);
 }

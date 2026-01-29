@@ -3408,14 +3408,14 @@ cron.schedule('0 6 * * *', async () => {
           // スプレッドシートに記録
           if (process.env.GOOGLE_APPS_SCRIPT_URL) {
             try {
+              // URLから?utm以降を除去
+              const cleanUrl = latestArticle.link.split('?utm')[0];
               await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
-                url: latestArticle.link,
+                url: cleanUrl,
                 summary: summary,
-                keyPoints: keyPoints,
-                actionable: actionable,
-                articleDate: articleDate.toISOString()
+                keyPoints: keyPoints
               }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
@@ -3443,14 +3443,14 @@ cron.schedule('0 6 * * *', async () => {
           // スプレッドシートに記録（フォールバック時）
           if (process.env.GOOGLE_APPS_SCRIPT_URL) {
             try {
+              // URLから?utm以降を除去
+              const cleanUrl = latestArticle.link.split('?utm')[0];
               await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
                 type: 'aiGuide',
                 title: latestArticle.title,
-                url: latestArticle.link,
+                url: cleanUrl,
                 summary: fallbackDescription,
-                keyPoints: [],
-                actionable: '',
-                articleDate: articleDate.toISOString()
+                keyPoints: []
               }, {
                 headers: { 'Content-Type': 'application/json' },
                 timeout: 10000
@@ -3477,14 +3477,14 @@ cron.schedule('0 6 * * *', async () => {
         // スプレッドシートに記録（API キーなしフォールバック時）
         if (process.env.GOOGLE_APPS_SCRIPT_URL) {
           try {
+            // URLから?utm以降を除去
+            const cleanUrl = latestArticle.link.split('?utm')[0];
             await axios.post(process.env.GOOGLE_APPS_SCRIPT_URL, {
               type: 'aiGuide',
               title: latestArticle.title,
-              url: latestArticle.link,
+              url: cleanUrl,
               summary: fallbackDescription,
-              keyPoints: [],
-              actionable: '',
-              articleDate: articleDate.toISOString()
+              keyPoints: []
             }, {
               headers: { 'Content-Type': 'application/json' },
               timeout: 10000
