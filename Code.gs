@@ -19,13 +19,6 @@ function doPost(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // ========== 農業AI通信機能用の処理 ==========
-    if (type === 'aiGuide') {
-      logAiGuide(data);
-      return ContentService.createTextOutput(JSON.stringify({ success: true }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
     // 既存の処理
     if (type === 'discussion') {
       logDiscussion(data);
@@ -178,51 +171,6 @@ function logNewBook(data) {
   sheet.appendRow(row);
 
   Logger.log(`[logNewBook] 新刊を記録しました: ${data.title} (ISBN: ${data.isbn})`);
-}
-
-// ========================================
-// 農業AI通信機能
-// ========================================
-
-/**
- * 農業AI通信の投稿記録を保存
- * @param {Object} data 農業AI通信データ
- */
-function logAiGuide(data) {
-  const ss = SpreadsheetApp.openById('1FVcqS0Ze2bouVIqHpHger3WaU5x8TSYqqHk8ZKAhSEU');
-
-  Logger.log('[logAiGuide] データ受信: ' + JSON.stringify(data));
-
-  // 最初のシート（gid=1834867434）を使用
-  const sheet = ss.getSheets()[0];
-
-  // 要点を文字列に変換（配列の場合）
-  let keyPointsStr = '';
-  if (Array.isArray(data.keyPoints)) {
-    keyPointsStr = data.keyPoints.map((p, i) => `${i + 1}. ${p}`).join('\n');
-  } else if (data.keyPoints) {
-    keyPointsStr = data.keyPoints;
-  }
-
-  // 記事情報: title、summary、keyPointsを改行で結合
-  const articleInfo = [
-    data.title || '',
-    '',
-    data.summary || '',
-    '',
-    keyPointsStr
-  ].join('\n');
-
-  // URL: ?utm以降をトリミング
-  let cleanUrl = data.url || '';
-  if (cleanUrl.includes('?utm')) {
-    cleanUrl = cleanUrl.split('?utm')[0];
-  }
-
-  // 縦並びでデータを追加（A列: 記事情報、B列: URL）
-  sheet.appendRow([articleInfo, cleanUrl]);
-
-  Logger.log(`[logAiGuide] 農業AI通信を記録しました: ${data.title}`);
 }
 
 // ========================================
