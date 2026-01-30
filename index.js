@@ -286,7 +286,7 @@ ${contentForAI}
     // ▲▲▲ ▲▲▲
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4.1-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 1024,
@@ -3370,7 +3370,7 @@ cron.schedule('30 10 * * *', async () => {
 }`;
 
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4o', // または 'gpt-4o-mini'
+          model: 'gpt-4.1', // または 'gpt-4o-mini'
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `タイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}` }
