@@ -41,6 +41,7 @@ jobs:
           echo "RAKUTEN_APP_ID=${{ secrets.RAKUTEN_APP_ID }}" >> .env     
           echo "POPULAR_BOOK_CHANNEL_ID=${{ secrets.POPULAR_BOOK_CHANNEL_ID }}" >> .env
           echo "AI_GUIDE_GAS_URL=${{ secrets.AI_GUIDE_GAS_URL }}" >> .env
+          echo "MONITORING_WEBHOOK_URL=${{ secrets.MONITORING_WEBHOOK_URL }}" >> .env
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d

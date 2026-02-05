@@ -50,6 +50,9 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
 
+// === 監視用Webhook設定 ===
+const MONITORING_WEBHOOK_URL = process.env.MONITORING_WEBHOOK_URL;
+
 // === キーワード定義（旧） ===
 const TECH_KEYWORDS = [ 'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース', '生成AI', 'LLM', 'ChatGPT', 'AI', '人工知能', 'IoT', 'ドローン', 'DX', 'デジタル', 'ロボット', '自動化', '衛星', 'ソリューション', 'プラットフォーム', 'システム' ];
 const PRIMARY_INDUSTRY_KEYWORDS = [ '農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' ];
@@ -616,6 +619,64 @@ const logToSpreadsheet = async (type, data) => {
   }
 };
 
+// === Discord監視用Webhook通知関数 ===
+/**
+ * 監視用Webhookに通知を送信する
+ * @param {string} title - 通知タイトル
+ * @param {string} description - 通知内容
+ * @param {'info'|'warn'|'error'|'critical'} level - 通知レベル
+ * @param {string} [details] - 詳細情報（スタックトレースなど）
+ */
+const sendMonitoringNotification = async (title, description, level = 'info', details = null) => {
+  if (!MONITORING_WEBHOOK_URL) {
+    return; // Webhook URLが設定されていない場合はスキップ
+  }
+
+  // レベル別の色設定
+  const colors = {
+    info: 0x2ECC71,    // 緑
+    warn: 0xF1C40F,    // 黄
+    error: 0xE74C3C,   // 赤
+    critical: 0xE74C3C // 赤
+  };
+
+  // レベル別の絵文字
+  const emojis = {
+    info: ':white_check_mark:',
+    warn: ':warning:',
+    error: ':x:',
+    critical: ':rotating_light:'
+  };
+
+  const embed = {
+    title: `${emojis[level]} ${title}`,
+    description: description,
+    color: colors[level],
+    timestamp: new Date().toISOString(),
+    footer: {
+      text: `daily-news-bot | ${level.toUpperCase()}`
+    }
+  };
+
+  // 詳細情報がある場合はフィールドに追加（最大3800文字）
+  if (details) {
+    const truncatedDetails = details.length > 3800 ? details.substring(0, 3800) + '...' : details;
+    embed.fields = [{
+      name: '詳細情報',
+      value: `\`\`\`\n${truncatedDetails}\n\`\`\``
+    }];
+  }
+
+  try {
+    await axios.post(`https://discord.com/api/webhooks/${MONITORING_WEBHOOK_URL}`, {
+      embeds: [embed]
+    });
+  } catch (error) {
+    // Webhook送信エラーはコンソールにのみ出力（無限ループ防止）
+    console.error('[Monitoring] Webhook送信に失敗しました:', error.message);
+  }
+};
+
 // Discordクライアントを初期化
 const client = new Client({
   intents: [
@@ -645,6 +706,12 @@ async function syncPostedUrlsFromSheet() {
     }
   } catch (error) {
     console.error('[Info Gathering] Failed to fetch posted URLs from sheet:', error.message);
+    await sendMonitoringNotification(
+      '同期ジョブ初期化エラー',
+      '投稿済みURL一覧の同期に失敗しました',
+      'error',
+      error.message
+    );
   }
 }
 
@@ -2574,12 +2641,25 @@ async function syncPostedBooksFromSheet() {
     if (error.response) {
       console.error('[Book Sync] レスポンス:', error.response.data);
     }
+    await sendMonitoringNotification(
+      '同期ジョブ初期化エラー',
+      '投稿済み書籍リストの同期に失敗しました',
+      'error',
+      error.message
+    );
   }
 }
 
 // Botが起動したときの処理
 client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
+
+  // === BOT起動通知を送信 ===
+  await sendMonitoringNotification(
+    'BOT Login',
+    `ボットがログインしました: **${client.user.tag}**`,
+    'info'
+  );
 
   // ▼▼▼ この行を追加 ▼▼▼
   await syncPostedUrlsFromSheet();
@@ -3538,6 +3618,60 @@ client.on('messageCreate', async message => {
       console.error('[Discussion Log] ログ記録中にエラーが発生しました:', error);
     }
   }
+});
+
+// === Discordクライアントエラーハンドラ ===
+client.on('error', async (error) => {
+  console.error('[Discord Client Error]', error);
+  await sendMonitoringNotification(
+    'Discord Client Error',
+    'Discordクライアントでエラーが発生しました',
+    'error',
+    error.stack || error.message
+  );
+});
+
+client.on('shardError', async (error, shardId) => {
+  console.error(`[Discord Shard Error] Shard ${shardId}:`, error);
+  await sendMonitoringNotification(
+    'Discord Shard Error',
+    `シャード ${shardId} でエラーが発生しました`,
+    'critical',
+    error.stack || error.message
+  );
+});
+
+// === プロセスエラーハンドラ ===
+process.on('uncaughtException', async (error) => {
+  console.error('[Uncaught Exception]', error);
+  await sendMonitoringNotification(
+    'Uncaught Exception',
+    'キャッチされていない例外が発生しました',
+    'critical',
+    error.stack || error.message
+  );
+  // クリティカルエラーなのでプロセスを終了（Docker等で自動再起動を想定）
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+  console.error('[Unhandled Rejection]', reason);
+  await sendMonitoringNotification(
+    'Unhandled Rejection',
+    'ハンドルされていないPromise拒否が発生しました',
+    'error',
+    reason instanceof Error ? (reason.stack || reason.message) : String(reason)
+  );
+});
+
+process.on('warning', async (warning) => {
+  console.warn('[Process Warning]', warning);
+  await sendMonitoringNotification(
+    'Process Warning',
+    `プロセス警告が発生しました: ${warning.name}`,
+    'warn',
+    warning.message
+  );
 });
 
 // Discordにログイン
