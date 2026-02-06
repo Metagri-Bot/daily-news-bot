@@ -1380,8 +1380,125 @@ async function fetchNewBooksFromRakutenEnhanced(keywords, maxRetries = 3) {
     }
   }
 
-  console.log(`[New Book] 楽天Books API（強化版）から${allBooks.length}件の書籍情報を取得しました`);
-  return allBooks;
+  // 楽天APIは発売日未定の書籍に仮の遠い将来日付(2028年, 3099年等)を設定するため、
+  // 取得段階で異常な未来日付の書籍を除外する
+  const now = new Date();
+  const maxFutureDate = new Date();
+  maxFutureDate.setMonth(maxFutureDate.getMonth() + 6);
+
+  const validBooks = allBooks.filter(book => {
+    const pubdate = book.summary.pubdate;
+    if (!pubdate || pubdate.length < 8) return true; // 日付なし・不完全は許容
+
+    try {
+      const year = parseInt(pubdate.substring(0, 4));
+      const month = parseInt(pubdate.substring(4, 6)) - 1;
+      const day = parseInt(pubdate.substring(6, 8));
+      const bookDate = new Date(year, month, day);
+      if (isNaN(bookDate.getTime())) return false;
+
+      if (bookDate > maxFutureDate) {
+        console.log(`[New Book] 楽天 事前除外（異常な未来日付）: ${book.summary.title} (${pubdate})`);
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  });
+
+  console.log(`[New Book] 楽天Books API（強化版）から${allBooks.length}件取得、日付フィルタ後${validBooks.length}件`);
+  return validBooks;
+}
+
+/**
+ * 楽天Books APIから売上順で書籍情報を取得（発売日順で取得できない場合の補完用）
+ * @param {Array} keywords 検索キーワードリスト
+ * @returns {Promise<Array>} 書籍リスト
+ */
+async function fetchNewBooksFromRakutenBySales(keywords) {
+  if (!RAKUTEN_APP_ID) {
+    return [];
+  }
+
+  const allBooks = [];
+  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  for (const keyword of keywords) {
+    try {
+      await delay(600);
+
+      const response = await axios.get('https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404', {
+        params: {
+          applicationId: RAKUTEN_APP_ID,
+          keyword: keyword,
+          sort: 'sales', // 売上順（実際に売れている本を取得）
+          hits: 20,
+          outOfStockFlag: 0,
+          booksGenreId: '001'
+        },
+        timeout: 15000
+      });
+
+      if (response.data && response.data.Items && response.data.Items.length > 0) {
+        const books = response.data.Items.map(item => {
+          const book = item.Item;
+          return {
+            source: 'rakuten',
+            summary: {
+              title: book.title || '',
+              author: book.author || '',
+              publisher: book.publisherName || '',
+              isbn: book.isbn || '',
+              pubdate: book.salesDate ? book.salesDate.replace(/-/g, '').replace(/年|月/g, '').replace(/日.*$/, '').replace(/頃/, '') : '',
+              cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
+            },
+            onix: {
+              CollateralDetail: {
+                TextContent: book.itemCaption ? [{
+                  TextType: '03',
+                  Text: book.itemCaption
+                }] : []
+              }
+            },
+            rakutenUrl: book.itemUrl || ''
+          };
+        });
+
+        allBooks.push(...books);
+        console.log(`[New Book] 楽天API売上順 (${keyword}): ${books.length}件取得`);
+      }
+    } catch (error) {
+      if (error.response && error.response.status === 429) {
+        console.log(`[New Book] 楽天API売上順 (${keyword}) レートリミット。スキップします。`);
+        await delay(3000);
+      } else {
+        console.log(`[New Book] 楽天API売上順 (${keyword}) エラー: ${error.message}`);
+      }
+    }
+  }
+
+  // 異常な未来日付を除外
+  const maxFutureDate = new Date();
+  maxFutureDate.setMonth(maxFutureDate.getMonth() + 6);
+
+  const validBooks = allBooks.filter(book => {
+    const pubdate = book.summary.pubdate;
+    if (!pubdate || pubdate.length < 8) return true;
+    try {
+      const year = parseInt(pubdate.substring(0, 4));
+      const month = parseInt(pubdate.substring(4, 6)) - 1;
+      const day = parseInt(pubdate.substring(6, 8));
+      const bookDate = new Date(year, month, day);
+      if (isNaN(bookDate.getTime())) return false;
+      return bookDate <= maxFutureDate;
+    } catch {
+      return true;
+    }
+  });
+
+  console.log(`[New Book] 楽天API売上順から${allBooks.length}件取得、日付フィルタ後${validBooks.length}件`);
+  return validBooks;
 }
 
 /**
@@ -1620,11 +1737,12 @@ function filterBooksByDate(books, daysAgo, includeFuture = false, maxFutureDays 
       // 無効な日付チェック
       if (isNaN(bookDate.getTime())) return false;
 
-      // 異常な未来日付を除外（1年以上先は除外）
-      const oneYearFromNow = new Date();
-      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
-      if (bookDate > oneYearFromNow) {
-        return false; // 1年以上先の日付は除外
+      // 異常な未来日付を除外（6ヶ月以上先は除外）
+      const maxAllowedFuture = new Date();
+      maxAllowedFuture.setMonth(maxAllowedFuture.getMonth() + 6);
+      if (bookDate > maxAllowedFuture) {
+        console.log(`[Date Filter] 異常な未来日付を除外: ${pubdate} (${book.summary?.title || '不明'})`);
+        return false; // 6ヶ月以上先の日付は除外
       }
 
       // 未来日を含める場合
@@ -1715,11 +1833,16 @@ function calculateFreshnessBonus(book) {
 
   const diffDays = Math.floor((pubdate - today) / (1000 * 60 * 60 * 24));
 
-  // 発売予定（未来日）は最高ボーナス
+  // 異常な未来日付（90日以上先）はペナルティ
+  if (diffDays > 90) {
+    return -10; // 3ヶ月以上先の日付は異常データとしてペナルティ
+  }
+
+  // 発売予定（未来日）
   if (diffDays > 0 && diffDays <= 30) {
     return 10; // 1ヶ月以内の発売予定
-  } else if (diffDays > 30) {
-    return 5; // 1ヶ月以上先の発売予定
+  } else if (diffDays > 30 && diffDays <= 90) {
+    return 3; // 1〜3ヶ月先の発売予定
   }
 
   // 発売済み（過去）
@@ -1770,8 +1893,14 @@ function scoreBook(book) {
   const publisher = (book.summary.publisher || '').toLowerCase();
   const series = (book.summary.series || '').toLowerCase();
 
-  // 全テキストを結合
+  // 全テキストを結合（除外チェック用）
   const fullText = `${title} ${author} ${publisher} ${series}`;
+  // タイトル＋著者のみ（スコアリング用 - 出版社名のノイズを除外）
+  const contentText = `${title} ${author} ${series}`;
+
+  // 書籍の概要テキストも取得
+  const description = (book.onix?.CollateralDetail?.TextContent?.[0]?.Text || '').toLowerCase();
+  const scoringText = `${contentText} ${description}`;
 
   let score = 0;
   const matchedCategories = new Set();
@@ -1790,10 +1919,22 @@ function scoreBook(book) {
     }
   }
 
-  // 農業関連キーワードのチェック（必須条件）
+  // 資格試験・テスト対策本の除外
+  const agriExamExclusionKeywords = [
+    '試験', '模擬試験', '過去問', '問題集', '合格', '資格', '検定',
+    '講習会', '対策テキスト', '予想模試', '受験', '一発合格',
+    'cbt', 'テスト対策', '運行管理者', '猟銃', '射撃'
+  ];
+  for (const keyword of agriExamExclusionKeywords) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['資格試験除外'] };
+    }
+  }
+
+  // 農業関連キーワードのチェック（必須条件）- タイトル・著者・概要で判定
   let hasAgriKeyword = false;
   for (const keyword of AGRI_REQUIRED_KEYWORDS) {
-    if (fullText.includes(keyword.toLowerCase())) {
+    if (scoringText.includes(keyword.toLowerCase())) {
       hasAgriKeyword = true;
       break;
     }
@@ -1801,14 +1942,14 @@ function scoreBook(book) {
 
   // 農業関連キーワードがない場合はスコアを大幅に下げる
   if (!hasAgriKeyword) {
-    score -= 5; // ペナルティ
+    score -= 10; // ペナルティを強化（-5 → -10）
     matchedCategories.add('農業関連キーワードなし');
   }
 
-  // カテゴリ別スコアリング
+  // カテゴリ別スコアリング（タイトル・著者・概要のみで判定、出版社名は除外）
   const checkKeywords = (keywords, categoryName, points) => {
     for (const keyword of keywords) {
-      if (fullText.includes(keyword.toLowerCase())) {
+      if (scoringText.includes(keyword.toLowerCase())) {
         score += points;
         matchedCategories.add(categoryName);
         break;
@@ -1842,8 +1983,14 @@ function scorePopularBook(book) {
   const author = (book.summary.author || '').toLowerCase();
   const publisher = (book.summary.publisher || '').toLowerCase();
 
-  // 全テキストを結合
+  // 全テキストを結合（除外チェック用）
   const fullText = `${title} ${author} ${publisher}`;
+  // タイトル＋著者のみ（スコアリング用 - 出版社名のノイズを除外）
+  const contentText = `${title} ${author}`;
+
+  // 書籍の概要テキストも取得
+  const description = (book.onix?.CollateralDetail?.TextContent?.[0]?.Text || '').toLowerCase();
+  const scoringText = `${contentText} ${description}`;
 
   let score = 0;
   const matchedCategories = new Set();
@@ -1878,10 +2025,23 @@ function scorePopularBook(book) {
     }
   }
 
-  // 一般新刊用のカテゴリ別スコアリング
+  // ★★★ 資格試験・テスト対策本の除外 ★★★
+  const examExclusionKeywords = [
+    '試験', '模擬試験', '過去問', '問題集', '合格', '資格', '検定',
+    '講習会', '対策テキスト', '予想模試', '受験', '一発合格',
+    'cbt', 'テスト対策', '運行管理者', '猟銃', '射撃'
+  ];
+
+  for (const keyword of examExclusionKeywords) {
+    if (fullText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['資格試験除外'] };
+    }
+  }
+
+  // 一般新刊用のカテゴリ別スコアリング（タイトル・著者・概要で判定）
   const checkKeywords = (keywords, categoryName, points) => {
     for (const keyword of keywords) {
-      if (fullText.includes(keyword.toLowerCase())) {
+      if (scoringText.includes(keyword.toLowerCase())) {
         score += points;
         matchedCategories.add(categoryName);
         break;
@@ -1974,6 +2134,13 @@ async function postDailyNewBook() {
         const freshnessBonus = calculateFreshnessBonus(book);
         // 最終スコア = キーワードスコア + 発売日ボーナス
         const totalScore = keywordScore + freshnessBonus;
+
+        // 農業関連キーワードなしで合計スコアが低い書籍はスキップ
+        if (totalScore <= 0) {
+          console.log(`[New Book] 低スコアで除外: ${book.summary.title} (スコア: ${totalScore}, カテゴリ: ${categories.join(', ')})`);
+          continue;
+        }
+
         availableBooks.push({
           book,
           score: totalScore,
@@ -1986,19 +2153,28 @@ async function postDailyNewBook() {
 
     if (availableBooks.length === 0) {
       console.log('[New Book] 投稿可能な未投稿の書籍がありませんでした');
-      // 投稿済みでも最新の書籍を1つ投稿（確実に1日1冊投稿するため）
-      if (books.length > 0) {
-        console.log('[New Book] 投稿済み書籍から最新の1冊を再投稿します');
-        const { score: keywordScore, categories } = scoreBook(books[0]);
-        const freshnessBonus = calculateFreshnessBonus(books[0]);
+      // 投稿済みでも適切なスコアの書籍を1つ投稿（確実に1日1冊投稿するため）
+      for (const book of books) {
+        const { score: keywordScore, categories } = scoreBook(book);
+        if (keywordScore < 0) continue; // 除外対象はスキップ
+
+        const freshnessBonus = calculateFreshnessBonus(book);
+        const totalScore = keywordScore + freshnessBonus;
+        if (totalScore <= 0) continue; // 低スコアもスキップ
+
+        console.log('[New Book] 投稿済み書籍から適切な1冊を再投稿します');
         availableBooks.push({
-          book: books[0],
-          score: keywordScore + freshnessBonus,
+          book,
+          score: totalScore,
           keywordScore,
           freshnessBonus,
           categories
         });
-      } else {
+        break;
+      }
+
+      if (availableBooks.length === 0) {
+        console.log('[New Book] 適切な書籍が見つかりませんでした。投稿をスキップします。');
         return;
       }
     }
@@ -2157,12 +2333,26 @@ async function postDailyPopularBook() {
     const availableBooks = [];
     for (const book of books) {
       const isbn = book.summary.isbn;
-      // ISBNがあり、投稿済みでない書籍はすべて許容
+      // ISBNがあり、投稿済みでない書籍
       if (isbn && !postedBookIsbns.has(isbn)) {
         const { score: keywordScore, categories } = scorePopularBook(book);
+
+        // 除外対象（score = -1）の書籍はスキップ
+        if (keywordScore < 0) {
+          console.log(`[Popular Book] 除外: ${book.summary.title} (${categories.join(', ')})`);
+          continue;
+        }
+
         const freshnessBonus = calculateFreshnessBonus(book);
         // 最終スコア = キーワードスコア + 発売日ボーナス
         const totalScore = keywordScore + freshnessBonus;
+
+        // 合計スコアが0以下の書籍もスキップ（品質基準を満たさない）
+        if (totalScore <= 0) {
+          console.log(`[Popular Book] 低スコアで除外: ${book.summary.title} (スコア: ${totalScore})`);
+          continue;
+        }
+
         availableBooks.push({
           book,
           score: totalScore,
@@ -2175,19 +2365,28 @@ async function postDailyPopularBook() {
 
     if (availableBooks.length === 0) {
       console.log('[Popular Book] 投稿可能な未投稿の書籍がありませんでした');
-      // 投稿済みでも最新の書籍を1つ投稿（確実に1日1冊投稿するため）
-      if (books.length > 0) {
-        console.log('[Popular Book] 投稿済み書籍から最新の1冊を再投稿します');
-        const { score: keywordScore, categories } = scorePopularBook(books[0]);
-        const freshnessBonus = calculateFreshnessBonus(books[0]);
+      // 投稿済みでも適切なスコアの書籍を1つ投稿（確実に1日1冊投稿するため）
+      for (const book of books) {
+        const { score: keywordScore, categories } = scorePopularBook(book);
+        if (keywordScore < 0) continue; // 除外対象はスキップ
+
+        const freshnessBonus = calculateFreshnessBonus(book);
+        const totalScore = keywordScore + freshnessBonus;
+        if (totalScore <= 0) continue; // 低スコアもスキップ
+
+        console.log('[Popular Book] 投稿済み書籍から適切な1冊を再投稿します');
         availableBooks.push({
-          book: books[0],
-          score: keywordScore + freshnessBonus,
+          book,
+          score: totalScore,
           keywordScore,
           freshnessBonus,
           categories
         });
-      } else {
+        break;
+      }
+
+      if (availableBooks.length === 0) {
+        console.log('[Popular Book] 適切な書籍が見つかりませんでした。投稿をスキップします。');
         return;
       }
     }
@@ -2380,11 +2579,17 @@ async function fetchAgriTechBooks() {
 
   const allBooks = [];
 
-  // === 1. 楽天Books API（レートリミット対策版）から取得 ===
+  // === 1. 楽天Books API（レートリミット対策版 - 発売日順）から取得 ===
   console.log('[AgriTech Books] 楽天Books APIから取得中...');
   const rakutenBooks = await fetchNewBooksFromRakutenEnhanced(agriTechKeywords);
   allBooks.push(...rakutenBooks);
-  console.log(`[AgriTech Books] 楽天から${rakutenBooks.length}件取得`);
+  console.log(`[AgriTech Books] 楽天（発売日順）から${rakutenBooks.length}件取得`);
+
+  // === 1.5. 楽天Books API（売上順）から追加取得 ===
+  console.log('[AgriTech Books] 楽天Books API（売上順）から取得中...');
+  const salesBooks = await fetchNewBooksFromRakutenBySales(agriTechKeywords);
+  allBooks.push(...salesBooks);
+  console.log(`[AgriTech Books] 楽天（売上順）から${salesBooks.length}件取得`);
 
   // === 2. Google Books APIから取得 ===
   console.log('[AgriTech Books] Google Books APIから取得中...');
@@ -2434,7 +2639,7 @@ async function fetchAgriTechBooks() {
     } catch (error) {
       console.log(`[AgriTech Books] Google API (${keyword}) エラー:`, error.message);
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
   // === 3. NDL Search API（国立国会図書館）から取得 ===
@@ -2461,20 +2666,28 @@ async function fetchAgriTechBooks() {
   const merged = mergeBooks([], allBooks, []);
 
   // 新刊フィルタ：過去2週間〜未来1ヶ月を優先（より厳しく）
-  let filtered = filterBooksByDate(merged, 14, true); // 過去14日〜未来含む
+  let filtered = filterBooksByDate(merged, 14, true, 30); // 過去14日〜未来30日
 
   if (filtered.length < 3) {
     console.log(`[AgriTech Books] 2週間以内の書籍が${filtered.length}件のため、範囲を1ヶ月に拡大します`);
-    filtered = filterBooksByDate(merged, 30, true);
+    filtered = filterBooksByDate(merged, 30, true, 60);
   }
 
   if (filtered.length < 3) {
     console.log(`[AgriTech Books] 1ヶ月以内の書籍が${filtered.length}件のため、範囲を3ヶ月に拡大します`);
-    filtered = filterBooksByDate(merged, 90, true);
+    filtered = filterBooksByDate(merged, 90, true, 90);
   }
 
   if (filtered.length < 3) {
-    console.log(`[AgriTech Books] 3ヶ月以内の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    // 最大限広げても日付フィルタは維持（6ヶ月まで）
+    console.log(`[AgriTech Books] 3ヶ月以内の書籍が${filtered.length}件のため、範囲を6ヶ月に拡大します`);
+    filtered = filterBooksByDate(merged, 180, true, 90);
+  }
+
+  if (filtered.length < 1) {
+    // それでも見つからない場合のみ、日付フィルタなしで全データを使用
+    // （楽天APIの事前フィルタで異常日付は既に除外済み）
+    console.log(`[AgriTech Books] 6ヶ月以内でも書籍が見つからないため、日付フィルタを無効化します（事前フィルタ済みデータを使用）`);
     filtered = merged;
   }
 
@@ -2504,11 +2717,18 @@ async function fetchPopularBooks() {
 
   const allBooks = [];
 
-  // === 1. 楽天Books API（レートリミット対策版）から取得 ===
+  // === 1. 楽天Books API（レートリミット対策版 - 発売日順）から取得 ===
   console.log('[Popular Books] 楽天Books APIから取得中...');
   const rakutenBooks = await fetchNewBooksFromRakutenEnhanced(popularKeywords);
   allBooks.push(...rakutenBooks);
-  console.log(`[Popular Books] 楽天から${rakutenBooks.length}件取得`);
+  console.log(`[Popular Books] 楽天（発売日順）から${rakutenBooks.length}件取得`);
+
+  // === 1.5. 楽天Books API（売上順）から追加取得 ===
+  // 発売日順だと日付未定の書籍が多いため、売上順でも取得して候補を増やす
+  console.log('[Popular Books] 楽天Books API（売上順）から取得中...');
+  const salesBooks = await fetchNewBooksFromRakutenBySales(popularKeywords);
+  allBooks.push(...salesBooks);
+  console.log(`[Popular Books] 楽天（売上順）から${salesBooks.length}件取得`);
 
   // === 2. Google Books APIから取得 ===
   console.log('[Popular Books] Google Books APIから取得中...');
@@ -2558,7 +2778,7 @@ async function fetchPopularBooks() {
     } catch (error) {
       console.log(`[Popular Books] Google API (${keyword}) エラー:`, error.message);
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
   // === 3. NDL Search API（国立国会図書館）から取得 ===
@@ -2594,7 +2814,14 @@ async function fetchPopularBooks() {
   }
 
   if (filtered.length < 3) {
-    console.log(`[Popular Books] 1ヶ月以内の書籍が${filtered.length}件のため、日付フィルタを無効化します`);
+    console.log(`[Popular Books] 1ヶ月以内の書籍が${filtered.length}件のため、範囲を3ヶ月に拡大します`);
+    filtered = filterBooksByDate(merged, 90, true, 60);
+  }
+
+  if (filtered.length < 1) {
+    // それでも見つからない場合のみ、日付フィルタなしで全データを使用
+    // （楽天APIの事前フィルタで異常日付は既に除外済み）
+    console.log(`[Popular Books] 3ヶ月以内でも書籍が見つからないため、日付フィルタを無効化します（事前フィルタ済みデータを使用）`);
     filtered = merged;
   }
 
@@ -3347,7 +3574,7 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
-  cron.schedule('5 10 * * *', async () => {
+  cron.schedule('10 10 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
