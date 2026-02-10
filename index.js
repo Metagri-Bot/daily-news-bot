@@ -3581,8 +3581,8 @@ cron.schedule('0 6 * * *', async () => {
     timezone: "Asia/Tokyo"
   });
 
-  // === 農業AI通信タスク（毎日午前10時30分） ===
-cron.schedule('30 10 * * *', async () => {
+  // === 農業AI通信タスク（毎日午前9時50分） ===
+cron.schedule('50 9 * * *', async () => {
 // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
   console.log('[AI Guide] 農業AI通信の配信タスクを開始します...');
 
@@ -3792,7 +3792,7 @@ if (process.env.AI_GUIDE_GAS_URL) {
   console.log('- Roblox News Digest: 7:00 JST');
   console.log('- AgriTech Book Recommendation: 10:00 JST');
   console.log('- Popular Book Recommendation: 10:00 JST');
-  console.log('- AI Guide (農業AI通信): 10:30 JST');
+  console.log('- AI Guide (農業AI通信): 9:50 JST');
 }); 
 
 
