@@ -445,7 +445,41 @@ docker compose logs -f --tail=100
 2. 次を登録
    - 共通: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`
    - アプリ固有: `.env` で使う全変数
-3. `main` へ push してデプロイログを確認
+
+### 5.5 `.github/workflows/deploy.yml` で確認・変更するポイント
+
+このリポジトリの `deploy.yml` は、`main` への push を契機に、GitHub Actions から SSH 経由で `docker compose up --build -d` を実行する構成です。  
+**別リポジトリへ横展開する場合は、以下を必ず確認**してください。
+
+1. **トリガーブランチ**
+   - `on.push.branches: ["main"]`
+   - `main` 以外で運用する場合はここを変更
+2. **SSH接続先のSecrets名**
+   - `host: ${{ secrets.SSH_HOST }}`
+   - `private-key: ${{ secrets.SSH_PRIVATE_KEY }}`
+   - `DOCKER_HOST: ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}`
+3. **`.env` 生成行と Secrets の整合**
+   - `Write .env file` ステップで `echo "KEY=${{ secrets.KEY }}" >> .env` を並べているため、
+     `deploy.yml` に書いたKEYは **すべて** GitHub Secrets 側にも作成が必要
+   - 新しい環境変数を追加したら、`deploy.yml` と Secrets を必ず同時更新
+4. **複数アプリ運用時の衝突回避（推奨）**
+   - `Deploy with Docker Compose` に `COMPOSE_PROJECT_NAME` を設定（例: `my-second-bot`）
+   - これによりコンテナ名・ネットワーク名の衝突を避けやすくなります
+
+例:
+```yaml
+- name: Deploy with Docker Compose
+  run: docker compose up --build -d
+  env:
+    DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
+    COMPOSE_PROJECT_NAME: my-second-bot
+```
+
+5. **デプロイ確認**
+   - `Actions` タブで `deploy.yml` の実行ログを確認
+   - 成功後にサーバーで `docker ps` / `docker compose ps` を確認
+
+最後に `main` へ push して、デプロイログを確認します。
 
 ### 6. 既存運用に影響を出さないための運用ルール
 
