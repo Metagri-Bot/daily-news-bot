@@ -360,6 +360,92 @@ sequenceDiagram
 
 ---
 
+## 複数リポジトリをVultrサーバーで横展開する手順（初心者向け）
+
+このBotと同じように、**別のGitHubリポジトリ**も同じVultrサーバーへ安全に追加できます。  
+以下は「まず1つ増やす」ための最小手順です。
+
+### 0. 事前に決めること
+
+- 新しいアプリ名（例: `my-second-bot`）
+- サーバー上の配置先ディレクトリ（例: `/opt/apps/my-second-bot`）
+- 使うポート（例: `3002`）
+- ドメインを使う場合のサブドメイン（例: `bot2.example.com`）
+
+> ポート番号は既存アプリと**重複させない**ことが重要です。
+
+### 1. VultrサーバーへSSH接続
+
+```bash
+ssh <SSH_USER>@<SSH_HOST>
+```
+
+### 2. アプリ用ディレクトリを作成してクローン
+
+```bash
+sudo mkdir -p /opt/apps/my-second-bot
+sudo chown -R $USER:$USER /opt/apps/my-second-bot
+cd /opt/apps/my-second-bot
+git clone https://github.com/<your-org>/<your-repo>.git .
+```
+
+### 3. `.env` を作成（機密情報を設定）
+
+```bash
+cp .env.sample .env
+nano .env
+```
+
+- APIキーやTokenはGitHubにコミットしない
+- 既存Botと同じ値を使う場合でも、まずは1つずつ確認
+
+### 4. Docker Composeで起動
+
+```bash
+docker compose pull
+docker compose up -d --build
+docker compose ps
+docker compose logs -f --tail=100
+```
+
+- `Up` になっていれば起動成功
+- エラー時は `.env` の不足、ポート重複、APIキー設定ミスを優先確認
+
+### 5. GitHub Actionsで自動デプロイを有効化
+
+1. 新しいリポジトリの `Settings` → `Secrets and variables` → `Actions`
+2. 次を登録
+   - 共通: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`
+   - アプリ固有: `.env` で使う全変数
+3. `main` へ push してデプロイログを確認
+
+### 6. 既存運用に影響を出さないための運用ルール
+
+- **1アプリ1ディレクトリ**で分離（例: `/opt/apps/<repo-name>`）
+- **1アプリ1 composeプロジェクト**で分離（コンテナ名衝突回避）
+- ログ確認コマンドを固定化
+  - `docker compose -f /opt/apps/<repo>/compose.yaml logs -f --tail=100`
+- 更新手順を統一
+  - `git pull` → `docker compose up -d --build`
+
+### 7. トラブルシュート（最初に見るポイント）
+
+- コンテナが落ちる: `docker compose logs`
+- 起動しない: `.env` の未設定・タイプミス
+- 接続できない: Vultr Firewall / UFW のポート未開放
+- Actions失敗: SSH鍵、Secrets名、デプロイ先パスの不一致
+
+### 8. 横展開チェックリスト
+
+- [ ] サーバー上のディレクトリを分離した
+- [ ] `.env` を作成し、機密情報を投入した
+- [ ] ポート重複がない
+- [ ] `docker compose ps` で `Up` を確認
+- [ ] GitHub ActionsのSecretsを登録した
+- [ ] `main` push で自動デプロイ成功を確認した
+
+---
+
 ## 使い方とカスタマイズ
 
 | カスタマイズ項目 | 方法 |
