@@ -380,6 +380,34 @@ sequenceDiagram
 ssh <SSH_USER>@<SSH_HOST>
 ```
 
+### 1.5 Vultr側で事前に必要な設定（初回のみ）
+
+結論として、**GitHub側の設定だけでなくVultr側にも初回設定が必要**です。  
+特に複数リポジトリ運用では、以下を最初に揃えると安定します。
+
+1. **Docker / Compose のインストール確認**
+   ```bash
+   docker --version
+   docker compose version
+   ```
+2. **デプロイ用ユーザーの権限確認**（Docker実行権限）
+   ```bash
+   groups <SSH_USER>
+   ```
+   - `docker` グループに入っていない場合は追加し、再ログイン
+3. **SSH鍵の設定確認**（GitHub Actionsから接続する鍵）
+   - サーバー側: `~/.ssh/authorized_keys`
+   - GitHub側: `SSH_PRIVATE_KEY` Secret
+4. **Firewall / UFW のポート開放確認**
+   - Discord Bot中心なら通常は外向き通信が主ですが、Web公開する場合は `80/443` を開放
+   - アプリが待受ポートを使う場合はそのポートも許可
+5. **時刻・タイムゾーンの確認**（cron運用のズレ防止）
+   ```bash
+   timedatectl
+   ```
+
+> 既存Botが動いていても、新規アプリ追加時に「ポート」「権限」「鍵」「Firewall」の4点は毎回チェック推奨です。
+
 ### 2. アプリ用ディレクトリを作成してクローン
 
 ```bash
@@ -434,12 +462,17 @@ docker compose logs -f --tail=100
 - 起動しない: `.env` の未設定・タイプミス
 - 接続できない: Vultr Firewall / UFW のポート未開放
 - Actions失敗: SSH鍵、Secrets名、デプロイ先パスの不一致
+- cronの実行時刻が想定と違う: `timedatectl` でサーバー時刻を確認
 
 ### 8. 横展開チェックリスト
 
 - [ ] サーバー上のディレクトリを分離した
 - [ ] `.env` を作成し、機密情報を投入した
 - [ ] ポート重複がない
+- [ ] Docker / Compose がサーバーに導入済み
+- [ ] デプロイユーザーにDocker実行権限がある
+- [ ] GitHub Actions用SSH鍵が疎通確認できている
+- [ ] 必要なFirewallポートが開放されている
 - [ ] `docker compose ps` で `Up` を確認
 - [ ] GitHub ActionsのSecretsを登録した
 - [ ] `main` push で自動デプロイ成功を確認した
