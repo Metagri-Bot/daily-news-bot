@@ -1872,12 +1872,24 @@ const AGRI_TECH_EXCLUSION_KEYWORDS = [
   '恋愛', 'ホラー', 'ミステリー', '推理', 'レシピ', '料理'
 ];
 
-// 農業関連の必須キーワード（これらがないと農業技術書籍としてスコアが低くなる）
+// 関連分野の必須キーワード（農業・一次産業・地方創生・メタバース・Web3・生成AIいずれかが必要）
 const AGRI_REQUIRED_KEYWORDS = [
+  // 農業・一次産業
   '農業', '農家', '農産物', '畜産', '酪農', '栽培', '圃場', '収穫',
   '食料', '食糧', 'フード', 'アグリ', '農林', '漁業', '林業',
   'ja', '農協', '農学', '品種', '作物', '肥料', '農薬', '灌漑',
-  'スマート農業', 'アグリテック', 'agritech', 'farmtech'
+  'スマート農業', 'アグリテック', 'agritech', 'farmtech',
+  '一次産業', '農林水産', '水産業',
+  // 地方創生・地域活性化
+  '地方創生', '地域活性化', '地域振興', '地域DX', 'ローカル', '地方移住',
+  '中山間地域', '過疎', '限界集落', '関係人口',
+  // メタバース・XR
+  'メタバース', 'バーチャル', 'XR', 'VR', 'AR', 'MR', 'デジタルツイン',
+  // Web3・ブロックチェーン
+  'Web3', 'web3', 'ブロックチェーン', 'NFT', 'DAO', 'DeFi', '分散型',
+  'トークン', '暗号資産', '仮想通貨', 'スマートコントラクト',
+  // 生成AI・AI活用
+  '生成AI', 'ChatGPT', 'LLM', 'プロンプト', 'AIエージェント', 'GPT'
 ];
 
 /**
@@ -1940,10 +1952,10 @@ function scoreBook(book) {
     }
   }
 
-  // 農業関連キーワードがない場合はスコアを大幅に下げる
+  // 関連キーワード（農業・地方創生・メタバース・Web3・生成AI）がない場合はスコアを下げる
   if (!hasAgriKeyword) {
-    score -= 10; // ペナルティを強化（-5 → -10）
-    matchedCategories.add('農業関連キーワードなし');
+    score -= 10; // ペナルティ（関連テーマ外の書籍を抑制）
+    matchedCategories.add('関連キーワードなし');
   }
 
   // カテゴリ別スコアリング（タイトル・著者・概要のみで判定、出版社名は除外）
@@ -2053,17 +2065,51 @@ function scorePopularBook(book) {
   const businessKeywords = ['ビジネス', '経営', 'マネジメント', 'リーダーシップ', '起業',
     '自己啓発', '成功', '仕事術', 'キャリア', '働き方', '投資', '資産', '経済学',
     'マーケティング', '戦略', 'イノベーション', 'スタートアップ'];
-  checkKeywords(businessKeywords, 'ビジネス', 8);
+  checkKeywords(businessKeywords, 'ビジネス書', 8);
 
   // 文芸・純文学（高スコア）
   const literaryKeywords = ['直木賞', '芥川賞', '本屋大賞', '文学賞', '受賞作',
     '純文学', '文藝', '新潮', '文春', '講談社文庫', '角川文庫'];
-  checkKeywords(literaryKeywords, '文芸', 10);
+  checkKeywords(literaryKeywords, '文芸・小説', 10);
+
+  // 小説（一般）
+  const novelKeywords = ['小説', '物語', '長編', '短編', '文庫', 'ミステリ', '推理',
+    'サスペンス', 'ホラー', '恋愛小説', '時代小説', '歴史小説'];
+  checkKeywords(novelKeywords, '小説', 7);
 
   // 話題性・ベストセラー関連（最高スコア）
   const trendingKeywords = ['ベストセラー', '大賞', '受賞', '映画化',
     'ドラマ化', '累計', '万部', '注目', 'テレビ', 'メディア'];
   checkKeywords(trendingKeywords, '話題の本', 12);
+
+  // 農業・一次産業（高スコア）
+  const agriKeywords = ['農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農',
+    '栽培', '収穫', '品種', '一次産業', '農林水産', 'アグリ', 'フードテック',
+    'スマート農業', '食料', '有機農業', '水産業'];
+  checkKeywords(agriKeywords, '農業・一次産業', 9);
+
+  // 地方創生・地域活性化（高スコア）
+  const localRevitalizationKeywords = ['地方創生', '地域活性化', '地域振興', '地方移住',
+    '地域DX', 'ローカルDX', '中山間地域', '過疎', '関係人口', '地域おこし',
+    'まちづくり', '地域課題', '移住', '田舎', 'ふるさと', 'コミュニティ'];
+  checkKeywords(localRevitalizationKeywords, '地方創生', 9);
+
+  // メタバース・XR・バーチャル（高スコア）
+  const metaverseKeywords = ['メタバース', 'バーチャル', 'XR', 'VR', 'AR', 'MR',
+    'デジタルツイン', 'アバター', 'ゲーム', '仮想空間', 'バーチャルリアリティ'];
+  checkKeywords(metaverseKeywords, 'メタバース', 8);
+
+  // Web3・ブロックチェーン（高スコア）
+  const web3Keywords = ['Web3', 'ブロックチェーン', 'NFT', 'DAO', 'DeFi', '分散型',
+    'トークン', '暗号資産', '仮想通貨', 'スマートコントラクト', 'クリプト',
+    'ステーブルコイン', 'CBDC'];
+  checkKeywords(web3Keywords, 'Web3', 8);
+
+  // 生成AI・AI活用（最高スコア）
+  const genAiKeywords = ['生成AI', 'ChatGPT', 'LLM', 'プロンプト', 'AIエージェント',
+    'Copilot', 'Claude', 'Gemini', '人工知能', 'AI活用', 'AI導入', 'AIビジネス',
+    '機械学習', 'ディープラーニング'];
+  checkKeywords(genAiKeywords, '生成AI', 10);
 
   // 実用書・専門書
   const practicalKeywords = ['入門', '図解', '完全ガイド', '教科書',
@@ -2566,15 +2612,32 @@ async function fetchBooksWithCache() {
 async function fetchAgriTechBooks() {
   console.log('[AgriTech Books] 農業技術関連書籍を取得中...');
 
-  // 農業×テクノロジーに特化したキーワード
+  // 農業×テクノロジー・地方創生・Web3・生成AIに特化したキーワード
   const agriTechKeywords = [
+    // 農業・アグリテック
     'スマート農業',
     'アグリテック',
     '農業 DX',
     '農業 AI',
     '精密農業',
     '農業 IoT',
-    '農業技術'
+    '農業技術',
+    '一次産業',
+    '農林水産業',
+    // 地方創生・地域活性化
+    '地方創生',
+    '地域活性化',
+    '地域DX',
+    // メタバース
+    'メタバース',
+    // Web3・ブロックチェーン
+    'Web3',
+    'ブロックチェーン',
+    'NFT ビジネス',
+    // 生成AI・活用
+    '生成AI',
+    'ChatGPT 活用',
+    'AI活用 ビジネス'
   ];
 
   const allBooks = [];
@@ -2705,14 +2768,33 @@ async function fetchAgriTechBooks() {
 async function fetchPopularBooks() {
   console.log('[Popular Books] 一般新刊書籍を取得中...');
 
-  // 一般新刊向けキーワード
+  // 一般新刊向けキーワード（ビジネス書・小説・農業・地方創生・メタバース・Web3・生成AI）
   const popularKeywords = [
-    'ベストセラー',
-    '話題の本',
+    // ビジネス書・自己啓発
     'ビジネス書',
-    '小説',
     '自己啓発',
-    '経済'
+    '経済',
+    '起業',
+    // 小説・文芸
+    '小説',
+    '直木賞',
+    '本屋大賞',
+    // 農業・一次産業
+    '農業',
+    '一次産業',
+    // 地方創生
+    '地方創生',
+    '地域活性化',
+    // メタバース
+    'メタバース',
+    'バーチャル',
+    // Web3・ブロックチェーン
+    'Web3',
+    'ブロックチェーン',
+    'NFT',
+    // 生成AI
+    '生成AI',
+    'ChatGPT'
   ];
 
   const allBooks = [];
