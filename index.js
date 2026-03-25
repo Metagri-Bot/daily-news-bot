@@ -1094,70 +1094,71 @@ async function fetchNewBooksFromHanmoto() {
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     };
 
-    // 版元ドットコムの新刊情報APIを使用
-    // ジャンル別に検索
-    const genres = [
-      { code: '007', name: 'コンピュータ・IT' },
-      { code: '610', name: '農業' },
-      { code: '335', name: '企業・経営' },
-      { code: '336', name: '経営管理' }
+    // openBD coverage APIから最近登録されたISBNを一括取得（ジャンル別ループを廃止して1回に統一）
+    // 農業・テクノロジー関連タイトルで絞り込む
+    const hanmotoFilterKeywords = [
+      '農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '圃場',
+      'スマート農業', 'アグリ', 'フードテック', '精密農業', '一次産業', '農林水産',
+      '地方創生', '地域活性化', '地域DX', 'ローカルDX',
+      'メタバース', 'Web3', 'ブロックチェーン', 'NFT', 'DAO',
+      '生成AI', 'ChatGPT', 'LLM', 'AI活用', 'AIエージェント', 'DX'
     ];
 
-    for (const genre of genres) {
-      try {
-        // openBD経由で版元ドットコムの新刊データを取得
-        const response = await axios.get('https://api.openbd.jp/v1/coverage', {
-          timeout: 10000
-        });
+    try {
+      const response = await axios.get('https://api.openbd.jp/v1/coverage', {
+        timeout: 10000
+      });
 
-        // カバレッジ情報から最近登録されたISBNを取得
-        if (response.data && response.data.length > 0) {
-          // 最新のISBNを抽出（APIの制限内で）
-          const recentIsbns = response.data.slice(0, 100);
+      if (response.data && response.data.length > 0) {
+        // より多くのISBNを取得して候補を増やす
+        const recentIsbns = response.data.slice(0, 500);
 
-          // 詳細情報を取得
-          const detailResponse = await axios.post('https://api.openbd.jp/v1/get',
-            recentIsbns,
-            {
-              headers: { 'Content-Type': 'application/json' },
-              timeout: 10000
-            }
-          );
-
-          if (detailResponse.data && Array.isArray(detailResponse.data)) {
-            const validBooks = detailResponse.data.filter(book => {
-              if (!book || !book.summary) return false;
-
-              // 発売日が2週間前〜1ヶ月後の書籍のみ
-              const pubdate = book.summary.pubdate;
-              if (!pubdate) return false;
-
-              const dateStr = pubdate.replace(/-/g, '').replace(/\//g, '');
-              if (dateStr.length < 8) return false;
-
-              try {
-                const year = parseInt(dateStr.substring(0, 4));
-                const month = parseInt(dateStr.substring(4, 6)) - 1;
-                const day = parseInt(dateStr.substring(6, 8));
-                const bookDate = new Date(year, month, day);
-
-                return bookDate >= fromDate && bookDate <= toDate;
-              } catch {
-                return false;
-              }
-            });
-
-            books.push(...validBooks.map(book => ({
-              ...book,
-              source: 'hanmoto'
-            })));
+        const detailResponse = await axios.post('https://api.openbd.jp/v1/get',
+          recentIsbns,
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 15000
           }
-        }
-      } catch (genreError) {
-        console.log(`[New Book] 版元ドットコムAPI (${genre.name}) エラー:`, genreError.message);
-      }
+        );
 
-      await new Promise(resolve => setTimeout(resolve, 300));
+        if (detailResponse.data && Array.isArray(detailResponse.data)) {
+          const validBooks = detailResponse.data.filter(book => {
+            if (!book || !book.summary) return false;
+
+            // 農業・テクノロジー関連キーワードでタイトルフィルタリング
+            const title = (book.summary.title || '').toLowerCase();
+            const hasRelevantKeyword = hanmotoFilterKeywords.some(kw =>
+              title.includes(kw.toLowerCase())
+            );
+            if (!hasRelevantKeyword) return false;
+
+            // 発売日が2週間前〜1ヶ月後の書籍のみ
+            const pubdate = book.summary.pubdate;
+            if (!pubdate) return false;
+
+            const dateStr = pubdate.replace(/-/g, '').replace(/\//g, '');
+            if (dateStr.length < 8) return false;
+
+            try {
+              const year = parseInt(dateStr.substring(0, 4));
+              const month = parseInt(dateStr.substring(4, 6)) - 1;
+              const day = parseInt(dateStr.substring(6, 8));
+              const bookDate = new Date(year, month, day);
+
+              return bookDate >= fromDate && bookDate <= toDate;
+            } catch {
+              return false;
+            }
+          });
+
+          books.push(...validBooks.map(book => ({
+            ...book,
+            source: 'hanmoto'
+          })));
+        }
+      }
+    } catch (coverageError) {
+      console.log('[New Book] 版元ドットコムAPI エラー:', coverageError.message);
     }
 
     // 重複除去
@@ -1889,7 +1890,8 @@ const AGRI_REQUIRED_KEYWORDS = [
   'Web3', 'web3', 'ブロックチェーン', 'NFT', 'DAO', 'DeFi', '分散型',
   'トークン', '暗号資産', '仮想通貨', 'スマートコントラクト',
   // 生成AI・AI活用
-  '生成AI', 'ChatGPT', 'LLM', 'プロンプト', 'AIエージェント', 'GPT'
+  '生成AI', 'ChatGPT', 'LLM', 'プロンプト', 'AIエージェント', 'GPT',
+  'Claude', 'Gemini', 'Anthropic', 'Copilot', 'OpenAI'
 ];
 
 /**
@@ -2624,6 +2626,14 @@ async function fetchAgriTechBooks() {
     '農業技術',
     '一次産業',
     '農林水産業',
+    // フードテック・バイオ（追加）
+    'フードテック',
+    '培養肉',
+    '代替タンパク',
+    'リジェネラティブ農業',
+    'カーボンクレジット 農業',
+    '有機農業',
+    'ゲノム編集 農業',
     // 地方創生・地域活性化
     '地方創生',
     '地域活性化',
@@ -2637,7 +2647,12 @@ async function fetchAgriTechBooks() {
     // 生成AI・活用
     '生成AI',
     'ChatGPT 活用',
-    'AI活用 ビジネス'
+    'AI活用 ビジネス',
+    // AIエージェント・最新AI（追加）
+    'AIエージェント',
+    'LLM 活用',
+    'Claude 活用',
+    'Gemini 活用'
   ];
 
   const allBooks = [];
