@@ -1,4 +1,4 @@
-// .envファイルから環境変数を読み込む
+﻿// .envファイルから環境変数を読み込む
 require('dotenv').config();
 
 // Webページの内容を取得（スクレイピング）するために、cheerioというライブラリを使用
@@ -1347,7 +1347,7 @@ async function fetchNewBooksFromRakutenEnhanced(keywords, maxRetries = 3) {
                 author: book.author || '',
                 publisher: book.publisherName || '',
                 isbn: book.isbn || '',
-                pubdate: book.salesDate ? book.salesDate.replace(/-/g, '').replace(/年|月/g, '').replace(/日.*$/, '').replace(/頃/, '') : '',
+                pubdate: normalizeRakutenSalesDate(book.salesDate),
                 cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
               },
               onix: {
@@ -1381,34 +1381,10 @@ async function fetchNewBooksFromRakutenEnhanced(keywords, maxRetries = 3) {
     }
   }
 
-  // 楽天APIは発売日未定の書籍に仮の遠い将来日付(2028年, 3099年等)を設定するため、
-  // 取得段階で異常な未来日付の書籍を除外する
-  const now = new Date();
-  const maxFutureDate = new Date();
-  maxFutureDate.setMonth(maxFutureDate.getMonth() + 6);
+  const dedupedBooks = dedupeBooksByIdentity(allBooks);
+  const validBooks = filterRakutenAbnormalFutureBooks(dedupedBooks, '楽天');
 
-  const validBooks = allBooks.filter(book => {
-    const pubdate = book.summary.pubdate;
-    if (!pubdate || pubdate.length < 8) return true; // 日付なし・不完全は許容
-
-    try {
-      const year = parseInt(pubdate.substring(0, 4));
-      const month = parseInt(pubdate.substring(4, 6)) - 1;
-      const day = parseInt(pubdate.substring(6, 8));
-      const bookDate = new Date(year, month, day);
-      if (isNaN(bookDate.getTime())) return false;
-
-      if (bookDate > maxFutureDate) {
-        console.log(`[New Book] 楽天 事前除外（異常な未来日付）: ${book.summary.title} (${pubdate})`);
-        return false;
-      }
-      return true;
-    } catch {
-      return true;
-    }
-  });
-
-  console.log(`[New Book] 楽天Books API（強化版）から${allBooks.length}件取得、日付フィルタ後${validBooks.length}件`);
+  console.log(`[New Book] 楽天Books API（強化版）から${allBooks.length}件取得、重複除去後${dedupedBooks.length}件、日付フィルタ後${validBooks.length}件`);
   return validBooks;
 }
 
@@ -1451,7 +1427,7 @@ async function fetchNewBooksFromRakutenBySales(keywords) {
               author: book.author || '',
               publisher: book.publisherName || '',
               isbn: book.isbn || '',
-              pubdate: book.salesDate ? book.salesDate.replace(/-/g, '').replace(/年|月/g, '').replace(/日.*$/, '').replace(/頃/, '') : '',
+              pubdate: normalizeRakutenSalesDate(book.salesDate),
               cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
             },
             onix: {
@@ -1479,26 +1455,10 @@ async function fetchNewBooksFromRakutenBySales(keywords) {
     }
   }
 
-  // 異常な未来日付を除外
-  const maxFutureDate = new Date();
-  maxFutureDate.setMonth(maxFutureDate.getMonth() + 6);
+  const dedupedBooks = dedupeBooksByIdentity(allBooks);
+  const validBooks = filterRakutenAbnormalFutureBooks(dedupedBooks, '楽天売上順');
 
-  const validBooks = allBooks.filter(book => {
-    const pubdate = book.summary.pubdate;
-    if (!pubdate || pubdate.length < 8) return true;
-    try {
-      const year = parseInt(pubdate.substring(0, 4));
-      const month = parseInt(pubdate.substring(4, 6)) - 1;
-      const day = parseInt(pubdate.substring(6, 8));
-      const bookDate = new Date(year, month, day);
-      if (isNaN(bookDate.getTime())) return false;
-      return bookDate <= maxFutureDate;
-    } catch {
-      return true;
-    }
-  });
-
-  console.log(`[New Book] 楽天API売上順から${allBooks.length}件取得、日付フィルタ後${validBooks.length}件`);
+  console.log(`[New Book] 楽天API売上順から${allBooks.length}件取得、重複除去後${dedupedBooks.length}件、日付フィルタ後${validBooks.length}件`);
   return validBooks;
 }
 
@@ -1544,7 +1504,7 @@ async function fetchNewBooksFromRakuten() {
                 author: book.author || '',
                 publisher: book.publisherName || '',
                 isbn: book.isbn || '',
-                pubdate: book.salesDate ? book.salesDate.replace(/-/g, '') : '',
+                pubdate: normalizeRakutenSalesDate(book.salesDate),
                 cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
               },
               onix: {
@@ -1945,19 +1905,10 @@ function scoreBook(book) {
     }
   }
 
-  // 農業関連キーワードのチェック（必須条件）- タイトル・著者・概要で判定
-  let hasAgriKeyword = false;
-  for (const keyword of AGRI_REQUIRED_KEYWORDS) {
-    if (scoringText.includes(keyword.toLowerCase())) {
-      hasAgriKeyword = true;
-      break;
-    }
-  }
-
-  // 関連キーワード（農業・地方創生・メタバース・Web3・生成AI）がない場合はスコアを下げる
-  if (!hasAgriKeyword) {
-    score -= 10; // ペナルティ（関連テーマ外の書籍を抑制）
-    matchedCategories.add('関連キーワードなし');
+  // 農業・Web3・生成AIなど、事業テーマとの明示的接続がある本だけ対象にする
+  const hasStrictAgriKeyword = textIncludesAny(scoringText, AGRI_STRICT_REQUIRED_KEYWORDS);
+  if (!hasStrictAgriKeyword) {
+    return { score: -1, categories: ['関連テーマ外'] };
   }
 
   // カテゴリ別スコアリング（タイトル・著者・概要のみで判定、出版社名は除外）
@@ -1979,10 +1930,417 @@ function scoreBook(book) {
   checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス・政策', 3);
   checkKeywords(BUZZ_KEYWORDS, 'バズワード', 2);
 
+  const hasCoreDomainCategory =
+    matchedCategories.has('コア農業') ||
+    matchedCategories.has('技術革新') ||
+    matchedCategories.has('消費者体験') ||
+    matchedCategories.has('社会課題') ||
+    matchedCategories.has('ビジネス・政策');
+
+  if (!hasCoreDomainCategory) {
+    return { score: -1, categories: ['書評対象外'] };
+  }
+
   return {
     score,
     categories: Array.from(matchedCategories)
   };
+}
+
+const REVIEW_THEME_DEFINITIONS = [
+  {
+    label: 'ビジネス・経営',
+    points: 12,
+    keywords: [
+      '事業承継', '経営', '経営者', '社長', '起業', '起業家', 'マネジメント', '組織',
+      '組織運営', '意思決定', 'リーダーシップ', '後継者', '再起', '再生', 'リブート',
+      '中小企業', '会社経営', '経営学', 'チェックリスト'
+    ]
+  },
+  {
+    label: 'AI時代論・生成AI実践',
+    points: 10,
+    keywords: [
+      '生成ai', 'chatgpt', 'copilot', 'claude', 'gemini', 'llm', 'gpt',
+      'aiエージェント', '人工知能', 'ai活用', 'ai導入', '業務改善', '自動化',
+      'プロンプト', 'ai実務'
+    ]
+  },
+  {
+    label: '農業・食・地域',
+    points: 8,
+    keywords: [
+      '農業', '農家', '農業経営', '一次産業', '農協', '食料', '食', '食と農',
+      'フードテック', '地方創生', '地域活性化', 'ローカル', '地域', 'スマート農業',
+      '農林水産'
+    ]
+  },
+  {
+    label: 'Web3・トークン経済',
+    points: 8,
+    keywords: [
+      'web3', 'ブロックチェーン', 'nft', 'dao', 'defi', 'トークン',
+      'トークンエコノミー', 'ステーブルコイン', '暗号資産', '仮想通貨',
+      'スマートコントラクト', 'cbdc', 'rwa', 'コミュニティトークン'
+    ]
+  },
+  {
+    label: 'マーケティング・ブランド',
+    points: 7,
+    keywords: [
+      'マーケティング', 'ブランド', 'ブランディング', 'コミュニティマーケティング',
+      'キャラクターマーケティング', '推し経済', 'ファンベース', 'コミュニティ',
+      'sns', '広報', '広告', 'ポジショニング'
+    ]
+  },
+  {
+    label: '心理・依存・行動経済',
+    points: 7,
+    keywords: [
+      '心理', '依存', '依存症', 'ドーパミン', 'ギャンブル', '行動経済学',
+      '脳', '中毒', '習慣', 'バイアス', 'セルフコントロール', '欲望', '認知'
+    ]
+  },
+  {
+    label: 'お金・投資・経済',
+    points: 6,
+    keywords: [
+      '投資', '資産形成', 'お金', '金融', '証券', '株式', '経済',
+      '世界経済', '日本経済', 'マクロ経済', 'インフレ', '金利', '資本主義'
+    ]
+  },
+  {
+    label: '小説・物語',
+    points: 5,
+    keywords: [
+      '小説', '物語', 'ビジネス小説', '経済小説', '社会派', '長編', '短編',
+      'フィクション', 'ミステリ', 'サスペンス'
+    ]
+  }
+];
+
+const REVIEW_HIGH_ENGAGEMENT_KEYWORDS = [
+  '事業承継', '後継者', '経営者', '社長', 'つまずく', '失格', '孤独',
+  '依存', '依存症', 'ギャンブル', 'ドーパミン', '脳', '中毒', '弱さ',
+  '危機', '判断', '再起', '再生'
+];
+
+const REVIEW_PRIORITY_HOOK_KEYWORDS = [
+  '事業承継', '後継者', '社長', '起業', '再起', '生成ai', 'chatgpt', 'copilot',
+  '農業経営', '地方創生', '食と農', 'ステーブルコイン', 'dao', 'トークンエコノミー',
+  'コミュニティマーケティング', '推し経済', '行動経済学', '依存', 'ドーパミン',
+  'ギャンブル', '日本経済', '世界経済', 'ビジネス小説', '経済小説'
+];
+
+const REVIEW_TARGET_EXCLUSION_KEYWORDS = [
+  '試験対策', '問題集', 'ワークブック', '一問一答', '予想模試', '最短合格',
+  '絶対合格', '要点解説テキスト', '対策標準テキスト', 'スマホドリル付き',
+  '初心者講習', '無料cbt', '図解入門業界研究', '図解入門よくわかる',
+  'スタートガイド', '養成講座'
+];
+
+const REVIEW_PRACTICAL_APPLICATION_KEYWORDS = [
+  '実践', '実務', '現場', '導入', '活用', '業務改善', 'ケーススタディ',
+  '事例', 'ノウハウ', '戦略', '仕組み化', '運営'
+];
+
+const REVIEW_SERIES_FRIENDLY_KEYWORDS = [
+  '未来', '予測', '2030', '2034', '2027', '世界経済', '大転換',
+  '地政学', '比較', '続編', '続', '大全', '教科書', '戦略'
+];
+
+const REVIEW_SELF_CONNECTION_KEYWORDS = [
+  'copilot', 'chatgpt', '生成ai', '農業ai', '農業', 'web3', 'nft',
+  'dao', 'トークンエコノミー', 'コミュニティ', '推し経済'
+];
+
+const REVIEW_PV_KEYWORDS = [
+  '生成ai', 'chatgpt', 'copilot', 'claude', 'gemini', 'aiエージェント'
+];
+
+const REVIEW_STORY_LEARNING_KEYWORDS = [
+  'ビジネス小説', '経済小説', '企業小説', '社会派', '物語'
+];
+
+const REVIEW_SEARCH_AXES = [
+  { label: 'ビジネス・経営', keywords: ['事業承継', '経営', '起業'] },
+  { label: 'AI時代論・生成AI実践', keywords: ['生成AI', 'AI活用', 'AI 業務改善'] },
+  { label: '農業・食・地域', keywords: ['農業経営', '地方創生', '食と農'] },
+  { label: 'Web3・トークン経済', keywords: ['ステーブルコイン', 'Web3', 'DAO'] },
+  { label: 'マーケティング・ブランド', keywords: ['コミュニティマーケティング', 'ブランド戦略', '推し経済'] },
+  { label: '心理・依存・行動経済', keywords: ['行動経済学', '依存', 'ドーパミン'] },
+  { label: 'お金・投資・経済', keywords: ['日本経済', '投資', '世界経済'] },
+  { label: '小説・物語', keywords: ['ビジネス小説', '経済小説', '社会派 小説'] }
+];
+
+const POPULAR_REVIEW_SEARCH_KEYWORDS = [
+  '事業承継',
+  '経営',
+  '起業',
+  '生成AI',
+  'AI活用',
+  'AI 業務改善',
+  '農業',
+  '農業経営',
+  '地方創生',
+  '食と農',
+  'Web3',
+  'ステーブルコイン',
+  'DAO',
+  'トークンエコノミー',
+  'コミュニティマーケティング',
+  'ブランド戦略',
+  '推し経済',
+  '行動経済学',
+  '依存',
+  'ドーパミン',
+  '投資',
+  '日本経済',
+  'ビジネス小説',
+  '経済小説'
+];
+
+const POPULAR_BOOK_MIN_SCORE = 18;
+const POPULAR_BOOK_FALLBACK_MIN_SCORE = 12;
+const AGRI_NEW_BOOK_MIN_SCORE = 12;
+
+const AGRI_STRICT_REQUIRED_KEYWORDS = [
+  '農業', '農家', '農業経営', '農協', '農林水産', '一次産業', 'スマート農業',
+  'アグリテック', 'agritech', 'farmtech', 'フードテック', '食と農', '地方創生',
+  '地域活性化', '地域dx', 'ローカルdx', 'web3', 'ブロックチェーン', 'nft', 'dao',
+  'defi', 'ステーブルコイン', 'トークンエコノミー', '生成ai', 'chatgpt', 'copilot',
+  'claude', 'gemini', 'llm', 'aiエージェント', 'ai活用', 'ai導入', 'ai実務'
+];
+
+function textIncludesAny(text, keywords) {
+  return keywords.some(keyword => text.includes(keyword.toLowerCase()));
+}
+
+function countKeywordMatches(text, keywords) {
+  return keywords.reduce((count, keyword) => {
+    return count + (text.includes(keyword.toLowerCase()) ? 1 : 0);
+  }, 0);
+}
+
+function uniqueKeywords(keywords, limit = keywords.length) {
+  return Array.from(new Set((keywords || []).filter(Boolean))).slice(0, limit);
+}
+
+function getReviewThemeSearchKeywords(maxKeywords = 12) {
+  const result = [];
+  let depth = 0;
+
+  while (result.length < maxKeywords) {
+    let added = false;
+
+    for (const axis of REVIEW_SEARCH_AXES) {
+      const keyword = axis.keywords[depth];
+      if (keyword && !result.includes(keyword)) {
+        result.push(keyword);
+        added = true;
+        if (result.length >= maxKeywords) {
+          break;
+        }
+      }
+    }
+
+    if (!added) {
+      break;
+    }
+
+    depth++;
+  }
+
+  return result;
+}
+
+function normalizeRakutenSalesDate(salesDate) {
+  if (!salesDate) return '';
+
+  const normalized = salesDate
+    .replace(/-/g, '')
+    .replace(/\//g, '')
+    .replace(/年|月/g, '')
+    .replace(/日.*$/, '')
+    .replace(/頃/, '')
+    .trim();
+
+  if (normalized.length < 8) {
+    return normalized;
+  }
+
+  const year = parseInt(normalized.substring(0, 4), 10);
+  const month = parseInt(normalized.substring(4, 6), 10);
+  const day = parseInt(normalized.substring(6, 8), 10);
+  const currentYear = new Date().getFullYear();
+
+  if (
+    Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day) ||
+    year < 2000 || year > currentYear + 2 ||
+    month < 1 || month > 12 ||
+    day < 1 || day > 31
+  ) {
+    return '';
+  }
+
+  const date = new Date(year, month - 1, day);
+  if (isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${year}${String(month).padStart(2, '0')}${String(day).padStart(2, '0')}`;
+}
+
+function buildBookIdentityKey(book) {
+  const isbn = (book.summary?.isbn || '').trim();
+  if (isbn) return `isbn:${isbn}`;
+
+  const title = (book.summary?.title || '').trim().toLowerCase();
+  const author = (book.summary?.author || '').trim().toLowerCase();
+  if (!title) return '';
+  return `meta:${title}::${author}`;
+}
+
+function dedupeBooksByIdentity(books) {
+  const bookMap = new Map();
+
+  for (const book of books) {
+    const key = buildBookIdentityKey(book);
+    if (!key) continue;
+
+    if (!bookMap.has(key)) {
+      bookMap.set(key, book);
+      continue;
+    }
+
+    const existing = bookMap.get(key);
+    const existingScore =
+      (existing.summary?.cover ? 1 : 0) +
+      (existing.onix?.CollateralDetail?.TextContent?.[0]?.Text ? 1 : 0) +
+      (existing.summary?.pubdate ? 1 : 0);
+    const currentScore =
+      (book.summary?.cover ? 1 : 0) +
+      (book.onix?.CollateralDetail?.TextContent?.[0]?.Text ? 1 : 0) +
+      (book.summary?.pubdate ? 1 : 0);
+
+    if (currentScore > existingScore) {
+      bookMap.set(key, book);
+    }
+  }
+
+  return Array.from(bookMap.values());
+}
+
+function filterRakutenAbnormalFutureBooks(books, logLabel) {
+  const maxFutureDate = new Date();
+  maxFutureDate.setMonth(maxFutureDate.getMonth() + 6);
+
+  const validBooks = [];
+  const excludedSamples = [];
+  let excludedCount = 0;
+
+  for (const book of books) {
+    const pubdate = book.summary?.pubdate;
+    if (!pubdate || pubdate.length < 8) {
+      validBooks.push(book);
+      continue;
+    }
+
+    try {
+      const year = parseInt(pubdate.substring(0, 4), 10);
+      const month = parseInt(pubdate.substring(4, 6), 10) - 1;
+      const day = parseInt(pubdate.substring(6, 8), 10);
+      const bookDate = new Date(year, month, day);
+
+      if (isNaN(bookDate.getTime())) {
+        continue;
+      }
+
+      if (bookDate > maxFutureDate) {
+        excludedCount++;
+        if (excludedSamples.length < 5) {
+          excludedSamples.push(`${book.summary.title} (${pubdate})`);
+        }
+        continue;
+      }
+
+      validBooks.push(book);
+    } catch {
+      validBooks.push(book);
+    }
+  }
+
+  if (excludedCount > 0) {
+    console.log(`[New Book] ${logLabel} 異常な未来日付を${excludedCount}件除外（例: ${excludedSamples.join(' / ')}）`);
+  }
+
+  return validBooks;
+}
+
+async function fetchGoogleBooksByKeywords(keywords, logPrefix, delayMs = 1000) {
+  const allBooks = [];
+  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  let serviceUnavailableCount = 0;
+
+  for (const keyword of keywords) {
+    try {
+      const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
+        params: {
+          q: keyword,
+          langRestrict: 'ja',
+          orderBy: 'newest',
+          maxResults: 20,
+          printType: 'books'
+        },
+        timeout: 10000
+      });
+
+      if (response.data && response.data.items && response.data.items.length > 0) {
+        const books = response.data.items.map(item => {
+          const volumeInfo = item.volumeInfo;
+          const industryIdentifiers = volumeInfo.industryIdentifiers || [];
+          const isbn13 = industryIdentifiers.find(id => id.type === 'ISBN_13')?.identifier || '';
+          const isbn10 = industryIdentifiers.find(id => id.type === 'ISBN_10')?.identifier || '';
+
+          return {
+            source: 'google',
+            summary: {
+              title: volumeInfo.title || '',
+              author: (volumeInfo.authors || []).join(', '),
+              publisher: volumeInfo.publisher || '',
+              isbn: isbn13 || isbn10,
+              pubdate: volumeInfo.publishedDate ? volumeInfo.publishedDate.replace(/-/g, '') : '',
+              cover: volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail || ''
+            },
+            onix: {
+              CollateralDetail: {
+                TextContent: volumeInfo.description ? [{
+                  TextType: '03',
+                  Text: volumeInfo.description
+                }] : []
+              }
+            },
+            googleUrl: volumeInfo.infoLink || ''
+          };
+        });
+        allBooks.push(...books);
+      }
+    } catch (error) {
+      if (error.response && error.response.status === 503) {
+        serviceUnavailableCount++;
+        if (serviceUnavailableCount >= 2) {
+          console.log(`[${logPrefix}] Google Books APIが503のため、残りキーワード取得をスキップします`);
+          break;
+        }
+      } else {
+        console.log(`[${logPrefix}] Google API (${keyword}) エラー:`, error.message);
+      }
+    }
+
+    await delay(delayMs);
+  }
+
+  return dedupeBooksByIdentity(allBooks);
 }
 
 /**
@@ -2052,84 +2410,79 @@ function scorePopularBook(book) {
     }
   }
 
-  // 一般新刊用のカテゴリ別スコアリング（タイトル・著者・概要で判定）
-  const checkKeywords = (keywords, categoryName, points) => {
-    for (const keyword of keywords) {
-      if (scoringText.includes(keyword.toLowerCase())) {
-        score += points;
-        matchedCategories.add(categoryName);
-        break;
-      }
+  for (const keyword of REVIEW_TARGET_EXCLUSION_KEYWORDS) {
+    if (scoringText.includes(keyword.toLowerCase())) {
+      return { score: -1, categories: ['書評向きでない形式本'] };
     }
-  };
+  }
 
-  // ビジネス・自己啓発（高スコア）
-  const businessKeywords = ['ビジネス', '経営', 'マネジメント', 'リーダーシップ', '起業',
-    '自己啓発', '成功', '仕事術', 'キャリア', '働き方', '投資', '資産', '経済学',
-    'マーケティング', '戦略', 'イノベーション', 'スタートアップ'];
-  checkKeywords(businessKeywords, 'ビジネス書', 8);
+  const matchedAxes = [];
+  for (const theme of REVIEW_THEME_DEFINITIONS) {
+    const matchCount = countKeywordMatches(scoringText, theme.keywords);
+    if (matchCount > 0) {
+      score += theme.points + Math.min(matchCount - 1, 3);
+      matchedAxes.push(theme.label);
+      matchedCategories.add(theme.label);
+    }
+  }
 
-  // 文芸・純文学（高スコア）
-  const literaryKeywords = ['直木賞', '芥川賞', '本屋大賞', '文学賞', '受賞作',
-    '純文学', '文藝', '新潮', '文春', '講談社文庫', '角川文庫'];
-  checkKeywords(literaryKeywords, '文芸・小説', 10);
-
-  // 小説（一般）
-  const novelKeywords = ['小説', '物語', '長編', '短編', '文庫', 'ミステリ', '推理',
-    'サスペンス', 'ホラー', '恋愛小説', '時代小説', '歴史小説'];
-  checkKeywords(novelKeywords, '小説', 7);
-
-  // 話題性・ベストセラー関連（最高スコア）
-  const trendingKeywords = ['ベストセラー', '大賞', '受賞', '映画化',
-    'ドラマ化', '累計', '万部', '注目', 'テレビ', 'メディア'];
-  checkKeywords(trendingKeywords, '話題の本', 12);
-
-  // 農業・一次産業（高スコア）
-  const agriKeywords = ['農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農',
-    '栽培', '収穫', '品種', '一次産業', '農林水産', 'アグリ', 'フードテック',
-    'スマート農業', '食料', '有機農業', '水産業'];
-  checkKeywords(agriKeywords, '農業・一次産業', 9);
-
-  // 地方創生・地域活性化（高スコア）
-  const localRevitalizationKeywords = ['地方創生', '地域活性化', '地域振興', '地方移住',
-    '地域DX', 'ローカルDX', '中山間地域', '過疎', '関係人口', '地域おこし',
-    'まちづくり', '地域課題', '移住', '田舎', 'ふるさと', 'コミュニティ'];
-  checkKeywords(localRevitalizationKeywords, '地方創生', 9);
-
-  // メタバース・XR・バーチャル（高スコア）
-  const metaverseKeywords = ['メタバース', 'バーチャル', 'XR', 'VR', 'AR', 'MR',
-    'デジタルツイン', 'アバター', 'ゲーム', '仮想空間', 'バーチャルリアリティ'];
-  checkKeywords(metaverseKeywords, 'メタバース', 8);
-
-  // Web3・ブロックチェーン（高スコア）
-  const web3Keywords = ['Web3', 'ブロックチェーン', 'NFT', 'DAO', 'DeFi', '分散型',
-    'トークン', '暗号資産', '仮想通貨', 'スマートコントラクト', 'クリプト',
-    'ステーブルコイン', 'CBDC'];
-  checkKeywords(web3Keywords, 'Web3', 8);
-
-  // 生成AI・AI活用（最高スコア）
-  const genAiKeywords = ['生成AI', 'ChatGPT', 'LLM', 'プロンプト', 'AIエージェント',
-    'Copilot', 'Claude', 'Gemini', '人工知能', 'AI活用', 'AI導入', 'AIビジネス',
-    '機械学習', 'ディープラーニング'];
-  checkKeywords(genAiKeywords, '生成AI', 10);
-
-  // 実用書・専門書
-  const practicalKeywords = ['入門', '図解', '完全ガイド', '教科書',
-    '実践', 'ノウハウ', '解説', '専門', '技術', '科学'];
-  checkKeywords(practicalKeywords, '実用書', 6);
-
-  // エッセイ・ノンフィクション
-  const essayKeywords = ['エッセイ', 'ノンフィクション', '伝記', '回顧録',
-    '体験記', 'ルポ', 'ドキュメント', '自伝'];
-  checkKeywords(essayKeywords, 'エッセイ', 5);
-
-  // 新書（信頼性の高いジャンル）
-  const shinshoKeywords = ['新書', '岩波', '中公', 'ちくま', '講談社現代'];
-  checkKeywords(shinshoKeywords, '新書', 7);
-
-  // スコアが0の場合は除外（カテゴリにマッチしない本は推薦しない）
-  if (score === 0) {
+  if (matchedAxes.length === 0) {
     return { score: -1, categories: ['カテゴリ外'] };
+  }
+
+  if (!textIncludesAny(scoringText, REVIEW_PRIORITY_HOOK_KEYWORDS) && matchedAxes.length < 2) {
+    return { score: -1, categories: ['書評対象外'] };
+  }
+
+  if (matchedAxes.length >= 2) {
+    score += 4;
+    matchedCategories.add('複合テーマ');
+  }
+
+  if (matchedAxes.length >= 3) {
+    score += 3;
+    matchedCategories.add('多面的');
+  }
+
+  const hasHighEngagementSignal = textIncludesAny(scoringText, REVIEW_HIGH_ENGAGEMENT_KEYWORDS);
+  if (hasHighEngagementSignal) {
+    score += 6;
+    matchedCategories.add('高スキ率要素');
+  }
+
+  const hasBusinessOrPsychologyAxis =
+    matchedAxes.includes('ビジネス・経営') || matchedAxes.includes('心理・依存・行動経済');
+  if (hasHighEngagementSignal && hasBusinessOrPsychologyAxis) {
+    score += 4;
+    matchedCategories.add('人間理解');
+  }
+
+  if (textIncludesAny(scoringText, REVIEW_PRACTICAL_APPLICATION_KEYWORDS)) {
+    score += 4;
+    matchedCategories.add('実務直結');
+  }
+
+  if (textIncludesAny(scoringText, REVIEW_SERIES_FRIENDLY_KEYWORDS)) {
+    score += 4;
+    matchedCategories.add('シリーズ化向き');
+  }
+
+  if (textIncludesAny(scoringText, REVIEW_SELF_CONNECTION_KEYWORDS)) {
+    score += 3;
+    matchedCategories.add('自著接続');
+  }
+
+  if (textIncludesAny(scoringText, REVIEW_PV_KEYWORDS)) {
+    score += 2;
+    matchedCategories.add('PV型');
+  }
+
+  if (
+    matchedAxes.includes('小説・物語') &&
+    textIncludesAny(scoringText, REVIEW_STORY_LEARNING_KEYWORDS)
+  ) {
+    score += 3;
+    matchedCategories.add('物語で学べる');
   }
 
   return {
@@ -2189,6 +2542,11 @@ async function postDailyNewBook() {
           continue;
         }
 
+        if (totalScore < AGRI_NEW_BOOK_MIN_SCORE) {
+          console.log(`[New Book] 農業技術関連の基準未満で除外: ${book.summary.title} (スコア: ${totalScore}, カテゴリ: ${categories.join(', ')})`);
+          continue;
+        }
+
         availableBooks.push({
           book,
           score: totalScore,
@@ -2201,16 +2559,20 @@ async function postDailyNewBook() {
 
     if (availableBooks.length === 0) {
       console.log('[New Book] 投稿可能な未投稿の書籍がありませんでした');
-      // 投稿済みでも適切なスコアの書籍を1つ投稿（確実に1日1冊投稿するため）
-      for (const book of books) {
-        const { score: keywordScore, categories } = scoreBook(book);
-        if (keywordScore < 0) continue; // 除外対象はスキップ
+      console.log('[New Book] 農業技術関連で候補不足のため、8テーマ軸の書評候補を追加検索します');
+
+      const reviewBooks = await fetchPopularBooks();
+      for (const book of reviewBooks) {
+        const isbn = book.summary.isbn;
+        if (!isbn || postedBookIsbns.has(isbn)) continue;
+
+        const { score: keywordScore, categories } = scorePopularBook(book);
+        if (keywordScore < 0) continue;
 
         const freshnessBonus = calculateFreshnessBonus(book);
         const totalScore = keywordScore + freshnessBonus;
-        if (totalScore <= 0) continue; // 低スコアもスキップ
+        if (totalScore < POPULAR_BOOK_MIN_SCORE) continue;
 
-        console.log('[New Book] 投稿済み書籍から適切な1冊を再投稿します');
         availableBooks.push({
           book,
           score: totalScore,
@@ -2218,11 +2580,10 @@ async function postDailyNewBook() {
           freshnessBonus,
           categories
         });
-        break;
       }
 
       if (availableBooks.length === 0) {
-        console.log('[New Book] 適切な書籍が見つかりませんでした。投稿をスキップします。');
+        console.log('[New Book] 8テーマ軸まで広げても適切な書籍が見つかりませんでした。投稿をスキップします。');
         return;
       }
     }
@@ -2401,6 +2762,11 @@ async function postDailyPopularBook() {
           continue;
         }
 
+        if (totalScore < POPULAR_BOOK_MIN_SCORE) {
+          console.log(`[Popular Book] 書評向け基準未満で除外: ${book.summary.title} (スコア: ${totalScore})`);
+          continue;
+        }
+
         availableBooks.push({
           book,
           score: totalScore,
@@ -2420,7 +2786,7 @@ async function postDailyPopularBook() {
 
         const freshnessBonus = calculateFreshnessBonus(book);
         const totalScore = keywordScore + freshnessBonus;
-        if (totalScore <= 0) continue; // 低スコアもスキップ
+        if (totalScore < POPULAR_BOOK_FALLBACK_MIN_SCORE) continue; // 最低限の書評対象だけ許可
 
         console.log('[Popular Book] 投稿済み書籍から適切な1冊を再投稿します');
         availableBooks.push({
@@ -2655,70 +3021,28 @@ async function fetchAgriTechBooks() {
     'Gemini 活用'
   ];
 
+  const rakutenKeywords = uniqueKeywords(agriTechKeywords, 10);
+  const salesKeywords = rakutenKeywords.slice(0, 6);
+  const googleKeywords = rakutenKeywords.slice(0, 6);
+
   const allBooks = [];
 
   // === 1. 楽天Books API（レートリミット対策版 - 発売日順）から取得 ===
   console.log('[AgriTech Books] 楽天Books APIから取得中...');
-  const rakutenBooks = await fetchNewBooksFromRakutenEnhanced(agriTechKeywords);
+  const rakutenBooks = await fetchNewBooksFromRakutenEnhanced(rakutenKeywords);
   allBooks.push(...rakutenBooks);
   console.log(`[AgriTech Books] 楽天（発売日順）から${rakutenBooks.length}件取得`);
 
   // === 1.5. 楽天Books API（売上順）から追加取得 ===
   console.log('[AgriTech Books] 楽天Books API（売上順）から取得中...');
-  const salesBooks = await fetchNewBooksFromRakutenBySales(agriTechKeywords);
+  const salesBooks = await fetchNewBooksFromRakutenBySales(salesKeywords);
   allBooks.push(...salesBooks);
   console.log(`[AgriTech Books] 楽天（売上順）から${salesBooks.length}件取得`);
 
   // === 2. Google Books APIから取得 ===
   console.log('[AgriTech Books] Google Books APIから取得中...');
-  for (const keyword of agriTechKeywords) {
-    try {
-      const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
-        params: {
-          q: keyword,
-          langRestrict: 'ja',
-          orderBy: 'newest',
-          maxResults: 20,
-          printType: 'books'
-        },
-        timeout: 10000
-      });
-
-      if (response.data && response.data.items && response.data.items.length > 0) {
-        const books = response.data.items.map(item => {
-          const volumeInfo = item.volumeInfo;
-          const industryIdentifiers = volumeInfo.industryIdentifiers || [];
-          const isbn13 = industryIdentifiers.find(id => id.type === 'ISBN_13')?.identifier || '';
-          const isbn10 = industryIdentifiers.find(id => id.type === 'ISBN_10')?.identifier || '';
-
-          return {
-            source: 'google',
-            summary: {
-              title: volumeInfo.title || '',
-              author: (volumeInfo.authors || []).join(', '),
-              publisher: volumeInfo.publisher || '',
-              isbn: isbn13 || isbn10,
-              pubdate: volumeInfo.publishedDate ? volumeInfo.publishedDate.replace(/-/g, '') : '',
-              cover: volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail || ''
-            },
-            onix: {
-              CollateralDetail: {
-                TextContent: volumeInfo.description ? [{
-                  TextType: '03',
-                  Text: volumeInfo.description
-                }] : []
-              }
-            },
-            googleUrl: volumeInfo.infoLink || ''
-          };
-        });
-        allBooks.push(...books);
-      }
-    } catch (error) {
-      console.log(`[AgriTech Books] Google API (${keyword}) エラー:`, error.message);
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
+  const googleBooks = await fetchGoogleBooksByKeywords(googleKeywords, 'AgriTech Books');
+  allBooks.push(...googleBooks);
 
   // === 3. NDL Search API（国立国会図書館）から取得 ===
   // 注: NDL APIはXMLパースの問題があるため一時的に無効化
@@ -2783,100 +3107,33 @@ async function fetchAgriTechBooks() {
 async function fetchPopularBooks() {
   console.log('[Popular Books] 一般新刊書籍を取得中...');
 
-  // 一般新刊向けキーワード（ビジネス書・小説・農業・地方創生・メタバース・Web3・生成AI）
-  const popularKeywords = [
-    // ビジネス書・自己啓発
-    'ビジネス書',
-    '自己啓発',
-    '経済',
-    '起業',
-    // 小説・文芸
-    '小説',
-    '直木賞',
-    '本屋大賞',
-    // 農業・一次産業
-    '農業',
-    '一次産業',
-    // 地方創生
-    '地方創生',
-    '地域活性化',
-    // メタバース
-    'メタバース',
-    'バーチャル',
-    // Web3・ブロックチェーン
-    'Web3',
-    'ブロックチェーン',
-    'NFT',
-    // 生成AI
-    '生成AI',
-    'ChatGPT'
-  ];
+  // 書評で取り上げやすい8テーマ軸に寄せた検索キーワード
+  const popularKeywords = uniqueKeywords([
+    ...getReviewThemeSearchKeywords(12),
+    ...POPULAR_REVIEW_SEARCH_KEYWORDS
+  ], 12);
+  const rakutenKeywords = popularKeywords.slice(0, 8);
+  const googleKeywords = popularKeywords.slice(0, 6);
 
   const allBooks = [];
 
   // === 1. 楽天Books API（レートリミット対策版 - 発売日順）から取得 ===
   console.log('[Popular Books] 楽天Books APIから取得中...');
-  const rakutenBooks = await fetchNewBooksFromRakutenEnhanced(popularKeywords);
+  const rakutenBooks = await fetchNewBooksFromRakutenEnhanced(rakutenKeywords);
   allBooks.push(...rakutenBooks);
   console.log(`[Popular Books] 楽天（発売日順）から${rakutenBooks.length}件取得`);
 
   // === 1.5. 楽天Books API（売上順）から追加取得 ===
   // 発売日順だと日付未定の書籍が多いため、売上順でも取得して候補を増やす
   console.log('[Popular Books] 楽天Books API（売上順）から取得中...');
-  const salesBooks = await fetchNewBooksFromRakutenBySales(popularKeywords);
+  const salesBooks = await fetchNewBooksFromRakutenBySales(rakutenKeywords);
   allBooks.push(...salesBooks);
   console.log(`[Popular Books] 楽天（売上順）から${salesBooks.length}件取得`);
 
   // === 2. Google Books APIから取得 ===
   console.log('[Popular Books] Google Books APIから取得中...');
-  for (const keyword of popularKeywords) {
-    try {
-      const response = await axios.get('https://www.googleapis.com/books/v1/volumes', {
-        params: {
-          q: keyword,
-          langRestrict: 'ja',
-          orderBy: 'newest',
-          maxResults: 20,
-          printType: 'books'
-        },
-        timeout: 10000
-      });
-
-      if (response.data && response.data.items && response.data.items.length > 0) {
-        const books = response.data.items.map(item => {
-          const volumeInfo = item.volumeInfo;
-          const industryIdentifiers = volumeInfo.industryIdentifiers || [];
-          const isbn13 = industryIdentifiers.find(id => id.type === 'ISBN_13')?.identifier || '';
-          const isbn10 = industryIdentifiers.find(id => id.type === 'ISBN_10')?.identifier || '';
-
-          return {
-            source: 'google',
-            summary: {
-              title: volumeInfo.title || '',
-              author: (volumeInfo.authors || []).join(', '),
-              publisher: volumeInfo.publisher || '',
-              isbn: isbn13 || isbn10,
-              pubdate: volumeInfo.publishedDate ? volumeInfo.publishedDate.replace(/-/g, '') : '',
-              cover: volumeInfo.imageLinks?.thumbnail || volumeInfo.imageLinks?.smallThumbnail || ''
-            },
-            onix: {
-              CollateralDetail: {
-                TextContent: volumeInfo.description ? [{
-                  TextType: '03',
-                  Text: volumeInfo.description
-                }] : []
-              }
-            },
-            googleUrl: volumeInfo.infoLink || ''
-          };
-        });
-        allBooks.push(...books);
-      }
-    } catch (error) {
-      console.log(`[Popular Books] Google API (${keyword}) エラー:`, error.message);
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
+  const googleBooks = await fetchGoogleBooksByKeywords(googleKeywords, 'Popular Books');
+  allBooks.push(...googleBooks);
 
   // === 3. NDL Search API（国立国会図書館）から取得 ===
   // 注: NDL APIはXMLパースの問題があるため一時的に無効化
@@ -3663,16 +3920,16 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 農業・Web3関連新刊紹介タスク（毎日朝10時） ===
-  cron.schedule('0 10 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('0 10 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyNewBook();
   }, {
     timezone: "Asia/Tokyo"
   });
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
-  cron.schedule('10 10 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  // cron.schedule('10 10 * * *', async () => {
+    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
     timezone: "Asia/Tokyo"
