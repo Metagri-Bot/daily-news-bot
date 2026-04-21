@@ -3920,16 +3920,16 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 農業・Web3関連新刊紹介タスク（毎日朝10時） ===
-  // cron.schedule('0 10 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('0 10 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyNewBook();
   }, {
     timezone: "Asia/Tokyo"
   });
 
   // === 一般新刊紹介タスク（毎日朝10時） ===
-  // cron.schedule('10 10 * * *', async () => {
-    cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  cron.schedule('10 10 * * *', async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
   }, {
     timezone: "Asia/Tokyo"
