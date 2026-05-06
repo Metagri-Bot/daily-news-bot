@@ -1182,6 +1182,186 @@ async function fetchNewBooksFromHanmoto() {
 }
 
 /**
+ * 版元ドットコム新刊ページ（https://www01.hanmoto.com/bd/shinkan）を直接スクレイピングし、
+ * 興味キーワードに合致する書籍だけを抽出する。
+ * 取得したISBNを openBD /v1/get に投げて書影・要約・著者などを補完する。
+ *
+ * @param {Object} [opts]
+ * @param {number} [opts.maxPages=3]            取得するページ数
+ * @param {number} [opts.requestIntervalMs=800] ページ間スリープ（ms）
+ * @param {Array<string>} [opts.keywords]       タイトル/著者/出版社のいずれかに含まれていれば興味あり扱いとするキーワード
+ * @returns {Promise<Array>} 興味キーワードに合致した新刊書籍のリスト
+ */
+async function fetchNewBooksFromHanmotoScraping(opts = {}) {
+  const {
+    maxPages = 3,
+    requestIntervalMs = 800,
+    keywords = [
+      // 農業・アグリテック・一次産業
+      '農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '圃場',
+      'スマート農業', 'アグリ', 'アグリテック', 'フードテック', '精密農業',
+      '一次産業', '農林水産', 'リジェネラティブ', '有機', 'ゲノム編集',
+      // 地方創生・地域活性化
+      '地方創生', '地域活性化', '地域DX', 'ローカルDX',
+      // Web3・ブロックチェーン
+      'メタバース', 'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'トークン',
+      // 生成AI・最新AI
+      '生成AI', 'ChatGPT', 'LLM', 'AI活用', 'AIエージェント', 'Claude', 'Gemini', 'DX'
+    ]
+  } = opts;
+
+  console.log(`[New Book] 版元ドットコム新刊ページをスクレイピング中... (maxPages=${maxPages})`);
+
+  const baseUrl = 'https://www01.hanmoto.com/bd/shinkan/';
+  const headers = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3'
+  };
+  const lowerKeywords = keywords.map(k => k.toLowerCase());
+
+  // 興味あり判定: タイトル/著者/出版社のいずれかに該当
+  const looksInteresting = (text) => {
+    if (!text) return false;
+    const lower = String(text).toLowerCase();
+    return lowerKeywords.some(k => lower.includes(k));
+  };
+
+  const candidates = new Map(); // isbn13 -> { title, publisher, pubdate, author }
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  for (let page = 1; page <= maxPages; page++) {
+    // 1ページ目はクエリ無し、2ページ目以降は ?page=N を試す（サイト側で未対応なら同じHTMLが返るため自然に重複除去される）
+    const pageUrl = page === 1 ? baseUrl : `${baseUrl}?page=${page}`;
+
+    try {
+      const { data: html } = await axios.get(pageUrl, { headers, timeout: 15000 });
+      const $ = cheerio.load(html);
+
+      // ISBN詳細ページへのリンクを起点に書籍候補を収集
+      // 版元ドットコムのISBN詳細URLは /bd/isbn/<13桁> 形式
+      const isbnLinks = $('a[href*="/bd/isbn/"]').toArray();
+      let foundOnPage = 0;
+
+      for (const el of isbnLinks) {
+        const $a = $(el);
+        const href = $a.attr('href') || '';
+        const m = href.match(/\/bd\/isbn\/(\d{13})/);
+        if (!m) continue;
+        const isbn = m[1];
+
+        // タイトルはリンクテキスト優先。空ならimgのalt、それでも空なら親要素のテキストを試す
+        let title = $a.text().trim();
+        if (!title) title = ($a.find('img').attr('alt') || '').trim();
+        if (!title) title = $a.parent().text().trim().slice(0, 120);
+
+        // 周辺テキストから出版社・発売日・著者の手がかりを拾う（あくまでヒント。最終的にはopenBDで補完）
+        const contextText = $a.closest('tr, li, div').first().text().replace(/\s+/g, ' ').trim();
+        const publisherHint = (contextText.match(/出版社[:：]?\s*([^\s|｜/／]+)/) || [])[1] || '';
+        const authorHint    = (contextText.match(/著者?[:：]?\s*([^\s|｜/／]+)/)   || [])[1] || '';
+        const pubdateHint   = (contextText.match(/(\d{4})[\/\-年]\s?(\d{1,2})[\/\-月]\s?(\d{1,2})/) || [])
+          .slice(1).join('-');
+
+        // 早期キーワードフィルタ：タイトル＋周辺テキストのいずれかが当たれば候補に残す
+        if (!looksInteresting(`${title} ${authorHint} ${publisherHint} ${contextText}`)) continue;
+
+        if (!candidates.has(isbn)) {
+          candidates.set(isbn, {
+            title,
+            publisher: publisherHint,
+            author: authorHint,
+            pubdate: pubdateHint
+          });
+          foundOnPage++;
+        }
+      }
+
+      console.log(`[New Book] 版元ドットコム p.${page}: ISBN候補=${isbnLinks.length}件 / 興味マッチ=${foundOnPage}件`);
+
+      // 1ページもISBNが取れなかった場合は構造変更/ブロックの可能性が高いので打ち切る
+      if (isbnLinks.length === 0) break;
+    } catch (pageError) {
+      console.log(`[New Book] 版元ドットコム p.${page} 取得エラー:`, pageError.message);
+      break; // ネットワークエラーで以降のページも失敗する可能性が高いので中断
+    }
+
+    if (page < maxPages) await sleep(requestIntervalMs);
+  }
+
+  if (candidates.size === 0) {
+    console.log('[New Book] 版元ドットコム: 興味キーワードに合致する書籍は見つかりませんでした');
+    return [];
+  }
+
+  // openBDで詳細を補完（最大1000件まで一括）
+  const isbns = Array.from(candidates.keys()).slice(0, 1000);
+  const enriched = [];
+  try {
+    const detailResponse = await axios.post('https://api.openbd.jp/v1/get',
+      isbns,
+      { headers: { 'Content-Type': 'application/json' }, timeout: 20000 }
+    );
+
+    if (Array.isArray(detailResponse.data)) {
+      for (let i = 0; i < detailResponse.data.length; i++) {
+        const isbn = isbns[i];
+        const hint = candidates.get(isbn) || {};
+        const book = detailResponse.data[i];
+
+        if (book && book.summary) {
+          // openBDヒット → 標準形式そのまま使用
+          enriched.push({ ...book, source: 'hanmoto' });
+        } else {
+          // openBD未収録でも、スクレイピングで拾った最低限の情報で形式を揃えて残す
+          if (!hint.title) continue;
+          enriched.push({
+            source: 'hanmoto',
+            summary: {
+              title: hint.title,
+              author: hint.author || '',
+              publisher: hint.publisher || '',
+              isbn,
+              pubdate: hint.pubdate ? hint.pubdate.replace(/-/g, '') : '',
+              cover: ''
+            },
+            onix: { CollateralDetail: { TextContent: [] } }
+          });
+        }
+      }
+    }
+  } catch (enrichError) {
+    console.log('[New Book] 版元ドットコム openBD補完エラー:', enrichError.message);
+    // 補完に失敗してもヒントだけで返す（パイプラインを止めない）
+    for (const [isbn, hint] of candidates.entries()) {
+      if (!hint.title) continue;
+      enriched.push({
+        source: 'hanmoto',
+        summary: {
+          title: hint.title,
+          author: hint.author || '',
+          publisher: hint.publisher || '',
+          isbn,
+          pubdate: hint.pubdate ? hint.pubdate.replace(/-/g, '') : '',
+          cover: ''
+        },
+        onix: { CollateralDetail: { TextContent: [] } }
+      });
+    }
+  }
+
+  // openBDで補完したタイトル/著者/出版社で再度キーワード判定（より精度の高い再フィルタ）
+  const finalBooks = enriched.filter(b => {
+    const s = b.summary || {};
+    return looksInteresting(`${s.title || ''} ${s.author || ''} ${s.publisher || ''}`);
+  });
+
+  console.log(`[New Book] 版元ドットコムスクレイピング: 候補${candidates.size}件 → 補完後${enriched.length}件 → 最終${finalBooks.length}件`);
+  return finalBooks;
+}
+
+/**
  * NDL Search API（国立国会図書館サーチ）から新刊情報を取得
  * @param {Array<string>} keywords 検索キーワード
  * @returns {Promise<Array>} 新刊書籍のリスト
@@ -3058,6 +3238,12 @@ async function fetchAgriTechBooks() {
   allBooks.push(...hanmotoBooks);
   console.log(`[AgriTech Books] 版元ドットコムから${hanmotoBooks.length}件取得`);
 
+  // === 4.5. 版元ドットコム新刊ページ（HTMLスクレイピング）から取得 ===
+  console.log('[AgriTech Books] 版元ドットコム新刊ページから取得中...');
+  const hanmotoScrapedBooks = await fetchNewBooksFromHanmotoScraping();
+  allBooks.push(...hanmotoScrapedBooks);
+  console.log(`[AgriTech Books] 版元ドットコム新刊ページから${hanmotoScrapedBooks.length}件取得`);
+
   // === 5. openBDからも取得 ===
   const openBDBooks = await fetchNewBooksFromOpenBD();
   allBooks.push(...openBDBooks);
@@ -3148,6 +3334,19 @@ async function fetchPopularBooks() {
   const hanmotoBooks = await fetchNewBooksFromHanmoto();
   allBooks.push(...hanmotoBooks);
   console.log(`[Popular Books] 版元ドットコムから${hanmotoBooks.length}件取得`);
+
+  // === 4.5. 版元ドットコム新刊ページ（HTMLスクレイピング）から取得 ===
+  // 一般書評向けには書評テーマ系キーワードを興味判定に使う
+  console.log('[Popular Books] 版元ドットコム新刊ページから取得中...');
+  const popularInterestKeywords = uniqueKeywords([
+    ...getReviewThemeSearchKeywords(12),
+    ...POPULAR_REVIEW_SEARCH_KEYWORDS
+  ], 30);
+  const hanmotoScrapedBooks = await fetchNewBooksFromHanmotoScraping({
+    keywords: popularInterestKeywords
+  });
+  allBooks.push(...hanmotoScrapedBooks);
+  console.log(`[Popular Books] 版元ドットコム新刊ページから${hanmotoScrapedBooks.length}件取得`);
 
   console.log(`[Popular Books] 全API合計: ${allBooks.length}件`);
 
