@@ -5,6 +5,7 @@ const OPENAI_API_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 
 // === 【設定】メールアドレス ===
 const OWNER_EMAIL = 'yuichiro.kai@noujoujin.com';
+const AUTOMATION_TIMEZONE = 'Asia/Tokyo';
 
 // === 【設定】配信停止フォームのURL ===
 const UNSUBSCRIBE_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfgeAKfmm5BZI7_jvb9ScygOQlQ6CUT0QqbaNxf4lNGQJrBjg/viewform';
@@ -44,17 +45,61 @@ function onOpen() {
 }
 
 /**
- * 定期実行用の関数（毎日11時にこれを呼ぶ）
+ * 定期実行用の関数（月〜金 10:00〜10:59 JSTにこれを呼ぶ）
  */
 function scheduledDailyDraft() {
+  if (!isWeekdayTestDraftWindow_()) {
+    console.log('scheduledDailyDraft skipped: outside weekday 10:00-10:59 JST window.');
+    return;
+  }
+
   console.log("定期実行：下書き作成を開始します。");
-  generateDraftAndTest(true); // trueを渡して、UI表示をスキップさせる
+  generateDraftAndTest(true);
 }
 
 /**
  * 1. AIで下書きを作り（メルマガ＆X＆カタログ）、自分にテスト送信する機能
  */
-function generateDraftAndTest(isAuto = false) {
+function isWeekdayTestDraftWindow_() {
+  const now = new Date();
+  const dayOfWeek = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'u')); // Mon=1, Sun=7
+  const hour = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'H'));
+  return dayOfWeek >= 1 && dayOfWeek <= 5 && hour === 10;
+}
+
+function setupWeekdayTestDraftTrigger() {
+  deleteTriggersByHandler_('scheduledDailyDraft');
+
+  const weekdays = [
+    ScriptApp.WeekDay.MONDAY,
+    ScriptApp.WeekDay.TUESDAY,
+    ScriptApp.WeekDay.WEDNESDAY,
+    ScriptApp.WeekDay.THURSDAY,
+    ScriptApp.WeekDay.FRIDAY
+  ];
+
+  weekdays.forEach(function(weekday) {
+    ScriptApp.newTrigger('scheduledDailyDraft')
+      .timeBased()
+      .onWeekDay(weekday)
+      .atHour(10)
+      .nearMinute(30)
+      .inTimezone(AUTOMATION_TIMEZONE)
+      .create();
+  });
+
+  console.log('Weekday test draft triggers created: Monday-Friday, 10:00-11:00 JST.');
+}
+
+function deleteTriggersByHandler_(handlerName) {
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === handlerName) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+function generateDraftAndTest(isAuto = false, options = {}) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const draftSheet = ss.getSheetByName('原稿作成');
   const ui = isAuto ? null : SpreadsheetApp.getUi();
@@ -150,13 +195,13 @@ function generateDraftAndTest(isAuto = false) {
     // ★新規：コンテンツカタログに自動追加
     updateContentCatalog(content.catalog, content.subject, articleUrl);
 
-    // ★追加：AI生成完了後に「翌日11時の配信予約」を自動セット
-    if (isAuto) {
+    // テストメール送信
+    const testSent = sendManualTest(true, isAuto);
+
+    // ★追加：自動実行時はテスト送信後に当日15時の配信予約を自動セット
+    if (isAuto && testSent && !options.skipAutomaticSchedule) {
       setAutomaticSchedule();
     }
-
-    // テストメール送信
-    sendManualTest(true, isAuto);
 
   } catch (e) {
     if (isAuto) console.error('エラー発生：' + e.toString());
@@ -165,19 +210,17 @@ function generateDraftAndTest(isAuto = false) {
 }
 
 /**
- * 自動実行用：翌日11時の配信予約をセットする※2026/4/3追加
+ * 自動実行用：テストメール作成後、当日15時の配信予約をセットする
  */
 function setAutomaticSchedule() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const draftSheet = ss.getSheetByName('原稿作成');
   
-  // 翌日の11:00を取得
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(15,50, 0, 0);
+  // 当日15:00を取得
+  const broadcastTime = getTodayAtJst_(15, 0);
 
   // B3セルに予約日時を書き込む（運用確認のため）
-  draftSheet.getRange('B3').setValue(tomorrow);
+  draftSheet.getRange('B3').setValue(broadcastTime);
 
   // 既存の予約をキャンセル
   cancelSchedule(true);
@@ -185,10 +228,16 @@ function setAutomaticSchedule() {
   // 予約トリガーを作成
   ScriptApp.newTrigger('scheduledBroadcast')
     .timeBased()
-    .at(tomorrow)
+    .at(broadcastTime)
     .create();
 
-  console.log(`自動予約完了：${Utilities.formatDate(tomorrow, "JST", "yyyy/MM/dd HH:mm")} に配信予約しました。`);
+  console.log(`自動予約完了：${Utilities.formatDate(broadcastTime, AUTOMATION_TIMEZONE, "yyyy/MM/dd HH:mm")} に配信予約しました。`);
+}
+
+function getTodayAtJst_(hour, minute) {
+  const dateStr = Utilities.formatDate(new Date(), AUTOMATION_TIMEZONE, 'yyyy/MM/dd');
+  const timeStr = ('0' + hour).slice(-2) + ':' + ('0' + minute).slice(-2);
+  return Utilities.parseDate(dateStr + ' ' + timeStr, AUTOMATION_TIMEZONE, 'yyyy/MM/dd HH:mm');
 }
 
 
@@ -292,7 +341,7 @@ function sendManualTest(isFromAI = false, isAuto = false) {
 
   if (!subject || !htmlBody) {
     if (!isAuto) ui.alert('件名または本文が空です。');
-    return;
+    return false;
   }
 
   const sheetUrl = ss.getUrl();
@@ -316,10 +365,12 @@ function sendManualTest(isFromAI = false, isAuto = false) {
     } else {
       console.log("定期テストメール送信完了");
     }
+    return true;
 
   } catch (e) {
     if (isAuto) console.error('送信エラー：' + e.toString());
     else ui.alert('送信エラー：' + e.toString());
+    return false;
   }
 }
 /**
@@ -477,17 +528,14 @@ function autoDeleteSubscriber(e) {
 
 
 /**
- * URLにGA4追跡用のUTMパラメータを付与する（日付は翌日を設定）
+ * URLにGA4追跡用のUTMパラメータを付与する（日付は当日を設定）
  */
 function addTrackingParams(url) {
   if (!url || !url.startsWith('http')) return url;
 
-  // 1. 「翌日」の日付を取得
+  // 1. 「当日」の日付を取得
   const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1); // 1日加算
-  
-  const dateStr = Utilities.formatDate(tomorrow, "JST", "yyyyMMdd");
+  const dateStr = Utilities.formatDate(now, AUTOMATION_TIMEZONE, "yyyyMMdd");
 
   // 2. ドメイン名を抽出 (例: metagri-labo.com)
   let domain = "unknown";
@@ -503,8 +551,33 @@ function addTrackingParams(url) {
   const utmCampaign = "ai_guide_" + dateStr; // 例: ai_guide_20250131
   const utmContent = domain.replace(/\./g, "_"); // ドメインのドットをアンダースコアに置換
 
-  const separator = url.indexOf('?') !== -1 ? '&' : '?';
-  const trackedUrl = `${url}${separator}utm_source=${utmSource}&utm_medium=${utmMedium}&utm_campaign=${utmCampaign}&utm_content=${utmContent}`;
+  return addOrReplaceQueryParams_(url, {
+    utm_source: utmSource,
+    utm_medium: utmMedium,
+    utm_campaign: utmCampaign,
+    utm_content: utmContent
+  });
+}
 
-  return trackedUrl;
+function addOrReplaceQueryParams_(url, params) {
+  const hashIndex = url.indexOf('#');
+  const hash = hashIndex === -1 ? '' : url.slice(hashIndex);
+  const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = urlWithoutHash.indexOf('?');
+  const baseUrl = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
+  const existingQuery = queryIndex === -1 ? '' : urlWithoutHash.slice(queryIndex + 1);
+  const replaceKeys = Object.keys(params);
+
+  const queryParts = existingQuery
+    ? existingQuery.split('&').filter(function(part) {
+        const key = decodeURIComponent(part.split('=')[0] || '');
+        return replaceKeys.indexOf(key) === -1;
+      })
+    : [];
+
+  replaceKeys.forEach(function(key) {
+    queryParts.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
+  });
+
+  return baseUrl + '?' + queryParts.join('&') + hash;
 }
