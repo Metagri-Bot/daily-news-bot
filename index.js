@@ -4308,7 +4308,12 @@ if (process.env.AI_GUIDE_GAS_URL) {
       timeout: 10000
     });
 
-    console.log(`[AI Guide] GAS記録完了: ${gasResponse.statusText}`);
+    const gasResult = gasResponse.data || {};
+    if (gasResult.status !== 'success') {
+      throw new Error(`GAS returned non-success response: ${JSON.stringify(gasResult)}`);
+    }
+
+    console.log(`[AI Guide] GAS記録完了: requestId=${gasResult.requestId || 'n/a'}, sheet=${gasResult.sheetName || 'n/a'} (${gasResult.sheetId || 'n/a'})`);
   } catch (logError) {
     // 詳細なエラーログを出力
     if (logError.response) {
