@@ -3453,6 +3453,11 @@ client.once("ready", async () => {
   cron.schedule('0 8 * * *', async () => {
     //  cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 
+    if (!NEWS_CHANNEL_ID) {
+      console.log('[Daily News] NEWS_CHANNEL_IDが未設定のため、ニュース投稿タスクをスキップします。');
+      return;
+    }
+
     console.log('[Daily News] ニュース投稿タスクを開始します...');
     try {
       // ★★★ トレンド分析を毎日リフレッシュ ★★★
