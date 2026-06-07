@@ -3450,7 +3450,7 @@ client.once("ready", async () => {
   // ▲▲▲ ▲▲▲
 
   // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')XXXXXX
-  cron.schedule('0 8 * * *', async () => {
+  // cron.schedule('0 8 * * *', async () => {
     //  cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 
     if (!NEWS_CHANNEL_ID) {
