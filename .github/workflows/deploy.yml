@@ -25,6 +25,7 @@ jobs:
       - name: Write .env file
         run: |
           echo "DISCORD_BOT_TOKEN=${{ secrets.DISCORD_BOT_TOKEN }}" >> .env
+          echo "DISABLE_DAILY_NEWS=true" >> .env
           echo "NEWS_CHANNEL_ID=${{ secrets.NEWS_CHANNEL_ID }}" >> .env
           echo "GOOGLE_APPS_SCRIPT_URL=${{ secrets.GOOGLE_APPS_SCRIPT_URL }}" >> .env
           echo "BIGNER_ROLE_ID=${{ secrets.BIGNER_ROLE_ID }}" >> .env

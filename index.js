@@ -15,6 +15,7 @@ const OpenAI = require('openai'); // OpenAI APIを使用する場合
 // .envから設定を読み込む
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const NEWS_CHANNEL_ID = process.env.NEWS_CHANNEL_ID;
+const DISABLE_DAILY_NEWS = process.env.DISABLE_DAILY_NEWS === 'true';
 const GOOGLE_APPS_SCRIPT_URL = process.env.GOOGLE_APPS_SCRIPT_URL;
 const NEWS_RSS_FEEDS_AGRICULTURE = process.env.NEWS_RSS_FEEDS_AGRICULTURE.split(',');
 const NEWS_RSS_FEEDS_WEB3 = process.env.NEWS_RSS_FEEDS_WEB3.split(',');
@@ -3450,8 +3451,13 @@ client.once("ready", async () => {
   // ▲▲▲ ▲▲▲
 
   // 毎日朝8時 (JST) に実行するcronジョブを設定 ('分 時 日 月 曜日')XXXXXX
-  // cron.schedule('0 8 * * *', async () => {
+  cron.schedule('0 8 * * *', async () => {
     //  cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+
+    if (DISABLE_DAILY_NEWS) {
+      console.log('[Daily News] DISABLE_DAILY_NEWS=true のため、ニュース投稿タスクをスキップします。');
+      return;
+    }
 
     if (!NEWS_CHANNEL_ID) {
       console.log('[Daily News] NEWS_CHANNEL_IDが未設定のため、ニュース投稿タスクをスキップします。');
