@@ -1529,7 +1529,9 @@ async function fetchNewBooksFromRakutenEnhanced(keywords, maxRetries = 3) {
                 publisher: book.publisherName || '',
                 isbn: book.isbn || '',
                 pubdate: normalizeRakutenSalesDate(book.salesDate),
-                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
+                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || '',
+                reviewCount: parseInt(book.reviewCount, 10) || 0,
+                reviewAverage: parseFloat(book.reviewAverage) || 0
               },
               onix: {
                 CollateralDetail: {
@@ -1686,7 +1688,9 @@ async function fetchNewBooksFromRakuten() {
                 publisher: book.publisherName || '',
                 isbn: book.isbn || '',
                 pubdate: normalizeRakutenSalesDate(book.salesDate),
-                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || ''
+                cover: book.largeImageUrl || book.mediumImageUrl || book.smallImageUrl || '',
+                reviewCount: parseInt(book.reviewCount, 10) || 0,
+                reviewAverage: parseFloat(book.reviewAverage) || 0
               },
               onix: {
                 CollateralDetail: {
@@ -1980,29 +1984,62 @@ function calculateFreshnessBonus(book) {
     return -10; // 3ヶ月以上先の日付は異常データとしてペナルティ
   }
 
+  // ★ 新しさボーナスは最大+5に抑制（以前は+10で「新しいだけのテーマ薄い本」が
+  //    内容の濃い良書より優先される原因になっていた）
+
   // 発売予定（未来日）
   if (diffDays > 0 && diffDays <= 30) {
-    return 10; // 1ヶ月以内の発売予定
+    return 5; // 1ヶ月以内の発売予定
   } else if (diffDays > 30 && diffDays <= 90) {
-    return 3; // 1〜3ヶ月先の発売予定
+    return 1; // 1〜3ヶ月先の発売予定
   }
 
   // 発売済み（過去）
   const daysSinceRelease = Math.abs(diffDays);
 
   if (daysSinceRelease <= 7) {
-    return 10; // 1週間以内
+    return 5; // 1週間以内
   } else if (daysSinceRelease <= 14) {
-    return 8; // 2週間以内
+    return 4; // 2週間以内
   } else if (daysSinceRelease <= 30) {
-    return 6; // 1ヶ月以内
+    return 3; // 1ヶ月以内
   } else if (daysSinceRelease <= 60) {
-    return 4; // 2ヶ月以内
+    return 2; // 2ヶ月以内
   } else if (daysSinceRelease <= 90) {
-    return 2; // 3ヶ月以内
+    return 1; // 3ヶ月以内
   } else {
     return 0; // それ以前
   }
+}
+
+/**
+ * 楽天レビュー情報に基づく品質ボーナスを計算
+ * 「キーワードが当たっただけの凡庸な本」と「評価の高い良書」を区別する。
+ * @param {Object} book 書籍オブジェクト
+ * @returns {number} ボーナススコア（-3〜+12）
+ */
+function calculateQualityBonus(book) {
+  const summary = book.summary || {};
+  const reviewCount = summary.reviewCount || 0;
+  const reviewAverage = summary.reviewAverage || 0;
+  const hasDescription = !!(book.onix?.CollateralDetail?.TextContent?.[0]?.Text);
+
+  let bonus = 0;
+
+  // レビュー数（注目度・実売シグナル）
+  if (reviewCount >= 100) bonus += 8;
+  else if (reviewCount >= 30) bonus += 6;
+  else if (reviewCount >= 10) bonus += 4;
+  else if (reviewCount >= 3) bonus += 2;
+
+  // 高評価（レビュー5件以上で平均4.0以上）
+  if (reviewCount >= 5 && reviewAverage >= 4.0) bonus += 4;
+
+  // 概要文がない本は内容を評価できないため軽い減点
+  // （タイトルにキーワードを詰め込んだだけのムック本対策）
+  if (!hasDescription) bonus -= 3;
+
+  return Math.min(bonus, 12);
 }
 
 // 農業技術選定用の除外キーワード（農業に無関係な技術書を除外）
@@ -2093,9 +2130,11 @@ function scoreBook(book) {
   }
 
   // カテゴリ別スコアリング（タイトル・著者・概要のみで判定、出版社名は除外）
+  // 汎用語（システム・プラットフォーム等）はスキップし、短い英字語は単語境界マッチで誤爆を防ぐ
   const checkKeywords = (keywords, categoryName, points) => {
     for (const keyword of keywords) {
-      if (scoringText.includes(keyword.toLowerCase())) {
+      if (BOOK_SCORING_NOISE_KEYWORDS.has(keyword.toLowerCase())) continue;
+      if (keywordHit(scoringText, keyword)) {
         score += points;
         matchedCategories.add(categoryName);
         break;
@@ -2284,6 +2323,11 @@ const POPULAR_REVIEW_SEARCH_KEYWORDS = [
 const POPULAR_BOOK_MIN_SCORE = 18;
 const POPULAR_BOOK_FALLBACK_MIN_SCORE = 12;
 const AGRI_NEW_BOOK_MIN_SCORE = 12;
+// ★ キーワードスコア単体の最低ライン（新しさ・品質ボーナス抜きでテーマ適合を担保）
+// 農業系: コア農業(+3)+技術革新(+5)など複数カテゴリのマッチを要求
+const AGRI_NEW_BOOK_MIN_KEYWORD_SCORE = 8;
+// 一般書評系: 主要テーマ軸1本(8〜12点)以上のマッチを要求
+const POPULAR_BOOK_MIN_KEYWORD_SCORE = 10;
 
 const AGRI_STRICT_REQUIRED_KEYWORDS = [
   '農業', '農家', '農業経営', '農協', '農林水産', '一次産業', 'スマート農業',
@@ -2293,15 +2337,50 @@ const AGRI_STRICT_REQUIRED_KEYWORDS = [
   'claude', 'gemini', 'llm', 'aiエージェント', 'ai活用', 'ai導入', 'ai実務'
 ];
 
+/**
+ * キーワードマッチ判定（誤爆対策版）
+ * 短い英数字キーワード（AI, DX, NFT等）は単語境界つきでマッチさせる。
+ * 例: 'ai' が 'training' や 'maintain' に誤爆しない。
+ * 日本語キーワードは従来どおり部分一致。
+ */
+function keywordHit(text, keyword) {
+  const kw = keyword.toLowerCase();
+  // 4文字以下の英数字のみのキーワードは単語境界チェック
+  if (/^[a-z0-9+#.\-]{1,4}$/.test(kw)) {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i');
+    return regex.test(text);
+  }
+  return text.includes(kw);
+}
+
 function textIncludesAny(text, keywords) {
-  return keywords.some(keyword => text.includes(keyword.toLowerCase()));
+  return keywords.some(keyword => keywordHit(text, keyword));
 }
 
 function countKeywordMatches(text, keywords) {
   return keywords.reduce((count, keyword) => {
-    return count + (text.includes(keyword.toLowerCase()) ? 1 : 0);
+    return count + (keywordHit(text, keyword) ? 1 : 0);
   }, 0);
 }
+
+/**
+ * 日替わりでキーワードリストをローテーションして先頭count件を返す。
+ * 全キーワードが数日かけて満遍なく検索に使われる。
+ */
+function rotateKeywordsByDay(keywords, count) {
+  const list = uniqueKeywords(keywords);
+  if (list.length <= count) return list;
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+  const offset = (dayOfYear * count) % list.length;
+  const rotated = [...list.slice(offset), ...list.slice(0, offset)];
+  return rotated.slice(0, count);
+}
+
+// 書籍スコアリングで無視する汎用語（ニューススコアと共通リストを使うため、書籍側だけ除外）
+const BOOK_SCORING_NOISE_KEYWORDS = new Set(
+  ['ソリューション', 'プラットフォーム', 'システム', 'デジタル', '自動化', 'api'].map(k => k.toLowerCase())
+);
 
 function uniqueKeywords(keywords, limit = keywords.length) {
   return Array.from(new Set((keywords || []).filter(Boolean))).slice(0, limit);
@@ -2398,11 +2477,13 @@ function dedupeBooksByIdentity(books) {
     const existingScore =
       (existing.summary?.cover ? 1 : 0) +
       (existing.onix?.CollateralDetail?.TextContent?.[0]?.Text ? 1 : 0) +
-      (existing.summary?.pubdate ? 1 : 0);
+      (existing.summary?.pubdate ? 1 : 0) +
+      (existing.summary?.reviewCount ? 1 : 0);
     const currentScore =
       (book.summary?.cover ? 1 : 0) +
       (book.onix?.CollateralDetail?.TextContent?.[0]?.Text ? 1 : 0) +
-      (book.summary?.pubdate ? 1 : 0);
+      (book.summary?.pubdate ? 1 : 0) +
+      (book.summary?.reviewCount ? 1 : 0);
 
     if (currentScore > existingScore) {
       bookMap.set(key, book);
@@ -2673,6 +2754,62 @@ function scorePopularBook(book) {
 }
 
 /**
+ * スコア上位の候補からAI（LLM）に最終選定させる
+ * キーワードスコアでは測れない「内容の質・読者への刺さり」を判断する。
+ * APIキー未設定・エラー時はnullを返し、呼び出し側でスコア順にフォールバックする。
+ * @param {Array} scoredBooks スコア降順ソート済みの候補リスト（{book, score, categories}）
+ * @param {string} audienceDescription 読者層の説明
+ * @returns {Promise<{selected: Object, reason: string}|null>}
+ */
+async function selectBestBookWithAI(scoredBooks, audienceDescription) {
+  if (!OPENAI_API_KEY) return null;
+  if (!scoredBooks || scoredBooks.length <= 1) return null; // 選ぶ余地なし
+
+  const candidates = scoredBooks.slice(0, 8);
+
+  try {
+    const lines = candidates.map((entry, i) => {
+      const s = entry.book.summary;
+      const desc = (entry.book.onix?.CollateralDetail?.TextContent?.[0]?.Text || '').substring(0, 200);
+      const review = s.reviewCount
+        ? `レビュー${s.reviewCount}件・平均${s.reviewAverage}`
+        : 'レビューなし';
+      return `${i + 1}. 『${s.title}』 著者: ${s.author || '不明'} / 出版社: ${s.publisher || '不明'} / 発売日: ${s.pubdate || '不明'} / ${review}\n   概要: ${desc || '（概要なし）'}`;
+    }).join('\n');
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'あなたは書籍キュレーターです。コミュニティ読者に最も価値のある1冊を選びます。必ずJSONで回答してください。'
+        },
+        {
+          role: 'user',
+          content: `読者層: ${audienceDescription}\n\n以下の新刊候補から、読者に最も刺さる1冊を選んでください。\n選定基準: (1)読者層との関連性 (2)内容の濃さ・専門性 (3)話題性。\nタイトルにキーワードを詰め込んだだけの薄い入門ムック・キーワード羅列本は避けてください。\n\n${lines}\n\n回答形式: {"index": 番号, "reason": "60字以内の選定理由"}`
+        }
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+      max_tokens: 200
+    });
+
+    const parsed = JSON.parse(response.choices[0].message.content);
+    const idx = parseInt(parsed.index, 10) - 1;
+    if (idx >= 0 && idx < candidates.length) {
+      console.log(`[Book AI Select] AIが${idx + 1}番目を選定: ${candidates[idx].book.summary.title}（理由: ${parsed.reason}）`);
+      return { selected: candidates[idx], reason: parsed.reason || '' };
+    }
+
+    console.log('[Book AI Select] AIの回答が不正なためスコア順にフォールバックします');
+    return null;
+  } catch (error) {
+    console.log('[Book AI Select] AI選定エラー（スコア順にフォールバック）:', error.message);
+    return null;
+  }
+}
+
+/**
  * 毎日の新刊投稿処理（農業・Web3・先端技術関連）
  */
 async function postDailyNewBook() {
@@ -2713,15 +2850,16 @@ async function postDailyNewBook() {
           continue;
         }
 
-        const freshnessBonus = calculateFreshnessBonus(book);
-        // 最終スコア = キーワードスコア + 発売日ボーナス
-        const totalScore = keywordScore + freshnessBonus;
-
-        // 農業関連キーワードなしで合計スコアが低い書籍はスキップ
-        if (totalScore <= 0) {
-          console.log(`[New Book] 低スコアで除外: ${book.summary.title} (スコア: ${totalScore}, カテゴリ: ${categories.join(', ')})`);
+        // キーワードスコア単体でテーマ適合を担保（新しさだけで通過するのを防ぐ）
+        if (keywordScore < AGRI_NEW_BOOK_MIN_KEYWORD_SCORE) {
+          console.log(`[New Book] キーワードスコア不足で除外: ${book.summary.title} (キーワード: ${keywordScore}, カテゴリ: ${categories.join(', ')})`);
           continue;
         }
+
+        const freshnessBonus = calculateFreshnessBonus(book);
+        const qualityBonus = calculateQualityBonus(book);
+        // 最終スコア = キーワードスコア + 発売日ボーナス + 品質ボーナス（レビュー評価）
+        const totalScore = keywordScore + freshnessBonus + qualityBonus;
 
         if (totalScore < AGRI_NEW_BOOK_MIN_SCORE) {
           console.log(`[New Book] 農業技術関連の基準未満で除外: ${book.summary.title} (スコア: ${totalScore}, カテゴリ: ${categories.join(', ')})`);
@@ -2733,6 +2871,7 @@ async function postDailyNewBook() {
           score: totalScore,
           keywordScore,
           freshnessBonus,
+          qualityBonus,
           categories
         });
       }
@@ -2748,10 +2887,11 @@ async function postDailyNewBook() {
         if (!isbn || postedBookIsbns.has(isbn)) continue;
 
         const { score: keywordScore, categories } = scorePopularBook(book);
-        if (keywordScore < 0) continue;
+        if (keywordScore < 0 || keywordScore < POPULAR_BOOK_MIN_KEYWORD_SCORE) continue;
 
         const freshnessBonus = calculateFreshnessBonus(book);
-        const totalScore = keywordScore + freshnessBonus;
+        const qualityBonus = calculateQualityBonus(book);
+        const totalScore = keywordScore + freshnessBonus + qualityBonus;
         if (totalScore < POPULAR_BOOK_MIN_SCORE) continue;
 
         availableBooks.push({
@@ -2759,6 +2899,7 @@ async function postDailyNewBook() {
           score: totalScore,
           keywordScore,
           freshnessBonus,
+          qualityBonus,
           categories
         });
       }
@@ -2773,8 +2914,12 @@ async function postDailyNewBook() {
     availableBooks.sort((a, b) => b.score - a.score);
     console.log(`[New Book] 候補書籍: ${availableBooks.length}件（上位3件: ${availableBooks.slice(0, 3).map(b => `${b.book.summary.title}(${b.score}点)`).join(', ')}）`);
 
-    // 最高スコアの書籍を選択
-    const selected = availableBooks[0];
+    // AIによる最終選定（失敗時はスコア最高の書籍にフォールバック）
+    const aiSelection = await selectBestBookWithAI(
+      availableBooks,
+      '農業×テクノロジー（生成AI・Web3・スマート農業・地方創生）に関心がある農業関係者・ビジネスパーソンのコミュニティ「Metagri研究所」のメンバー'
+    );
+    const selected = aiSelection ? aiSelection.selected : availableBooks[0];
     const bookData = selected.book.summary;
     const onix = selected.book.onix || {};
 
@@ -2812,6 +2957,11 @@ async function postDailyNewBook() {
 
     // スコア
     embed.addFields({ name: '⭐ スコア', value: `${selected.score}点`, inline: true });
+
+    // AI選書理由（AI選定が成功した場合のみ）
+    if (aiSelection && aiSelection.reason) {
+      embed.addFields({ name: '🤖 選書メモ', value: aiSelection.reason, inline: false });
+    }
 
     // ISBN
     if (bookData.isbn) {
@@ -2933,15 +3083,16 @@ async function postDailyPopularBook() {
           continue;
         }
 
-        const freshnessBonus = calculateFreshnessBonus(book);
-        // 最終スコア = キーワードスコア + 発売日ボーナス
-        const totalScore = keywordScore + freshnessBonus;
-
-        // 合計スコアが0以下の書籍もスキップ（品質基準を満たさない）
-        if (totalScore <= 0) {
-          console.log(`[Popular Book] 低スコアで除外: ${book.summary.title} (スコア: ${totalScore})`);
+        // キーワードスコア単体でテーマ適合を担保（新しさだけで通過するのを防ぐ）
+        if (keywordScore < POPULAR_BOOK_MIN_KEYWORD_SCORE) {
+          console.log(`[Popular Book] キーワードスコア不足で除外: ${book.summary.title} (キーワード: ${keywordScore})`);
           continue;
         }
+
+        const freshnessBonus = calculateFreshnessBonus(book);
+        const qualityBonus = calculateQualityBonus(book);
+        // 最終スコア = キーワードスコア + 発売日ボーナス + 品質ボーナス（レビュー評価）
+        const totalScore = keywordScore + freshnessBonus + qualityBonus;
 
         if (totalScore < POPULAR_BOOK_MIN_SCORE) {
           console.log(`[Popular Book] 書評向け基準未満で除外: ${book.summary.title} (スコア: ${totalScore})`);
@@ -2953,6 +3104,7 @@ async function postDailyPopularBook() {
           score: totalScore,
           keywordScore,
           freshnessBonus,
+          qualityBonus,
           categories
         });
       }
@@ -2966,7 +3118,8 @@ async function postDailyPopularBook() {
         if (keywordScore < 0) continue; // 除外対象はスキップ
 
         const freshnessBonus = calculateFreshnessBonus(book);
-        const totalScore = keywordScore + freshnessBonus;
+        const qualityBonus = calculateQualityBonus(book);
+        const totalScore = keywordScore + freshnessBonus + qualityBonus;
         if (totalScore < POPULAR_BOOK_FALLBACK_MIN_SCORE) continue; // 最低限の書評対象だけ許可
 
         console.log('[Popular Book] 投稿済み書籍から適切な1冊を再投稿します');
@@ -2975,6 +3128,7 @@ async function postDailyPopularBook() {
           score: totalScore,
           keywordScore,
           freshnessBonus,
+          qualityBonus,
           categories
         });
         break;
@@ -2990,8 +3144,12 @@ async function postDailyPopularBook() {
     availableBooks.sort((a, b) => b.score - a.score);
     console.log(`[Popular Book] 候補書籍: ${availableBooks.length}件（上位3件: ${availableBooks.slice(0, 3).map(b => `${b.book.summary.title}(${b.score}点)`).join(', ')}）`);
 
-    // 最高スコアの書籍を選択
-    const selected = availableBooks[0];
+    // AIによる最終選定（失敗時はスコア最高の書籍にフォールバック）
+    const aiSelection = await selectBestBookWithAI(
+      availableBooks,
+      'ビジネス・経営、生成AI活用、Web3・トークン経済、農業・食・地域、心理・行動経済学などの書評記事を読む知的好奇心の高いビジネスパーソン'
+    );
+    const selected = aiSelection ? aiSelection.selected : availableBooks[0];
     const bookData = selected.book.summary;
     const onix = selected.book.onix || {};
 
@@ -3029,6 +3187,11 @@ async function postDailyPopularBook() {
 
     // スコア
     embed.addFields({ name: '⭐ スコア', value: `${selected.score}点`, inline: true });
+
+    // AI選書理由（AI選定が成功した場合のみ）
+    if (aiSelection && aiSelection.reason) {
+      embed.addFields({ name: '🤖 選書メモ', value: aiSelection.reason, inline: false });
+    }
 
     // ISBN
     if (bookData.isbn) {
@@ -3137,14 +3300,14 @@ async function fetchBooksWithCache() {
   console.log('[Book Cache] 新しい書籍データを取得中...');
 
   // 複数のソースから新刊情報を並行取得
-  const [openBDBooks, rakutenBooks, googleBooks] = await Promise.all([
-    fetchNewBooksFromOpenBD(),
+  // 注: openBDランダムISBN取得はノイズ源のため除外
+  const [rakutenBooks, googleBooks] = await Promise.all([
     fetchNewBooksFromRakuten(),
     fetchNewBooksFromGoogle()
   ]);
 
   // 書籍を統合（重複除去）
-  const books = mergeBooks(openBDBooks, rakutenBooks, googleBooks);
+  const books = mergeBooks([], rakutenBooks, googleBooks);
 
   // キャッシュを更新
   cachedBooks = books;
@@ -3202,7 +3365,8 @@ async function fetchAgriTechBooks() {
     'Gemini 活用'
   ];
 
-  const rakutenKeywords = uniqueKeywords(agriTechKeywords, 10);
+  // 日替わりローテーションで全キーワードを満遍なく使う（以前は先頭10個に固定されていた）
+  const rakutenKeywords = rotateKeywordsByDay(uniqueKeywords(agriTechKeywords), 12);
   const salesKeywords = rakutenKeywords.slice(0, 6);
   const googleKeywords = rakutenKeywords.slice(0, 6);
 
@@ -3234,10 +3398,10 @@ async function fetchAgriTechBooks() {
   // console.log(`[AgriTech Books] NDLから${ndlBooks.length}件取得`);
 
   // === 4. 版元ドットコム（openBD経由）から取得 ===
-  console.log('[AgriTech Books] 版元ドットコムAPIから取得中...');
-  const hanmotoBooks = await fetchNewBooksFromHanmoto();
-  allBooks.push(...hanmotoBooks);
-  console.log(`[AgriTech Books] 版元ドットコムから${hanmotoBooks.length}件取得`);
+  // 注: openBD coverageの先頭500件は「最近登録された本」ではなく全ISBNリストの先頭で
+  // ほぼ無意味なノイズ源だったため無効化（スクレイピング版で代替）
+  // const hanmotoBooks = await fetchNewBooksFromHanmoto();
+  // allBooks.push(...hanmotoBooks);
 
   // === 4.5. 版元ドットコム新刊ページ（HTMLスクレイピング）から取得 ===
   console.log('[AgriTech Books] 版元ドットコム新刊ページから取得中...');
@@ -3245,9 +3409,10 @@ async function fetchAgriTechBooks() {
   allBooks.push(...hanmotoScrapedBooks);
   console.log(`[AgriTech Books] 版元ドットコム新刊ページから${hanmotoScrapedBooks.length}件取得`);
 
-  // === 5. openBDからも取得 ===
-  const openBDBooks = await fetchNewBooksFromOpenBD();
-  allBooks.push(...openBDBooks);
+  // === 5. openBD ===
+  // 注: ランダムISBN生成による取得は無関係な古い本しかヒットしないノイズ源のため無効化
+  // const openBDBooks = await fetchNewBooksFromOpenBD();
+  // allBooks.push(...openBDBooks);
 
   console.log(`[AgriTech Books] 全API合計: ${allBooks.length}件`);
 
@@ -3295,10 +3460,11 @@ async function fetchPopularBooks() {
   console.log('[Popular Books] 一般新刊書籍を取得中...');
 
   // 書評で取り上げやすい8テーマ軸に寄せた検索キーワード
-  const popularKeywords = uniqueKeywords([
+  // 日替わりローテーションで全テーマキーワードを満遍なく使う
+  const popularKeywords = rotateKeywordsByDay(uniqueKeywords([
     ...getReviewThemeSearchKeywords(12),
     ...POPULAR_REVIEW_SEARCH_KEYWORDS
-  ], 12);
+  ]), 12);
   const rakutenKeywords = popularKeywords.slice(0, 8);
   const googleKeywords = popularKeywords.slice(0, 6);
 
@@ -3331,10 +3497,9 @@ async function fetchPopularBooks() {
   // console.log(`[Popular Books] NDLから${ndlBooks.length}件取得`);
 
   // === 4. 版元ドットコム（openBD経由）から取得 ===
-  console.log('[Popular Books] 版元ドットコムAPIから取得中...');
-  const hanmotoBooks = await fetchNewBooksFromHanmoto();
-  allBooks.push(...hanmotoBooks);
-  console.log(`[Popular Books] 版元ドットコムから${hanmotoBooks.length}件取得`);
+  // 注: openBD coverage先頭500件はノイズ源のため無効化（スクレイピング版で代替）
+  // const hanmotoBooks = await fetchNewBooksFromHanmoto();
+  // allBooks.push(...hanmotoBooks);
 
   // === 4.5. 版元ドットコム新刊ページ（HTMLスクレイピング）から取得 ===
   // 一般書評向けには書評テーマ系キーワードを興味判定に使う
