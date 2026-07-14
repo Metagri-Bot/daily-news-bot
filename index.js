@@ -54,6 +54,31 @@ const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
 // === 監視用Webhook設定 ===
 const MONITORING_WEBHOOK_URL = process.env.MONITORING_WEBHOOK_URL;
 
+// === 農業AI通信のDiscord投稿リンクUTM設定 ===
+const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
+const DISCORD_UTM_MEDIUM = process.env.DISCORD_UTM_MEDIUM || 'social';
+
+function addDiscordUtm(rawUrl, campaign = 'ai_guide', content = '') {
+  if (!rawUrl) return rawUrl;
+
+  try {
+    const url = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) return rawUrl;
+
+    url.searchParams.set('utm_source', DISCORD_UTM_SOURCE);
+    url.searchParams.set('utm_medium', DISCORD_UTM_MEDIUM);
+    url.searchParams.set('utm_campaign', campaign);
+
+    if (content) {
+      url.searchParams.set('utm_content', content);
+    }
+
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 // === キーワード定義（旧） ===
 const TECH_KEYWORDS = [ 'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース', '生成AI', 'LLM', 'ChatGPT', 'AI', '人工知能', 'IoT', 'ドローン', 'DX', 'デジタル', 'ロボット', '自動化', '衛星', 'ソリューション', 'プラットフォーム', 'システム' ];
 const PRIMARY_INDUSTRY_KEYWORDS = [ '農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' ];
@@ -4424,7 +4449,7 @@ const disclaimer = '*※この記事はAIによって要約されています。
 const embed = new EmbedBuilder()
   .setColor(0x2ECC71) // 鮮やかな緑
   .setTitle(`🌾 ${latestArticle.title}`)
-  .setURL(latestArticle.link)
+  .setURL(addDiscordUtm(latestArticle.link, 'ai_guide'))
   .setDescription(`${disclaimer}\n\n**【概要】**\n${parsed.summary || '記事の詳細はリンクをご覧ください。'}`)
   .setFooter({ text: '農業AI通信 | metagri-labo.com', iconURL: client.user.displayAvatarURL() })
   .setTimestamp(articleDate);
@@ -4508,7 +4533,7 @@ if (process.env.AI_GUIDE_GAS_URL) {
         const fallbackEmbed = new EmbedBuilder()
           .setColor(0x00AA00)
           .setTitle(`🌾 ${latestArticle.title}`)
-          .setURL(latestArticle.link)
+          .setURL(addDiscordUtm(latestArticle.link, 'ai_guide'))
           .setDescription(latestArticle.contentSnippet?.substring(0, 300) + '...')
           .setFooter({ text: '農業AI通信（要約エラー時）' });
         await channel.send({ embeds: [fallbackEmbed] });
