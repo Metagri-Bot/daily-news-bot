@@ -15,6 +15,12 @@ const {
   isFarmerAiUseCase,
   prioritizeFarmerAiUseCases
 } = require('./farmer-ai-usecase');
+const {
+  NEWS_FRESHNESS_DAYS,
+  getArticlePublishedDate,
+  isNewsWithinFreshness
+} = require('./news-freshness');
+const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
 
 // .envから設定を読み込む
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -57,6 +63,15 @@ const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
 
 // === 監視用Webhook設定 ===
 const MONITORING_WEBHOOK_URL = process.env.MONITORING_WEBHOOK_URL;
+
+// === 官公庁・自治体 公募モニター設定 ===
+// 投稿先は未設定ならニュースチャンネルにフォールバックする
+const PUBLIC_OPPORTUNITY_CHANNEL_ID =
+  process.env.PUBLIC_OPPORTUNITY_CHANNEL_ID || process.env.NEWS_CHANNEL_ID;
+const DISABLE_PUBLIC_OPPORTUNITY = process.env.DISABLE_PUBLIC_OPPORTUNITY === 'true';
+const PUBLIC_OPPORTUNITY_MIN_SCORE = Number(process.env.PUBLIC_OPPORTUNITY_MIN_SCORE || 65);
+const PUBLIC_OPPORTUNITY_MAX_PRIORITY = Number(process.env.PUBLIC_OPPORTUNITY_MAX_PRIORITY || 3);
+const PUBLIC_OPPORTUNITY_CRON = process.env.PUBLIC_OPPORTUNITY_CRON || '30 7 * * 1-5';
 
 // === 農業AI通信のDiscord投稿リンクUTM設定 ===
 const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
@@ -3625,6 +3640,49 @@ async function syncPostedBooksFromSheet() {
   }
 }
 
+// === 官公庁・自治体 公募モニタータスク ===
+/**
+ * 公募案件の収集〜採点〜Discord通知を1回実行する。
+ * S・Aランクかつ閾値以上の新規／更新案件だけを投稿し、該当0件の日は投稿しない。
+ */
+async function postPublicOpportunities() {
+  if (DISABLE_PUBLIC_OPPORTUNITY) {
+    console.log('[Public Opportunity] DISABLE_PUBLIC_OPPORTUNITY=true のためスキップします。');
+    return;
+  }
+  if (!PUBLIC_OPPORTUNITY_CHANNEL_ID) {
+    console.log('[Public Opportunity] 投稿先チャンネルIDが未設定のためスキップします。');
+    return;
+  }
+
+  try {
+    const summary = await runPublicOpportunityMonitor({
+      client,
+      channelId: PUBLIC_OPPORTUNITY_CHANNEL_ID,
+      openai: OPENAI_API_KEY ? openai : null,
+      model: 'gpt-4.1-mini',
+      minScore: PUBLIC_OPPORTUNITY_MIN_SCORE,
+      maxPriority: PUBLIC_OPPORTUNITY_MAX_PRIORITY
+    });
+
+    if (summary.notified > 0) {
+      await sendMonitoringNotification(
+        '公募モニター通知',
+        `新規・更新案件 ${summary.notified}件を投稿しました（収穫${summary.harvested}件・精査${summary.inspected}件）`,
+        'info'
+      );
+    }
+  } catch (error) {
+    console.error('[Public Opportunity] タスク実行エラー:', error.message);
+    await sendMonitoringNotification(
+      '公募モニターエラー',
+      '公募案件の収集・通知処理に失敗しました',
+      'error',
+      error.stack || error.message
+    );
+  }
+}
+
 // Botが起動したときの処理
 client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
@@ -3694,18 +3752,13 @@ client.once("ready", async () => {
         return;
       }
 
-      const twentyFourHoursAgo = new Date();
-      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-      const recentArticles = allArticles.filter(article => {
-        if (!article.isoDate) return false;
-        return new Date(article.isoDate) >= twentyFourHoursAgo;
-      });
+      const recentArticles = allArticles.filter(article => isNewsWithinFreshness(article));
 
       if (recentArticles.length === 0) {
-        console.log('[Daily News] 直近24時間のニュースが見つかりませんでした。');
+        console.log(`[Daily News] 直近${NEWS_FRESHNESS_DAYS}日間のニュースが見つかりませんでした。`);
         return;
       }
-      console.log(`[Daily News] 直近24時間で ${recentArticles.length} 件の記事を取得しました。フィルタリングを開始します...`);
+      console.log(`[Daily News] 直近${NEWS_FRESHNESS_DAYS}日間で ${recentArticles.length} 件の記事を取得しました。フィルタリングを開始します...`);
 
        // ▼▼▼ ここからが新しい除外処理です ▼▼▼
       const eligibleArticles = recentArticles.filter(article => {
@@ -3893,12 +3946,9 @@ cron.schedule('0 6 * * *', async () => {
     const allAgriArticles = await fetchArticles(NEWS_RSS_FEEDS_AGRICULTURE);
     const allTechArticles = await fetchArticles(NEWS_RSS_FEEDS_WEB3);
 
-    // Step 1: 直近24時間の記事のみを対象にする
-    const twentyFourHoursAgo = new Date();
-    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-
-    const recentAgriArticles = allAgriArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
-    const recentTechArticles = allTechArticles.filter(a => a.isoDate && new Date(a.isoDate) >= twentyFourHoursAgo);
+    // Step 1: 公開から直近7日以内の記事のみを対象にする
+    const recentAgriArticles = allAgriArticles.filter(article => isNewsWithinFreshness(article));
+    const recentTechArticles = allTechArticles.filter(article => isNewsWithinFreshness(article));
 
     // Step 2: 投稿済みの記事を除外する
     const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
@@ -4080,13 +4130,7 @@ cron.schedule('0 6 * * *', async () => {
         return;
       }
 
-      const fortyEightHoursAgo = new Date();
-      fortyEightHoursAgo.setHours(fortyEightHoursAgo.getHours() - 48);
-
-      const recentGlobalArticles = allGlobalArticles.filter(article => {
-        const articleDate = new Date(article.isoDate || article.pubDate);
-        return articleDate && articleDate >= fortyEightHoursAgo;
-      });
+      const recentGlobalArticles = allGlobalArticles.filter(article => isNewsWithinFreshness(article));
 
       const newGlobalArticles = recentGlobalArticles.filter(a => !postedGlobalArticleUrls.has(a.link));
 
@@ -4201,8 +4245,6 @@ cron.schedule('0 6 * * *', async () => {
     try {
       // --- ステップ1: 記事の収集とフィルタリング ---
       let recentArticles = [];
-      const timeThreshold = new Date();
-      timeThreshold.setHours(timeThreshold.getHours() - 24); // 24時間前の時刻
 
       const feedPromises = ROBLOX_RSS_FEEDS.map(async (url) => {
         try {
@@ -4219,8 +4261,8 @@ cron.schedule('0 6 * * *', async () => {
       for (const feed of feeds) {
         if (feed && feed.items) {
           for (const item of feed.items) {
-            const articleDate = new Date(item.isoDate || item.pubDate);
-            if (articleDate && articleDate >= timeThreshold) {
+            const articleDate = getArticlePublishedDate(item);
+            if (isNewsWithinFreshness(item)) {
               recentArticles.push({
                 source: feed.sourceName,
                 title: item.title,
@@ -4567,6 +4609,14 @@ if (process.env.AI_GUIDE_GAS_URL) {
   }
 }, { timezone: "Asia/Tokyo" });
 
+  // === 官公庁・自治体 公募モニタータスク（平日7:30 JST） ===
+  cron.schedule(PUBLIC_OPPORTUNITY_CRON, async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    await postPublicOpportunities();
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00 JST');
@@ -4575,6 +4625,7 @@ if (process.env.AI_GUIDE_GAS_URL) {
   console.log('- AgriTech Book Recommendation: 10:00 JST');
   console.log('- Popular Book Recommendation: 10:00 JST');
   console.log('- AI Guide (農業AI通信): Mon/Wed/Fri 9:50 JST');
+  console.log(`- Public Opportunity Monitor: ${PUBLIC_OPPORTUNITY_CRON} JST`);
 }); 
 
 

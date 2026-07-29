@@ -2,9 +2,15 @@ services:
   app:
     build: .
     restart: unless-stopped
+    volumes:
+      # 公募モニターの通知履歴を再ビルド後も保持する（消すと過去案件が再通知される）
+      - bot-state:/app/state
     # volumes:
     #   - .:/app
     env_file:
       - .env
     # environment:
     #   - NODE_ENV=development
+
+volumes:
+  bot-state:
