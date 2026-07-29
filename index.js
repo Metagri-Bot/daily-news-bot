@@ -11,6 +11,10 @@ const Parser = require('rss-parser');
 const parser = new Parser();
 const axios = require('axios');
 const OpenAI = require('openai'); // OpenAI APIを使用する場合
+const {
+  isFarmerAiUseCase,
+  prioritizeFarmerAiUseCases
+} = require('./farmer-ai-usecase');
 
 // .envから設定を読み込む
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -3723,14 +3727,22 @@ client.once("ready", async () => {
 
       // ▼▼▼ ここから下のすべてのフィルタリング対象を "eligibleArticles" に修正 ▼▼▼
 
+      // --- 【特別優先】農家・生産者本人によるAIの実利用事例 ---
+      articlesToSelectFrom = eligibleArticles.filter(isFarmerAiUseCase);
+      if (articlesToSelectFrom.length > 0) {
+        console.log(`[Daily News] 農家AI活用事例を ${articlesToSelectFrom.length} 件検知しました。特別優先します。`);
+      }
+
       // --- 【最優先】一次産業 + 技術 + 活用事例 ---
-      articlesToSelectFrom = eligibleArticles.filter(article => {
-        const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
-        const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
-        const hasTech = TECH_KEYWORDS.some(key => content.includes(key.toLowerCase()));
-        const hasUsecase = USECASE_KEYWORDS.some(key => content.includes(key.toLowerCase()));
-        return hasPrimary && hasTech && hasUsecase;
-      });
+      if (articlesToSelectFrom.length === 0) {
+        articlesToSelectFrom = eligibleArticles.filter(article => {
+          const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
+          const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
+          const hasTech = TECH_KEYWORDS.some(key => content.includes(key.toLowerCase()));
+          const hasUsecase = USECASE_KEYWORDS.some(key => content.includes(key.toLowerCase()));
+          return hasPrimary && hasTech && hasUsecase;
+        });
+      }
 
       // --- 【次善】一次産業 + 技術 ---
       if (articlesToSelectFrom.length === 0) {
@@ -3933,8 +3945,15 @@ cron.schedule('0 6 * * *', async () => {
       checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
       checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
 
+      // 農家本人によるAI実利用は、一般的な技術発表と分けて強く加点する。
+      const farmerAiUseCase = isFarmerAiUseCase(article);
+      if (farmerAiUseCase) {
+        score += 12;
+        matchedCategories.add('農家AI活用事例');
+      }
+
       // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
-      if (score > 0 && matchedCategories.has('コア農業')) {
+      if (score > 0 && (matchedCategories.has('コア農業') || farmerAiUseCase)) {
         // ★★★ 動的スコアリングを適用 ★★★
         const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
 
@@ -3942,7 +3961,8 @@ cron.schedule('0 6 * * *', async () => {
           ...article,
           baseScore: score,
           score: dynamicScore,
-          priorityLabel: Array.from(matchedCategories).join(' + ')
+          priorityLabel: Array.from(matchedCategories).join(' + '),
+          isFarmerAiUseCase: farmerAiUseCase
         });
         uniqueUrls.add(article.link);
       }
@@ -3962,8 +3982,8 @@ cron.schedule('0 6 * * *', async () => {
     console.log('[Info Gathering] 類似記事の検出を開始...');
     const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
 
-    // Step 5: 最終的に上位3件を抽出
-    const finalArticles = uniqueArticles.slice(0, 3);
+    // Step 5: 上位3件を基本とし、農家AI活用事例があれば1枠を保証
+    const finalArticles = prioritizeFarmerAiUseCases(uniqueArticles, 3);
 
     if (finalArticles.length === 0) {
       console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
@@ -3981,6 +4001,9 @@ cron.schedule('0 6 * * *', async () => {
 
     finalArticles.forEach((article, index) => {
       postContent += `**${index + 1}. ${article.title}**\n`;
+      if (article.isFarmerAiUseCase) {
+        postContent += `🌾🤖 **農家AI活用事例**\n`;
+      }
       postContent += `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\`\n`;
       postContent += `${article.link}\n\n`;
       postedArticleUrls.add(article.link);
