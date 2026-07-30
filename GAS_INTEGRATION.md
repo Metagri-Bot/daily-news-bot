@@ -330,3 +330,72 @@ await logToSpreadsheet('newBook', {
 ### 定期的なデータ整理
 
 長期運用により`Posted_Books`シートが大きくなった場合、古いデータをアーカイブすることを推奨します。
+
+---
+
+# 公募モニターの履歴シート（Public_Opportunities）
+
+官公庁・自治体 公募モニターの**重複投稿防止の「正」**となるシートです。ローカルの `state/public-opportunities.json` は写し（キャッシュ）であり、シートが優先されます。
+
+## シート構成
+
+シート名: `Public_Opportunities`（Bot初回実行時に自動作成されます）
+
+| 列 | フィールド | 説明 |
+|----|-----------|------|
+| A | `id` | 正規化URLのSHA-256先頭20桁。重複判定のキー |
+| B | `signature` | タイトル＋URL＋締切のハッシュ |
+| C | `title` | 公募タイトル |
+| D | `url` | 公式URL（正規化済み） |
+| E | `organization` | 所管する省庁・自治体 |
+| F | `deadline` | 応募締切（ISO文字列） |
+| G | `rank` | S / A |
+| H | `score` | 100点評価の点数 |
+| I | `first_notified_at` | 初回通知日時 |
+| J | `last_notified_at` | 最終通知日時 |
+| K | `last_checked_at` | 最終確認日時（再確認ジョブ用） |
+
+**重要**: A・B・F・I・J・K列は「書式なしテキスト」に固定されます（GAS側で自動設定）。数値や日付に自動変換されるとBot側のハッシュ・締切と一致せず、同じ案件を毎回「更新」として再通知してしまうためです。手作業でこれらの列の書式を変更しないでください。
+
+## 導入手順（必須）
+
+Bot側のコードだけでは動きません。GASの再デプロイが必要です。
+
+**コピペ用の完全版コードと手順は `GAS_UPDATE_PUBLIC_OPPORTUNITY.md` にまとめてあります**（内容は `.gascode` と同一）。要点のみ再掲します。
+
+1. スプレッドシートの拡張機能 → Apps Script を開き、`.gascode` の内容で全置換
+2. `testPublicOpportunities` を実行して動作確認（テスト行は削除する）
+3. **デプロイ → デプロイを管理 → 編集 → バージョン「新バージョン」→ デプロイ**
+   - 新しいバージョンでデプロイしないと、既存のURLでは古いコードが動き続けます
+4. Bot側から疎通確認
+
+```bash
+node -e "require('dotenv').config();require('./public-opportunity-store').fetchRemoteHistory(process.env.GOOGLE_APPS_SCRIPT_URL).then(r=>console.log(r.status, r.status==='ok'?Object.keys(r.seen).length+'件':''))"
+```
+
+`ok` 以外が出た場合の意味: `not_deployed`=GASが旧バージョン／`unavailable`=通信失敗／`disabled`=URL未設定。
+
+## API
+
+```jsonc
+// 履歴の取得
+POST { "type": "getPublicOpportunities" }
+→ [ { "id": "...", "signature": "...", "title": "...", ... } ]
+
+// 履歴の記録（id列でupsert）
+POST { "type": "publicOpportunities", "records": [ { "id": "...", "signature": "...", ... } ] }
+→ { "result": "success", "inserted": 1, "updated": 0 }
+```
+
+同時実行による二重追記を防ぐため、`upsertPublicOpportunities` は `LockService` でスクリプトロックを取得します。
+
+## 重複投稿が起きたときの確認順
+
+1. `Public_Opportunities` シートに該当URLの行が**2行以上ある** → A列の書式が数値・日付になっていないか確認（`@`に戻し、重複行を1行に統合）
+2. 行は1行なのに再通知される → F列（`deadline`）が実行ごとに変わっていないか確認。省庁ページの表記揺れで締切の抽出結果が変動している可能性
+3. Botのログに `⚠ シート履歴が取得できないため` が出ている → GASのデプロイ状態とアクセス権限を確認
+4. Coworkスキル側からの通知と重複 → スキルの `.env` の `PUBLIC_OPPORTUNITY_SOURCE_ENV` が `daily-news-bot\.env` を指しているか確認（`GOOGLE_APPS_SCRIPT_URL` を読めていないとシートを参照できません）
+
+## 履歴のリセット
+
+テスト後に通知履歴を消す場合は、`Public_Opportunities` シートの該当行を削除し、Bot側の `state/public-opportunities.json` も削除してください（片方だけ消してもシート側が正として復元されます）。

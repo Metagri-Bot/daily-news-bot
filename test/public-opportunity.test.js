@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   canonicalUrl,
+  hasMaterialChange,
   opportunityId,
   opportunitySignature,
   parseJapaneseDate,
@@ -202,6 +203,39 @@ test('selectNewOpportunities re-notifies when the deadline is updated', () => {
   );
   assert.equal(updated.length, 1);
   assert.equal(updated[0].updated, true);
+});
+
+test('タイトルだけが変わった場合は再通知しない（AI表現の揺れ・セル書式対策）', () => {
+  const scored = { ...IDEAL_CASE, rank: 'S', score: 90 };
+  const state = recordNotified(
+    emptyState(),
+    selectNewOpportunities([scored], emptyState()),
+    NOW.toISOString()
+  );
+
+  const retitled = { ...scored, title: 'AI×農山漁村 実装プログラム（第2回公募）' };
+  assert.equal(selectNewOpportunities([retitled], state).length, 0);
+});
+
+test('締切が読めない状態が続く案件を毎回再通知しない', () => {
+  const noDeadline = { ...IDEAL_CASE, deadline: null, rank: 'A', score: 70 };
+  const state = recordNotified(
+    emptyState(),
+    selectNewOpportunities([noDeadline], emptyState()),
+    NOW.toISOString()
+  );
+
+  const nextRun = { ...noDeadline, title: `${noDeadline.title}（詳細）`, summary: '別の抜粋' };
+  assert.equal(selectNewOpportunities([nextRun], state).length, 0);
+});
+
+test('hasMaterialChange は締切の時刻だけを見る', () => {
+  const previous = { deadline: '2026-08-29T17:00:00+09:00' };
+  assert.equal(hasMaterialChange(previous, { deadline: '2026-08-29T08:00:00Z' }), false, '同じ時刻の別表記は変化なし');
+  assert.equal(hasMaterialChange(previous, { deadline: '2026-09-30T17:00:00+09:00' }), true);
+  assert.equal(hasMaterialChange(previous, { deadline: null }), true, '締切が消えた場合は要通知');
+  assert.equal(hasMaterialChange({ deadline: null }, { deadline: null }), false);
+  assert.equal(hasMaterialChange({ deadline: '不明' }, { deadline: '要確認' }), false, '解釈不能同士は変化なし');
 });
 
 test('selectNewOpportunities de-duplicates within a single run', () => {

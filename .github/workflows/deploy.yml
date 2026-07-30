@@ -43,9 +43,14 @@ jobs:
           echo "POPULAR_BOOK_CHANNEL_ID=${{ secrets.POPULAR_BOOK_CHANNEL_ID }}" >> .env
           echo "AI_GUIDE_GAS_URL=${{ secrets.AI_GUIDE_GAS_URL }}" >> .env
           echo "MONITORING_WEBHOOK_URL=${{ secrets.MONITORING_WEBHOOK_URL }}" >> .env
-          # 公募モニター（未設定なら NEWS_CHANNEL_ID / 平日7:30 / 65点 が既定値）
+          # 公募モニター（各Secretが空でもコード側の既定値が使われる）
+          # 既定値: 投稿先=NEWS_CHANNEL_ID / 平日7:30 / 65点以上 / 優先度3まで / gpt-5.6-luna
           echo "PUBLIC_OPPORTUNITY_CHANNEL_ID=${{ secrets.PUBLIC_OPPORTUNITY_CHANNEL_ID }}" >> .env
           echo "DISABLE_PUBLIC_OPPORTUNITY=${{ secrets.DISABLE_PUBLIC_OPPORTUNITY }}" >> .env
+          echo "PUBLIC_OPPORTUNITY_OPENAI_MODEL=${{ secrets.PUBLIC_OPPORTUNITY_OPENAI_MODEL }}" >> .env
+          echo "PUBLIC_OPPORTUNITY_CRON=${{ secrets.PUBLIC_OPPORTUNITY_CRON }}" >> .env
+          echo "PUBLIC_OPPORTUNITY_MIN_SCORE=${{ secrets.PUBLIC_OPPORTUNITY_MIN_SCORE }}" >> .env
+          echo "PUBLIC_OPPORTUNITY_MAX_PRIORITY=${{ secrets.PUBLIC_OPPORTUNITY_MAX_PRIORITY }}" >> .env
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d

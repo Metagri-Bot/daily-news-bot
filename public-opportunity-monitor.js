@@ -39,6 +39,13 @@ const {
 
 const { activeSources } = require('./public-opportunity-sources');
 
+const {
+  fetchRemoteHistory,
+  pushRemoteHistory,
+  mergeHistories,
+  buildRecords
+} = require('./public-opportunity-store');
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -52,10 +59,18 @@ const LIMITS = {
   recheckPerRun: 5, // 締切変更の確認のため再取得する既知案件の上限
   recheckIntervalDays: 6,
   aiEnrichments: 8, // OpenAIで整形する件数の上限（コスト制御）
-  requestDelayMs: 800
+  requestDelayMs: 800,
+  // 省庁サイトは応答が細切れに届くことがあり、axiosのtimeoutだけでは止まらない。
+  // 1リクエストごとにハードタイムアウトを掛ける
+  fetchTimeoutMs: 25000,
+  // 収集フェーズ全体の時間予算。超えたら残りは次回実行に回す
+  collectBudgetMs: 8 * 60 * 1000
 };
 
 const LOG_PREFIX = '[Public Opportunity]';
+
+// 既定のOpenAIモデル（環境変数 PUBLIC_OPPORTUNITY_OPENAI_MODEL で上書き可）
+const DEFAULT_AI_MODEL = process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna';
 
 // --- 小さなユーティリティ -------------------------------------------------
 
@@ -94,16 +109,33 @@ function saveState(state, stateFile = STATE_FILE) {
 
 // --- 収集 -----------------------------------------------------------------
 
+/**
+ * 指定時間で必ず終わらせるラッパー。
+ * axiosのtimeoutは「無通信時間」の上限なので、データが細切れに届き続けると
+ * いつまでも終わらない。実行時間そのものに上限を掛ける。
+ */
+function withHardTimeout(promise, ms, label) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} がタイムアウトしました（${ms}ms）`)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
 async function defaultFetchText(url) {
-  const response = await axios.get(url, {
+  const request = axios.get(url, {
     headers: {
       'User-Agent': USER_AGENT,
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
     },
     timeout: 20000,
     maxRedirects: 5,
-    responseType: 'text'
+    responseType: 'text',
+    maxContentLength: 8 * 1024 * 1024,
+    maxBodyLength: 8 * 1024 * 1024
   });
+
+  const response = await withHardTimeout(request, LIMITS.fetchTimeoutMs, `取得(${url})`);
   return typeof response.data === 'string' ? response.data : String(response.data || '');
 }
 
@@ -297,19 +329,45 @@ function safeJsonParse(text) {
   }
 }
 
+/**
+ * モデル世代ごとのパラメータ差を吸収する。
+ * GPT-5系（reasoningトークンを使うモデル）は temperature 非対応で、
+ * 出力上限は max_completion_tokens。reasoningの消費分を見込んで枠を広く取る。
+ */
+function buildCompletionParams(model, messages) {
+  const isReasoningModel = /^(gpt-5|o[1-9])/i.test(String(model));
+
+  if (isReasoningModel) {
+    return {
+      model,
+      messages,
+      max_completion_tokens: 4000,
+      reasoning_effort: 'low'
+    };
+  }
+  return { model, messages, temperature: 0.2, max_tokens: 1200 };
+}
+
+/** 未対応パラメータで400が返った場合に、最小構成で1回だけ再試行する */
+async function createCompletion(openai, model, messages) {
+  try {
+    return await openai.chat.completions.create(buildCompletionParams(model, messages));
+  } catch (error) {
+    const status = error?.status || error?.response?.status;
+    if (status !== 400) throw error;
+    console.error(`${LOG_PREFIX} パラメータ非対応の可能性があるため最小構成で再試行します: ${error.message}`);
+    return openai.chat.completions.create({ model, messages });
+  }
+}
+
 async function enrichWithAi(item, openai, model) {
   if (!openai) return { ...item, ai_enriched: false };
 
   try {
-    const response = await openai.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: AI_SYSTEM_PROMPT },
-        { role: 'user', content: buildAiPrompt(item) }
-      ],
-      temperature: 0.2,
-      max_tokens: 1200
-    });
+    const response = await createCompletion(openai, model, [
+      { role: 'system', content: AI_SYSTEM_PROMPT },
+      { role: 'user', content: buildAiPrompt(item) }
+    ]);
 
     const parsed = safeJsonParse(response.choices?.[0]?.message?.content);
     if (!parsed) return { ...item, ai_enriched: false };
@@ -369,7 +427,7 @@ function shouldRecheck(entry, now) {
  * @param {import('discord.js').Client} [options.client] Discordクライアント
  * @param {string} [options.channelId] 投稿先チャンネルID
  * @param {object} [options.openai] OpenAIクライアント（未指定ならキーワード評価のみ）
- * @param {string} [options.model] OpenAIモデル
+ * @param {string} [options.model] OpenAIモデル（既定 gpt-5.6-luna）
  * @param {boolean} [options.dryRun] trueならDiscord投稿と履歴更新を行わない
  * @param {number} [options.minScore] 通知の下限点
  * @param {number} [options.maxPriority] 監視先の優先度上限（1〜3）
@@ -384,7 +442,7 @@ async function runMonitorOnce(options = {}) {
     client = null,
     channelId = null,
     openai = null,
-    model = 'gpt-4.1-mini',
+    model = DEFAULT_AI_MODEL,
     dryRun = false,
     minScore = MIN_NOTIFY_SCORE,
     maxPriority = 3,
@@ -392,11 +450,43 @@ async function runMonitorOnce(options = {}) {
     sources: sourceOverride = null,
     stateFile = STATE_FILE,
     candidatesFile = CANDIDATES_FILE,
-    requestDelayMs = LIMITS.requestDelayMs
+    requestDelayMs = LIMITS.requestDelayMs,
+    gasUrl = process.env.GOOGLE_APPS_SCRIPT_URL || null,
+    storePostImpl = null
   } = options;
 
   const now = new Date();
-  const state = pruneState(loadState(stateFile), now);
+  const localState = pruneState(loadState(stateFile), now);
+  const localCount = Object.keys(localState.seen).length;
+
+  // 重複判定の正はスプレッドシート。ローカルJSONはその写しとして扱う
+  const storeOptions = storePostImpl ? { postImpl: storePostImpl } : {};
+  const remote = await fetchRemoteHistory(gasUrl, storeOptions);
+
+  // 通信自体が失敗し、かつローカル履歴も空＝過去の通知内容が分からない状態。
+  // ここで投稿すると過去案件を再通知してしまうため、投稿せずに中断する。
+  if (remote.status === 'unavailable' && localCount === 0) {
+    throw new Error(
+      '通知履歴を取得できませんでした（スプレッドシートへの通信失敗・ローカル履歴も空）。' +
+        '過去案件の再通知を避けるため今回の投稿を中止します。GASのURLと疎通を確認してください。'
+    );
+  }
+
+  const state =
+    remote.status === 'ok' ? pruneState(mergeHistories(localState, remote), now) : localState;
+
+  if (remote.status === 'ok') {
+    log(
+      `履歴を統合しました（ローカル${localCount}件 + シート${Object.keys(remote.seen).length}件 → ${Object.keys(state.seen).length}件）`
+    );
+  } else if (remote.status === 'not_deployed') {
+    log(
+      `⚠ GASが履歴APIに未対応のため、ローカル履歴${localCount}件のみで重複判定します（Apps Scriptの再デプロイが必要）`
+    );
+  } else if (remote.status === 'unavailable') {
+    log(`⚠ シート履歴が取得できないため、ローカル履歴${localCount}件のみで重複判定します`);
+  }
+
   const sources = sourceOverride || activeSources(maxPriority);
 
   log(`監視先 ${sources.length}件の収集を開始します（dryRun=${dryRun}）`);
@@ -434,7 +524,18 @@ async function runMonitorOnce(options = {}) {
 
   // 3. 詳細取得と採点
   const scored = [];
+  const collectDeadline = now.getTime() + LIMITS.collectBudgetMs;
+  let inspected = 0;
   for (const candidate of targets) {
+    if (Date.now() > collectDeadline) {
+      // 未処理分は履歴に残らないため、次回実行で改めて取得される
+      log(`⏱ 収集の時間予算を超えたため、残り${targets.length - inspected}件は次回に回します`);
+      break;
+    }
+    inspected += 1;
+    if (inspected % 10 === 0) {
+      log(`詳細取得 ${inspected}/${targets.length}件を処理しました`);
+    }
     try {
       const detail = await fetchDetail(candidate);
       const evaluation = scoreOpportunity(detail, now);
@@ -546,20 +647,34 @@ async function runMonitorOnce(options = {}) {
 
   // 7. 履歴更新（再確認した案件のチェック日時も記録）
   const notifiedAt = now.toISOString();
-  let nextState = recordNotified(state, fresh, notifiedAt);
+  const nextState = recordNotified(state, fresh, notifiedAt);
+  const touchedIds = new Set(fresh.map(entry => entry.id));
   for (const item of scored) {
     try {
       const id = opportunityId(item);
       if (nextState.seen[id]) {
         nextState.seen[id].last_checked_at = notifiedAt;
+        touchedIds.add(id);
       }
     } catch (error) {
       // URL不正は無視
     }
   }
+
+  // 8. スプレッドシートへ記録（ここが重複判定の正）
+  const records = buildRecords(nextState.seen, [...touchedIds]);
+  const stored = gasUrl ? await pushRemoteHistory(gasUrl, records, storeOptions) : false;
   summary.notified = fresh.length;
+  summary.stored_to_sheet = stored;
   nextState.last_result = summary;
   saveState(nextState, stateFile);
+
+  if (gasUrl && !stored) {
+    console.error(
+      `${LOG_PREFIX} ⚠ スプレッドシートへ記録できませんでした。` +
+        'ローカル履歴のみ更新済みです（state/public-opportunities.json）。GASのデプロイ状態を確認してください。'
+    );
+  }
 
   log(`投稿完了: ${fresh.length}件（収穫${summary.harvested}・精査${summary.inspected}）`);
   return summary;
@@ -580,6 +695,8 @@ async function runPublicOpportunityMonitor(options = {}) {
 
 module.exports = {
   runPublicOpportunityMonitor,
+  buildCompletionParams,
+  DEFAULT_AI_MODEL,
   harvestLinks,
   looksLikeCall,
   shouldRecheck,

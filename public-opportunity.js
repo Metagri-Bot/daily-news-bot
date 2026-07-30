@@ -434,9 +434,31 @@ function emptyState() {
   return { version: 1, seen: {}, last_run_at: null, last_result: {} };
 }
 
+function deadlineEpoch(value) {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+/**
+ * 再通知に値する変化があったかを、締切の「時刻」で判定する。
+ *
+ * 署名（ハッシュ）だけで比較すると、スプレッドシートのセル書式変換やAIが生成する
+ * タイトルの揺れで文字列が変わるたびに「更新」として再通知してしまう。
+ * 同一URLで締切が同じなら同じ公募とみなし、再通知しない。
+ */
+function hasMaterialChange(previous, item) {
+  const before = deadlineEpoch(previous && previous.deadline);
+  const after = deadlineEpoch(item && item.deadline);
+
+  // 締切が読めない状態が続いている場合は再通知しない（毎回の再投稿を防ぐ）
+  if (before === null && after === null) return false;
+  return before !== after;
+}
+
 /**
  * 通知済み履歴と突き合わせ、新規・更新のみを返す。
- * 同一URL・同一署名は再通知しない。締切変更などで署名が変われば更新通知。
+ * 判定順は「署名一致なら変化なし → 締切の時刻が変わっていれば更新」。
  */
 function selectNewOpportunities(items, state = emptyState()) {
   const seen = (state && state.seen) || {};
@@ -455,11 +477,16 @@ function selectNewOpportunities(items, state = emptyState()) {
 
     const previous = seen[id];
     const signature = opportunitySignature(item);
+
     if (!previous) {
       results.push({ item, id, signature, updated: false });
-    } else if (previous.signature !== signature) {
+      continue;
+    }
+    if (previous.signature === signature) continue;
+    if (hasMaterialChange(previous, item)) {
       results.push({ item, id, signature, updated: true });
     }
+    // 署名だけ違って締切が同じ場合は通知しない（履歴側の署名は次回書き込み時に更新される）
   }
   return results;
 }
@@ -479,9 +506,13 @@ function recordNotified(state, entries, notifiedAt = new Date().toISOString()) {
       signature,
       title: item.title,
       url: canonicalUrl(item.url),
+      organization: item.organization || null,
       deadline: item.deadline || null,
+      rank: item.rank || null,
+      score: item.score === undefined ? null : item.score,
       first_notified_at: previous.first_notified_at || notifiedAt,
-      last_notified_at: notifiedAt
+      last_notified_at: notifiedAt,
+      last_checked_at: notifiedAt
     };
   }
   return next;
@@ -611,6 +642,7 @@ module.exports = {
   rankFromScore,
   qualifiesForNotification,
   emptyState,
+  hasMaterialChange,
   selectNewOpportunities,
   recordNotified,
   pruneState,

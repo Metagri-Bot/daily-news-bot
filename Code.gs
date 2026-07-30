@@ -2,6 +2,11 @@
 // Daily News Bot - Google Apps Script
 // ========================================
 
+// 注意: 本番デプロイ用の正本は `.gascode` です。
+// 公募モニターの重複防止に使う `getPublicOpportunities` / `publicOpportunities`
+// （Public_Opportunitiesシート）のハンドラは `.gascode` 側に実装しています。
+// 手順は GAS_INTEGRATION.md「公募モニターの履歴シート」を参照してください。
+
 /**
  * POST リクエスト処理
  */

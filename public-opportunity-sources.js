@@ -92,10 +92,11 @@ const SOURCES = [
   {
     id: 'ipa-kobo',
     organization: 'IPA',
-    label: '公募・入札',
+    label: '公募情報',
+    // 旧 /about/kobo/ は廃止。2026-07-30時点の現行URLは /choutatsu/koubo/
     type: 'html',
-    url: 'https://www.ipa.go.jp/about/kobo/index.html',
-    linkFilter: /\/about\/kobo\//i,
+    url: 'https://www.ipa.go.jp/choutatsu/koubo/index.html',
+    linkFilter: /\/choutatsu\//i,
     priority: 2,
     enabled: true
   },
@@ -134,10 +135,11 @@ const SOURCES = [
   {
     id: 'chiba-pref',
     organization: '千葉県',
-    label: '報道発表・公募',
+    label: '報道発表一覧',
+    // 旧 /happyou/ は廃止。2026-07-30時点の現行URLは /cate/kt/kouhou/houdou/ichiran/
     type: 'html',
-    url: 'https://www.pref.chiba.lg.jp/happyou/index.html',
-    linkFilter: /lg\.jp|^\//i,
+    url: 'https://www.pref.chiba.lg.jp/cate/kt/kouhou/houdou/ichiran/index.html',
+    linkFilter: /^\//i,
     priority: 3,
     enabled: true
   },

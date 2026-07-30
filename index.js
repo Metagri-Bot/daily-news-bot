@@ -20,6 +20,7 @@ const {
   getArticlePublishedDate,
   isNewsWithinFreshness
 } = require('./news-freshness');
+const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
 
 // .envから設定を読み込む
@@ -72,6 +73,8 @@ const DISABLE_PUBLIC_OPPORTUNITY = process.env.DISABLE_PUBLIC_OPPORTUNITY === 't
 const PUBLIC_OPPORTUNITY_MIN_SCORE = Number(process.env.PUBLIC_OPPORTUNITY_MIN_SCORE || 65);
 const PUBLIC_OPPORTUNITY_MAX_PRIORITY = Number(process.env.PUBLIC_OPPORTUNITY_MAX_PRIORITY || 3);
 const PUBLIC_OPPORTUNITY_CRON = process.env.PUBLIC_OPPORTUNITY_CRON || '30 7 * * 1-5';
+const PUBLIC_OPPORTUNITY_OPENAI_MODEL =
+  process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna';
 
 // === 農業AI通信のDiscord投稿リンクUTM設定 ===
 const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
@@ -100,7 +103,12 @@ function addDiscordUtm(rawUrl, campaign = 'ai_guide', content = '') {
 
 // === キーワード定義（旧） ===
 const TECH_KEYWORDS = [ 'Web3', 'ブロックチェーン', 'NFT', 'DAO', 'メタバース', '生成AI', 'LLM', 'ChatGPT', 'AI', '人工知能', 'IoT', 'ドローン', 'DX', 'デジタル', 'ロボット', '自動化', '衛星', 'ソリューション', 'プラットフォーム', 'システム' ];
-const PRIMARY_INDUSTRY_KEYWORDS = [ '農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業', '圃場', '収穫', '品種', 'JGAP' ];
+const PRIMARY_INDUSTRY_KEYWORDS = [
+  '農業', '農家', '生産者', '農園', '農産物', '畜産', '漁業', '林業', '酪農',
+  '栽培', '養殖', 'スマート農業', 'フードテック', '農林水産', '一次産業',
+  '圃場', '収穫', '品種', 'JGAP', '果樹', '田んぼ', '水田', '農学部',
+  '農系', '産地', '茶', 'メロン', 'サクランボ', 'ブルーベリー'
+];
 const USECASE_KEYWORDS = [ '事例', '活用', '導入', '実証実験', '提携', '協業', '開発', 'リリース', '発表', '開始', '連携', '提供' ];
 
 // === 海外文献用のキーワード（英語） ===
@@ -134,7 +142,8 @@ const GLOBAL_RESEARCH_KEYWORDS = [
 // 【1. コア農業キーワード】（+3点） - 記事の土台
 const CORE_AGRI_KEYWORDS =  [
   // 基本
-  '野菜', '農業', '農家', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', '収穫', '品種', '圃場', '水産',
+  '野菜', '農業', '農家', '生産者', '農園', '農産物', '畜産', '漁業', '林業', '酪農', '栽培', '養殖', '収穫', '品種', '圃場', '水産',
+  '果樹', '田んぼ', '水田', '農学部', '農系', '産地', '茶', 'メロン', 'サクランボ', 'ブルーベリー',
   // 新農法・技術
   '乾田直播', '不耕起', 'リジェネラティブ農業', '環境再生型', '陸上養殖', '植物工場', 'バイオ炭', 'バイオスティミュラント'
 ];
@@ -3660,7 +3669,7 @@ async function postPublicOpportunities() {
       client,
       channelId: PUBLIC_OPPORTUNITY_CHANNEL_ID,
       openai: OPENAI_API_KEY ? openai : null,
-      model: 'gpt-4.1-mini',
+      model: PUBLIC_OPPORTUNITY_OPENAI_MODEL,
       minScore: PUBLIC_OPPORTUNITY_MIN_SCORE,
       maxPriority: PUBLIC_OPPORTUNITY_MAX_PRIORITY
     });
@@ -3775,20 +3784,49 @@ client.once("ready", async () => {
         return;
       }
 
+      const editoriallyEligibleArticles = eligibleArticles
+        .map(article => ({
+          article,
+          editorialFit: evaluateEditorialFit(article)
+        }))
+        .filter(({ editorialFit }) => editorialFit.eligible)
+        .sort((a, b) => {
+          if (b.editorialFit.editorialScore !== a.editorialFit.editorialScore) {
+            return b.editorialFit.editorialScore - a.editorialFit.editorialScore;
+          }
+          return new Date(b.article.isoDate || b.article.pubDate || 0)
+            - new Date(a.article.isoDate || a.article.pubDate || 0);
+        })
+        .map(({ article, editorialFit }) => ({
+          ...article,
+          editorialScore: editorialFit.editorialScore,
+          editorialReason: editorialFit.reasons.slice(0, 4).join('・')
+        }));
+
+      console.log(
+        `[Daily News] 編集品質ゲートで ${eligibleArticles.length - editoriallyEligibleArticles.length} 件を除外し、`
+        + `${editoriallyEligibleArticles.length} 件を厳選候補にしました。`
+      );
+
+      if (editoriallyEligibleArticles.length === 0) {
+        console.log('[Daily News] 品質基準を満たす記事がないため、本日の投稿を見送ります。');
+        return;
+      }
+
       // ★★★ 多段階フィルタリングロジック ★★★
       let articlesToSelectFrom = [];
 
-      // ▼▼▼ ここから下のすべてのフィルタリング対象を "eligibleArticles" に修正 ▼▼▼
+      // 編集品質ゲート通過済みの記事だけを優先順位付けする
 
       // --- 【特別優先】農家・生産者本人によるAIの実利用事例 ---
-      articlesToSelectFrom = eligibleArticles.filter(isFarmerAiUseCase);
+      articlesToSelectFrom = editoriallyEligibleArticles.filter(isFarmerAiUseCase);
       if (articlesToSelectFrom.length > 0) {
         console.log(`[Daily News] 農家AI活用事例を ${articlesToSelectFrom.length} 件検知しました。特別優先します。`);
       }
 
       // --- 【最優先】一次産業 + 技術 + 活用事例 ---
       if (articlesToSelectFrom.length === 0) {
-        articlesToSelectFrom = eligibleArticles.filter(article => {
+        articlesToSelectFrom = editoriallyEligibleArticles.filter(article => {
           const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
           const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
           const hasTech = TECH_KEYWORDS.some(key => content.includes(key.toLowerCase()));
@@ -3800,7 +3838,7 @@ client.once("ready", async () => {
       // --- 【次善】一次産業 + 技術 ---
       if (articlesToSelectFrom.length === 0) {
         console.log('[Daily News] 最優先条件に合致せず。緩和条件1（一次産業+技術）で再検索...');
-        articlesToSelectFrom = eligibleArticles.filter(article => { // ← ここも修正
+        articlesToSelectFrom = editoriallyEligibleArticles.filter(article => {
           const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
           const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
           const hasTech = TECH_KEYWORDS.some(key => content.includes(key.toLowerCase()));
@@ -3811,7 +3849,7 @@ client.once("ready", async () => {
       // --- 【次次善】一次産業 + 活用事例 ---
       if (articlesToSelectFrom.length === 0) {
         console.log('[Daily News] 緩和条件1に合致せず。緩和条件2（一次産業+活用事例）で再検索...');
-        articlesToSelectFrom = eligibleArticles.filter(article => { // ← ここも修正
+        articlesToSelectFrom = editoriallyEligibleArticles.filter(article => {
             const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
             const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
             const hasUsecase = USECASE_KEYWORDS.some(key => content.includes(key.toLowerCase()));
@@ -3822,7 +3860,7 @@ client.once("ready", async () => {
       // --- 【次次次善】一次産業のみ ---
       if (articlesToSelectFrom.length === 0) {
         console.log('[Daily News] 緩和条件2に合致せず。最終緩和条件（一次産業のみ）で再検索...');
-        articlesToSelectFrom = eligibleArticles.filter(article => { // ← ここも修正
+        articlesToSelectFrom = editoriallyEligibleArticles.filter(article => {
             const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
             const hasPrimary = PRIMARY_INDUSTRY_KEYWORDS.some(key => content.includes(key.toLowerCase()));
             return hasPrimary;
@@ -3838,8 +3876,8 @@ client.once("ready", async () => {
         return; // どの条件にも合致しなければ終了
       }
 
-      // 候補の中からランダムに1つ選ぶ
-      const selectedArticle = articlesToSelectFrom[Math.floor(Math.random() * articlesToSelectFrom.length)];
+      // 編集品質スコアが最も高い記事を選ぶ（ランダム選択はしない）
+      const selectedArticle = articlesToSelectFrom[0];
       
         // === Metagri研究所の見解を生成 ===
       const metagriAnalysis = await generateMetagriInsight(selectedArticle);
@@ -3861,6 +3899,9 @@ client.once("ready", async () => {
 
 🔬 **Metagri研究所より**
 ${metagriAnalysis.insight}
+
+✨ **厳選理由**
+${selectedArticle.editorialReason}
 
 **▼議論は下のスレッドでどうぞ！▼**
 `;
@@ -3919,7 +3960,7 @@ ${discussionQuestions}
 
 
 // --- 2. 情報収集ニュース投稿タスク (1日1回：朝6時) ---
-// 毎日 AM 6:00 JST に実行し、厳選した5件を届ける
+// 毎日 AM 6:00 JST に実行し、品質基準を満たす記事を最大3件届ける
 // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
 cron.schedule('0 6 * * *', async () => {
   console.log('[Info Gathering] 日刊・情報収集タスクを開始します...');
@@ -3962,6 +4003,7 @@ cron.schedule('0 6 * * *', async () => {
     const scoredArticles = [];
     const uniqueUrls = new Set();
     let excludedCount = 0; // 除外された記事数をカウント
+    let editorialExcludedCount = 0;
 
     // すべての新規記事をスコアリング
     for (const article of allNewArticles) {
@@ -4002,6 +4044,15 @@ cron.schedule('0 6 * * *', async () => {
         matchedCategories.add('農家AI活用事例');
       }
 
+      const editorialFit = evaluateEditorialFit(article);
+      if (!editorialFit.eligible) {
+        editorialExcludedCount++;
+        const reasons = editorialFit.exclusionReasons.join('・') || '価値軸・具体性が基準未満';
+        console.log(`[Info Gathering] 編集品質ゲートで除外: ${article.title} (${reasons})`);
+        continue;
+      }
+      score += editorialFit.editorialScore;
+
       // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
       if (score > 0 && (matchedCategories.has('コア農業') || farmerAiUseCase)) {
         // ★★★ 動的スコアリングを適用 ★★★
@@ -4012,13 +4063,18 @@ cron.schedule('0 6 * * *', async () => {
           baseScore: score,
           score: dynamicScore,
           priorityLabel: Array.from(matchedCategories).join(' + '),
-          isFarmerAiUseCase: farmerAiUseCase
+          isFarmerAiUseCase: farmerAiUseCase,
+          editorialScore: editorialFit.editorialScore,
+          editorialReason: editorialFit.reasons.slice(0, 4).join('・')
         });
         uniqueUrls.add(article.link);
       }
     }
 
-    console.log(`[Info Gathering] 除外キーワードに該当: ${excludedCount}件, スコアリング対象: ${scoredArticles.length}件`);
+    console.log(
+      `[Info Gathering] 除外キーワード: ${excludedCount}件, 編集品質ゲート除外: `
+      + `${editorialExcludedCount}件, 厳選候補: ${scoredArticles.length}件`
+    );
 
     // スコアの高い順、次に日付の新しい順でソート
     scoredArticles.sort((a, b) => {
@@ -4054,6 +4110,7 @@ cron.schedule('0 6 * * *', async () => {
       if (article.isFarmerAiUseCase) {
         postContent += `🌾🤖 **農家AI活用事例**\n`;
       }
+      postContent += `✨ **厳選理由:** ${article.editorialReason}\n`;
       postContent += `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\`\n`;
       postContent += `${article.link}\n\n`;
       postedArticleUrls.add(article.link);

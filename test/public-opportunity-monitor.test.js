@@ -11,7 +11,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { runPublicOpportunityMonitor } = require('../public-opportunity-monitor');
+const {
+  runPublicOpportunityMonitor,
+  buildCompletionParams,
+  DEFAULT_AI_MODEL
+} = require('../public-opportunity-monitor');
 
 const LIST_URL = 'https://www.maff.go.jp/j/press/index.html';
 const DETAIL_URL = 'https://www.maff.go.jp/j/press/kanbo/260727.html';
@@ -331,4 +335,112 @@ test('AIがrelevant=falseと判定した案件は投稿しない', async () => {
 
   assert.equal(summary.notified, 0);
   assert.equal(spy.sent.length, 0);
+});
+
+// --- モデル別パラメータ ---
+
+test('既定モデルは gpt-5.6-luna', () => {
+  assert.equal(DEFAULT_AI_MODEL, 'gpt-5.6-luna');
+});
+
+test('GPT-5系は temperature を送らず max_completion_tokens を使う', () => {
+  const params = buildCompletionParams('gpt-5.6-luna', []);
+  assert.equal(params.temperature, undefined);
+  assert.equal(params.max_tokens, undefined);
+  assert.equal(params.max_completion_tokens, 4000);
+  assert.equal(params.reasoning_effort, 'low');
+});
+
+test('従来モデルは temperature と max_tokens を使う', () => {
+  const params = buildCompletionParams('gpt-4.1-mini', []);
+  assert.equal(params.temperature, 0.2);
+  assert.equal(params.max_tokens, 1200);
+  assert.equal(params.max_completion_tokens, undefined);
+  assert.equal(params.reasoning_effort, undefined);
+});
+
+test('パラメータ非対応で400が返っても最小構成で再試行して通知できる', async () => {
+  const paths = tempPaths();
+  const spy = makeChannelSpy();
+  const calls = [];
+
+  const pickyOpenai = {
+    chat: {
+      completions: {
+        create: async params => {
+          calls.push(params);
+          if (calls.length === 1) {
+            const error = new Error("Unsupported parameter: 'reasoning_effort'");
+            error.status = 400;
+            throw error;
+          }
+          return {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    relevant: true,
+                    title: 'AI×農山漁村 実装プログラム',
+                    deadline: '2027-08-29T17:00:00+09:00',
+                    summary: '再試行後に取得した要約。',
+                    fit_reasons: ['Metagri研究所の農家ネットワーク'],
+                    use_cases: ['予算'],
+                    action: '公募要領を確認する',
+                    caution: '要確認'
+                  })
+                }
+              }
+            ]
+          };
+        }
+      }
+    }
+  };
+
+  const summary = await runPublicOpportunityMonitor({
+    client: spy.client,
+    channelId: '123',
+    openai: pickyOpenai,
+    requestDelayMs: 0,
+    sources: SOURCES,
+    fetchTextImpl: makeFetch('令和9年8月29日17時00分'),
+    stateFile: paths.stateFile,
+    candidatesFile: paths.candidatesFile
+  });
+
+  assert.equal(calls.length, 2, '400のあとに1回だけ再試行する');
+  assert.equal(calls[1].reasoning_effort, undefined, '再試行は最小構成');
+  assert.equal(summary.notified, 1);
+  assert.match(spy.sent[0].embeds[0].description, /再試行後に取得した要約/);
+});
+
+test('AI呼び出しが400以外で失敗してもキーワード評価で通知を継続する', async () => {
+  const paths = tempPaths();
+  const spy = makeChannelSpy();
+
+  const brokenOpenai = {
+    chat: {
+      completions: {
+        create: async () => {
+          const error = new Error('service unavailable');
+          error.status = 503;
+          throw error;
+        }
+      }
+    }
+  };
+
+  const summary = await runPublicOpportunityMonitor({
+    client: spy.client,
+    channelId: '123',
+    openai: brokenOpenai,
+    requestDelayMs: 0,
+    sources: SOURCES,
+    fetchTextImpl: makeFetch('令和9年8月29日17時00分'),
+    stateFile: paths.stateFile,
+    candidatesFile: paths.candidatesFile
+  });
+
+  assert.equal(summary.notified, 1, 'AI失敗時も投稿は止めない');
+  assert.match(spy.sent[0].embeds[0].title, /【S・\d+点】/);
 });

@@ -10,6 +10,7 @@
  *   node scripts/run-public-opportunity-once.js --priority 1   # 優先度1の監視先だけ
  *   node scripts/run-public-opportunity-once.js --min-score 60 # 通知の下限点を変更
  *   node scripts/run-public-opportunity-once.js --no-ai        # OpenAI整形なし（キーワード評価のみ）
+ *   node scripts/run-public-opportunity-once.js --model gpt-5.6-terra  # モデルを一時的に変更
  *
  * dry-run では通知履歴を更新しないため、何度でも同じ結果を確認できる。
  */
@@ -21,13 +22,20 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const { runPublicOpportunityMonitor } = require('../public-opportunity-monitor');
 
 function parseArgs(argv) {
-  const args = { dryRun: false, useAi: true, priority: 3, minScore: 65 };
+  const args = {
+    dryRun: false,
+    useAi: true,
+    priority: 3,
+    minScore: 65,
+    model: process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna'
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
     if (key === '--dry-run') args.dryRun = true;
     else if (key === '--no-ai') args.useAi = false;
     else if (key === '--priority') args.priority = Number(argv[++i]);
     else if (key === '--min-score') args.minScore = Number(argv[++i]);
+    else if (key === '--model') args.model = argv[++i];
   }
   return args;
 }
@@ -40,7 +48,9 @@ async function main() {
       ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
       : null;
 
-  if (!openai) {
+  if (openai) {
+    console.log(`[Public Opportunity] 使用モデル: ${args.model}`);
+  } else {
     console.log('[Public Opportunity] OpenAI整形なしで実行します（キーワード評価のみ）。');
   }
 
@@ -60,7 +70,7 @@ async function main() {
       client,
       channelId,
       openai,
-      model: 'gpt-4.1-mini',
+      model: args.model,
       dryRun: args.dryRun,
       minScore: args.minScore,
       maxPriority: args.priority
