@@ -71,6 +71,8 @@ const LIMITS = {
   aiEnrichments: 8,
   requestDelayMs: 800,
   fetchTimeoutMs: 25000,
+  fetchAttempts: 3,
+  fetchRetryDelayMs: 750,
   collectBudgetMs: 6 * 60 * 1000
 };
 
@@ -140,6 +142,60 @@ async function defaultFetchText(url) {
 
 let fetchText = defaultFetchText;
 
+/** 一時的な通信障害だけを再試行する。URL不正などの4xxは即時失敗させる。 */
+function isRetryableFetchError(error) {
+  const status = Number(error?.response?.status || error?.status || 0);
+  if (status) return status === 408 || status === 425 || status === 429 || status >= 500;
+
+  const code = String(error?.code || '').toUpperCase();
+  if (
+    [
+      'ECONNRESET',
+      'ECONNABORTED',
+      'ETIMEDOUT',
+      'ESOCKETTIMEDOUT',
+      'EAI_AGAIN',
+      'ENETUNREACH',
+      'EHOSTUNREACH',
+      'EPIPE'
+    ].includes(code)
+  ) {
+    return true;
+  }
+
+  return /socket hang up|timed?\s*out|connection reset/i.test(String(error?.message || ''));
+}
+
+/** 指数バックオフ付きHTTP取得。テストでは fetchImpl と delayMs を差し替えられる。 */
+async function fetchTextWithRetry(url, options = {}) {
+  const {
+    fetchImpl = fetchText,
+    attempts = LIMITS.fetchAttempts,
+    delayMs = LIMITS.fetchRetryDelayMs,
+    logRetry = true
+  } = options;
+
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchImpl(url);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableFetchError(error)) throw error;
+
+      const waitMs = delayMs * 2 ** (attempt - 1);
+      if (logRetry) {
+        log(
+          `一時的な通信障害のため再試行します（${attempt + 1}/${attempts}、${waitMs}ms後）: ` +
+            `${url} - ${error.message}`
+        );
+      }
+      if (waitMs > 0) await sleep(waitMs);
+    }
+  }
+  throw lastError;
+}
+
 /**
  * 一覧ページからリンクを収穫する。
  *
@@ -188,14 +244,60 @@ function harvestLinks(html, source) {
   return { links: [...found.values()], skipped };
 }
 
+/** 親ページから、案件一覧を載せる子ページのURLを同一ホスト内で見つける。 */
+function discoverListingUrls(html, source, pageUrl = source.url) {
+  if (!source.listingLinkPattern) return [];
+
+  const $ = cheerio.load(html);
+  const base = new URL(pageUrl);
+  const found = new Set();
+
+  $('a[href]').each((_, element) => {
+    const rawHref = String($(element).attr('href') || '').trim();
+    if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) return;
+
+    try {
+      const absolute = new URL(rawHref, base);
+      if (!/^https?:$/.test(absolute.protocol) || absolute.hostname !== base.hostname) return;
+      source.listingLinkPattern.lastIndex = 0;
+      if (source.listingLinkPattern.test(absolute.pathname)) {
+        found.add(canonicalUrl(absolute.toString()));
+      }
+    } catch (error) {
+      /* 不正なリンクは無視 */
+    }
+  });
+
+  return [...found];
+}
+
 async function collectFromSource(source) {
   try {
-    const html = await fetchText(source.url);
+    const html = await fetchTextWithRetry(source.url);
     if (!html) {
       log(`${source.organization}（${source.label}）から本文を取得できませんでした`);
       return [];
     }
-    const { links } = harvestLinks(html, source);
+
+    const found = new Map();
+    harvestLinks(html, source).links.forEach(link => found.set(canonicalUrl(link.url), link));
+
+    const listingUrls = discoverListingUrls(html, source);
+    for (const listingUrl of listingUrls) {
+      try {
+        const listingHtml = await fetchTextWithRetry(listingUrl);
+        harvestLinks(listingHtml, { ...source, url: listingUrl }).links.forEach(link =>
+          found.set(canonicalUrl(link.url), link)
+        );
+      } catch (error) {
+        console.error(
+          `${LOG_PREFIX} ${source.organization}（${source.label}）の子ページ取得に失敗: ` +
+            `${listingUrl} - ${error.message}`
+        );
+      }
+    }
+
+    const links = [...found.values()].slice(0, LIMITS.linksPerSource);
     log(`${source.organization}（${source.label}）候補 ${links.length}件`);
     if (links.length >= LIMITS.linksPerSource) {
       log(
@@ -254,7 +356,7 @@ async function fetchDetail(candidate) {
     return { ...candidate, body: candidate.title, deadline: null, needs_manual_check: true };
   }
 
-  const html = await fetchText(candidate.url);
+  const html = await fetchTextWithRetry(candidate.url);
   const body = extractBody(html);
   const rawTitle = pageTitle(html, candidate.title);
   const deadline = extractTenderDeadline(body);
@@ -732,6 +834,9 @@ module.exports = {
   buildCompletionParams,
   DEFAULT_AI_MODEL,
   harvestLinks,
+  discoverListingUrls,
+  fetchTextWithRetry,
+  isRetryableFetchError,
   extractBody,
   shouldRecheck,
   STATE_FILE,

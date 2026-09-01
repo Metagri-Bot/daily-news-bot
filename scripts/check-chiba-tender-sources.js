@@ -14,7 +14,7 @@
 const axios = require('axios');
 
 const { SOURCES, MANUAL_SOURCES } = require('../chiba-tender-sources');
-const { harvestLinks } = require('../chiba-tender-radar');
+const { harvestLinks, discoverListingUrls } = require('../chiba-tender-radar');
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -34,11 +34,39 @@ async function check(source) {
     const html = typeof response.data === 'string' ? response.data : '';
     let harvested = 0;
     let samples = [];
+    let followed = 0;
+    const nestedErrors = [];
 
     if (response.status === 200 && html) {
-      const result = harvestLinks(html, source);
-      harvested = result.links.length;
-      samples = result.links.slice(0, 3).map(link => link.title);
+      const found = new Map();
+      harvestLinks(html, source).links.forEach(link => found.set(link.url, link));
+
+      const listingUrls = discoverListingUrls(html, source);
+      followed = listingUrls.length;
+      for (const listingUrl of listingUrls) {
+        try {
+          const listingResponse = await axios.get(listingUrl, {
+            headers: { 'User-Agent': USER_AGENT },
+            timeout: 25000,
+            maxRedirects: 5,
+            responseType: 'text',
+            validateStatus: () => true
+          });
+          if (listingResponse.status !== 200) {
+            nestedErrors.push(`${listingUrl}: HTTP ${listingResponse.status}`);
+            continue;
+          }
+          harvestLinks(String(listingResponse.data || ''), { ...source, url: listingUrl }).links.forEach(
+            link => found.set(link.url, link)
+          );
+        } catch (error) {
+          nestedErrors.push(`${listingUrl}: ${error.message}`);
+        }
+      }
+
+      const links = [...found.values()];
+      harvested = links.length;
+      samples = links.slice(0, 3).map(link => link.title);
     }
 
     return {
@@ -49,8 +77,11 @@ async function check(source) {
       bytes: html.length,
       elapsed_ms: elapsed,
       harvested,
+      followed,
+      nested_errors: nestedErrors,
       samples,
-      ok: response.status === 200 && html.length > 1000
+      empty_expected: Boolean(source.emptyExpected),
+      ok: response.status === 200 && html.length > 1000 && nestedErrors.length === 0
     };
   } catch (error) {
     return {
@@ -75,18 +106,22 @@ async function main() {
     results.push(result);
 
     const mark = result.ok ? '✅' : '❌';
-    const harvest = result.harvested === 0 && result.ok ? ' ⚠ 収穫0件' : '';
+    const harvest = result.harvested === 0 && result.ok && !result.empty_expected ? ' ⚠ 収穫0件' : '';
+    const followed = result.followed ? `／子ページ${result.followed}件` : '';
     console.log(
       `${mark} [${result.status}] ${result.organization}（${result.label}）` +
-        ` 収穫${result.harvested}件${harvest}`
+        ` 収穫${result.harvested}件${followed}${harvest}`
     );
     if (result.error) console.log(`   エラー: ${result.error}`);
+    (result.nested_errors || []).forEach(error => console.log(`   子ページエラー: ${error}`));
     result.samples.forEach(sample => console.log(`   例: ${sample}`));
     console.log(`   ${source.url}\n`);
   }
 
   const dead = results.filter(result => !result.ok);
-  const empty = results.filter(result => result.ok && result.harvested === 0);
+  const empty = results.filter(
+    result => result.ok && result.harvested === 0 && !result.empty_expected
+  );
 
   console.log('--- まとめ ---');
   console.log(`監視先 ${results.length}件／到達不能 ${dead.length}件／収穫0件 ${empty.length}件`);

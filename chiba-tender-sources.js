@@ -77,7 +77,12 @@ const SOURCES = [
     organization: '鎌ケ谷市',
     label: 'プロポーザル情報（募集中）',
     type: 'html',
-    url: 'https://www.city.kamagaya.chiba.jp/jigyosha/nyuusatu_menu/proposal/poropo_boshu/index.html',
+    // 募集中が0件になると /poropo_boshu/index.html 自体が404になる（2026-09-02実測）。
+    // 常設の親ページを起点にし、「募集中」ページが現れた時だけ1階層追跡する。
+    url: 'https://www.city.kamagaya.chiba.jp/jigyosha/nyuusatu_menu/proposal/index.html',
+    listingLinkPattern:
+      /\/jigyosha\/nyuusatu_menu\/proposal\/poropo_boshu(?:\/index\.html|\/)?$/i,
+    emptyExpected: true,
     priority: 2,
     enabled: true
   },
