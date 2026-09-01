@@ -786,7 +786,7 @@ function pruneState(state, now = new Date(), keepDays = 400) {
  * 構造的に欠落する（7日前が水曜なら永久に飛ばない）。
  * そこで「次回実行までに線を跨ぐか」で判定する。
  */
-function computeNextRunAt(now = new Date(), { days = [2, 5], hour = 8, minute = 30 } = {}) {
+function computeNextRunAt(now = new Date(), { days = [2, 5], hour = 8, minute = 50 } = {}) {
   const base = new Date(now);
   for (let offset = 0; offset <= 8; offset += 1) {
     const candidate = new Date(base.getTime() + offset * MS_PER_DAY);

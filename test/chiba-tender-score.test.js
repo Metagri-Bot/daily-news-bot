@@ -24,7 +24,7 @@ const {
   buildHeartbeatLine
 } = require('../chiba-tender-score');
 
-const NOW = new Date('2026-09-01T08:30:00+09:00');
+const NOW = new Date('2026-09-01T08:50:00+09:00');
 const DEADLINE_30D = '2026-10-01T17:00:00+09:00';
 
 /** 実際の詳細ページ本文に近い長さ・語彙のダミー本文を作る */
@@ -343,18 +343,18 @@ test('採点：締切済みは除外される', () => {
 // 締切リマインド：週2回運用で線を跨ぐかで判定する
 // ========================================================================
 
-test('リマインド：次回実行日は火・金 8:30 JSTになる', () => {
-  // 2026-09-01 は火曜。8:30ちょうどに実行しているので、次は金曜 9/4 08:30 JST
-  const next = computeNextRunAt(new Date('2026-09-01T08:30:00+09:00'));
-  assert.strictEqual(next.toISOString(), '2026-09-03T23:30:00.000Z'); // = 2026-09-04 08:30 JST
+test('リマインド：次回実行日は火・金 8:50 JSTになる', () => {
+  // 2026-09-01 は火曜。8:50ちょうどに実行しているので、次は金曜 9/4 08:50 JST
+  const next = computeNextRunAt(new Date('2026-09-01T08:50:00+09:00'));
+  assert.strictEqual(next.toISOString(), '2026-09-03T23:50:00.000Z'); // = 2026-09-04 08:50 JST
 
   const jst = new Date(next.getTime() + 9 * 60 * 60 * 1000);
   assert.strictEqual(jst.getUTCDay(), 5, '金曜');
   assert.strictEqual(jst.getUTCHours(), 8);
-  assert.strictEqual(jst.getUTCMinutes(), 30);
+  assert.strictEqual(jst.getUTCMinutes(), 50);
 
   // 金曜の実行なら次は火曜（土日をまたぐ）
-  const afterFriday = computeNextRunAt(new Date('2026-09-04T08:30:00+09:00'));
+  const afterFriday = computeNextRunAt(new Date('2026-09-04T08:50:00+09:00'));
   const afterJst = new Date(afterFriday.getTime() + 9 * 60 * 60 * 1000);
   assert.strictEqual(afterJst.getUTCDay(), 2, '火曜');
   assert.strictEqual(afterJst.getUTCDate(), 8);

@@ -77,7 +77,7 @@ const PUBLIC_OPPORTUNITY_CRON = process.env.PUBLIC_OPPORTUNITY_CRON || '30 7 * *
 const PUBLIC_OPPORTUNITY_OPENAI_MODEL =
   process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna';
 
-// === 千葉県自治体案件レーダー設定（火・金 8:30 JST） ===
+// === 千葉県自治体案件レーダー設定（火・金 8:50 JST） ===
 // 公募モニター（省庁・全国／平日7:30）とは別チャンネル・別履歴シートで運用する。
 // 未設定なら公募モニターのチャンネルへフォールバックする。
 const CHIBA_TENDER_CHANNEL_ID =
@@ -88,8 +88,10 @@ const DISABLE_CHIBA_TENDER = process.env.DISABLE_CHIBA_TENDER === 'true';
 const CHIBA_TENDER_MIN_SCORE = Number(process.env.CHIBA_TENDER_MIN_SCORE || 60);
 const CHIBA_TENDER_ALERT_SCORE = Number(process.env.CHIBA_TENDER_ALERT_SCORE || 80);
 const CHIBA_TENDER_MAX_PRIORITY = Number(process.env.CHIBA_TENDER_MAX_PRIORITY || 2);
-const CHIBA_TENDER_CRON = process.env.CHIBA_TENDER_CRON || '30 8 * * 2,5';
-const PUBLIC_OPPORTUNITY_OPENAI_MODEL = process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna';
+const CHIBA_TENDER_CRON = process.env.CHIBA_TENDER_CRON || '50 8 * * 2,5';
+// AIモデルは公募モニターと共用（2026-09-02 本人判断）。
+// 専用の環境変数は持たないので、上の PUBLIC_OPPORTUNITY_OPENAI_MODEL をそのまま使う。
+// ⚠ ここで再宣言しないこと（77行目で宣言済み。二重宣言は起動時のSyntaxErrorになる）。
 
 // === 農業AI通信のDiscord投稿リンクUTM設定 ===
 const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
@@ -4746,7 +4748,7 @@ if (process.env.AI_GUIDE_GAS_URL) {
     timezone: "Asia/Tokyo"
   });
 
-  // === 千葉県自治体案件レーダー（火・金 8:30 JST） ===
+  // === 千葉県自治体案件レーダー（火・金 8:50 JST） ===
   // 8:00 の厳選ニュースと 7:30 の公募モニターの後ろに置いている。
   cron.schedule(CHIBA_TENDER_CRON, async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行

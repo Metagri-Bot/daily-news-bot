@@ -32,14 +32,9 @@ function readValue(name, fallback) {
 async function main() {
   const dryRun = readFlag('dry-run');
   const noAi = readFlag('no-ai');
-  // モデルは公募モニターと共用でよい（2026-09-02 本人判断）。
-  // CHIBA_TENDER_OPENAI_MODEL を先に見るので、後から片方だけ変えたくなったら足せる。
-  const model = readValue(
-    'model',
-    process.env.CHIBA_TENDER_OPENAI_MODEL ||
-      process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL ||
-      DEFAULT_AI_MODEL
-  );
+  // モデルは公募モニターと共用（2026-09-02 本人判断）。専用の環境変数は持たない。
+  // 片方だけ変えたいときは --model で一時的に上書きする。
+  const model = readValue('model', process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || DEFAULT_AI_MODEL);
   const minScore = Number(readValue('min-score', process.env.CHIBA_TENDER_MIN_SCORE || MIN_NOTIFY_SCORE));
   const alertScore = Number(readValue('alert-score', process.env.CHIBA_TENDER_ALERT_SCORE || ALERT_SCORE));
   const maxPriority = Number(readValue('max-priority', process.env.CHIBA_TENDER_MAX_PRIORITY || 2));
