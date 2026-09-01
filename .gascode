@@ -117,6 +117,24 @@ function doPost(e) {
       });
     }
 
+    // --- 千葉県自治体案件レーダー（案件台帳／重複通知の防止） ---
+
+    // 案件台帳の取得。レーダーは実行前にこれを読み、通知済み案件を除外する
+    else if (type === 'getChibaTenders') {
+      return createJsonResponse(getChibaTenders());
+    }
+
+    // 案件台帳の記録。通知した案件だけでなく、59点以下の案件も残す
+    // （フェーズ2の更新予測は、落とした案件の履歴があってはじめて成立する）
+    else if (type === 'chibaTenders') {
+      const chibaResult = upsertChibaTenders(data.records);
+      return createJsonResponse({
+        "result": "success",
+        "inserted": chibaResult.inserted,
+        "updated": chibaResult.updated
+      });
+    }
+
     // どのタイプにも一致しない場合
     Logger.log("Received unknown data type: " + type);
     return createJsonResponse({ "result": "error", "message": "Unknown type: " + type });
@@ -491,3 +509,239 @@ function testPublicOpportunities() {
 
 //   Logger.log(`[logAiGuide] 農業AI通信を記録しました: ${data.title}`);
 // }
+
+
+// ========================================================================
+//  千葉県自治体案件レーダー（Chiba_Tenders シート）
+//  daily-news-bot / chiba-tender-radar.js の案件台帳の「正」
+//
+//  Public_Opportunities との違い:
+//    - 通知した案件だけでなく、通知しなかった案件（59点以下・対象外）も残す。
+//      フェーズ2の「更新案件レーダー」は、落とした案件の履歴があって成立する。
+//    - 契約期間・複数年度・上限額を保存する。契約期間は結果ページに載らないため、
+//      公告の時点で保存しておかないと後から取れない。
+// ========================================================================
+
+const CHIBA_TENDER_SHEET_NAME = 'Chiba_Tenders';
+const CHIBA_TENDER_HEADERS = [
+  'id',
+  'signature',
+  'source_id',
+  'organization',
+  'department',
+  'title',
+  'url',
+  'type',
+  'deadline',
+  'budget_upper',
+  'contract_period',
+  'multi_year',
+  'score',
+  'rank',
+  'gate_flags',
+  'status',
+  'summary',
+  'action',
+  'first_notified_at',
+  'last_notified_at',
+  'last_checked_at',
+  'reminded_days'
+];
+
+// id・signature・日時・契約期間の列。書式なしテキストに固定して自動変換を防ぐ。
+// ここを外すと、Sheetsが日付や数値に変換した値とBotのハッシュが一致せず、
+// 同じ案件を毎回「更新」として再通知してしまう。
+const CHIBA_TENDER_TEXT_COLUMNS = ['A', 'B', 'I', 'K', 'S', 'T', 'U', 'V'];
+
+/**
+ * Chiba_Tendersシートを取得（なければヘッダー付きで作成）
+ */
+function getChibaTenderSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(CHIBA_TENDER_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(CHIBA_TENDER_SHEET_NAME);
+    sheet.appendRow(CHIBA_TENDER_HEADERS);
+    sheet.setFrozenRows(1);
+    Logger.log('[ChibaTender] シートを新規作成しました');
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(CHIBA_TENDER_HEADERS);
+    sheet.setFrozenRows(1);
+  }
+
+  CHIBA_TENDER_TEXT_COLUMNS.forEach(function (column) {
+    sheet.getRange(column + '1:' + column).setNumberFormat('@');
+  });
+
+  return sheet;
+}
+
+/**
+ * 案件台帳を返す
+ * @returns {Array<Object>} レコードの配列
+ */
+function getChibaTenders() {
+  const sheet = getChibaTenderSheet_();
+  if (sheet.getLastRow() <= 1) {
+    Logger.log('[ChibaTender] 台帳なし（ヘッダーのみ）');
+    return [];
+  }
+
+  const values = sheet
+    .getRange(2, 1, sheet.getLastRow() - 1, CHIBA_TENDER_HEADERS.length)
+    .getValues();
+
+  const records = values
+    .filter(function (row) {
+      return row[0] && row[0].toString().trim() !== '';
+    })
+    .map(function (row) {
+      return {
+        id: row[0].toString().trim(),
+        signature: row[1].toString().trim(),
+        source_id: row[2],
+        organization: row[3],
+        department: row[4],
+        title: row[5],
+        url: row[6],
+        type: row[7],
+        deadline: toIsoText_(row[8]),
+        budget_upper: row[9],
+        contract_period: row[10],
+        multi_year: row[11],
+        score: row[12],
+        rank: row[13],
+        gate_flags: row[14],
+        status: row[15],
+        summary: row[16],
+        action: row[17],
+        first_notified_at: toIsoText_(row[18]),
+        last_notified_at: toIsoText_(row[19]),
+        last_checked_at: toIsoText_(row[20]),
+        reminded_days: row[21]
+      };
+    });
+
+  Logger.log('[ChibaTender] ' + records.length + '件の台帳を返却');
+  return records;
+}
+
+/**
+ * 案件台帳を記録する。id列が一致する行があれば更新、なければ追記。
+ * @param {Array<Object>} records レーダーから送られたレコード
+ * @returns {Object} 追加件数・更新件数
+ */
+function upsertChibaTenders(records) {
+  if (!records || !records.length) {
+    return { inserted: 0, updated: 0 };
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const sheet = getChibaTenderSheet_();
+    const lastRow = sheet.getLastRow();
+
+    const rowById = {};
+    if (lastRow > 1) {
+      const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i][0];
+        if (id && id.toString().trim() !== '') {
+          rowById[id.toString().trim()] = i + 2;
+        }
+      }
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    const appendRows = [];
+
+    records.forEach(function (record) {
+      const id = (record.id || '').toString().trim();
+      if (!id || !record.signature) return;
+
+      const row = [
+        id,
+        record.signature,
+        record.source_id || '',
+        record.organization || '',
+        record.department || '',
+        record.title || '',
+        record.url || '',
+        record.type || '',
+        record.deadline || '',
+        record.budget_upper === undefined || record.budget_upper === null ? '' : record.budget_upper,
+        record.contract_period || '',
+        record.multi_year || 'false',
+        record.score === undefined || record.score === null ? '' : record.score,
+        record.rank || '',
+        record.gate_flags || '{}',
+        record.status || '',
+        record.summary || '',
+        record.action || '',
+        record.first_notified_at || '',
+        record.last_notified_at || '',
+        record.last_checked_at || '',
+        record.reminded_days || '[]'
+      ];
+
+      if (rowById[id]) {
+        sheet.getRange(rowById[id], 1, 1, row.length).setValues([row]);
+        updated++;
+      } else {
+        appendRows.push(row);
+        inserted++;
+      }
+    });
+
+    if (appendRows.length > 0) {
+      sheet
+        .getRange(sheet.getLastRow() + 1, 1, appendRows.length, CHIBA_TENDER_HEADERS.length)
+        .setValues(appendRows);
+    }
+
+    Logger.log('[ChibaTender] 追加' + inserted + '件・更新' + updated + '件を記録');
+    return { inserted: inserted, updated: updated };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * 動作確認用。Apps Scriptのエディタから直接実行してログを確認する。
+ */
+function testChibaTenders() {
+  const before = getChibaTenders();
+  Logger.log('現在の台帳件数: ' + before.length);
+
+  const result = upsertChibaTenders([{
+    id: 'chibatest0000000000',
+    signature: 'test-signature',
+    source_id: 'chiba-pref-koukoku',
+    organization: '千葉県',
+    department: '農林水産部 生産振興課',
+    title: 'テスト案件（あとで行を削除してください）',
+    url: 'https://www.pref.chiba.lg.jp/test',
+    type: 'プロポーザル',
+    deadline: '2026-12-31T17:00:00+09:00',
+    budget_upper: 8000000,
+    contract_period: '契約締結の日から令和9年3月31日まで',
+    multi_year: 'false',
+    score: 86,
+    rank: 'S',
+    gate_flags: '{"roster":true,"local_office":false,"track_record":false}',
+    status: '公告中',
+    summary: 'テスト用のレコードです',
+    action: 'テスト後に削除する',
+    first_notified_at: new Date().toISOString(),
+    last_notified_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reminded_days: '[]'
+  }]);
+
+  Logger.log('upsert結果: ' + JSON.stringify(result));
+  Logger.log('確認後、Chiba_Tendersシートのテスト行を削除してください');
+}

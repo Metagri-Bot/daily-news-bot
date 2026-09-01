@@ -141,7 +141,10 @@ const SOURCES = [
     url: 'https://www.pref.chiba.lg.jp/cate/kt/kouhou/houdou/ichiran/index.html',
     linkFilter: /^\//i,
     priority: 3,
-    enabled: true
+    // 2026-09-01 無効化。千葉県は専用モジュール（chiba-tender-radar.js／火・金8:30）へ移した。
+    // linkFilter が /^\//i と極めて広く、同じ千葉県案件が両方から通知される恐れがあるため。
+    // ⚠ これを true に戻すと二重通知が復活する。千葉県の監視は chiba-tender-sources.js が正。
+    enabled: false
   },
   {
     id: 'tokyo-metro',

@@ -22,6 +22,7 @@ const {
 } = require('./news-freshness');
 const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
+const { runChibaTenderRadar } = require('./chiba-tender-radar');
 
 // .envから設定を読み込む
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -75,6 +76,20 @@ const PUBLIC_OPPORTUNITY_MAX_PRIORITY = Number(process.env.PUBLIC_OPPORTUNITY_MA
 const PUBLIC_OPPORTUNITY_CRON = process.env.PUBLIC_OPPORTUNITY_CRON || '30 7 * * 1-5';
 const PUBLIC_OPPORTUNITY_OPENAI_MODEL =
   process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna';
+
+// === 千葉県自治体案件レーダー設定（火・金 8:30 JST） ===
+// 公募モニター（省庁・全国／平日7:30）とは別チャンネル・別履歴シートで運用する。
+// 未設定なら公募モニターのチャンネルへフォールバックする。
+const CHIBA_TENDER_CHANNEL_ID =
+  process.env.CHIBA_TENDER_CHANNEL_ID ||
+  process.env.PUBLIC_OPPORTUNITY_CHANNEL_ID ||
+  process.env.NEWS_CHANNEL_ID;
+const DISABLE_CHIBA_TENDER = process.env.DISABLE_CHIBA_TENDER === 'true';
+const CHIBA_TENDER_MIN_SCORE = Number(process.env.CHIBA_TENDER_MIN_SCORE || 60);
+const CHIBA_TENDER_ALERT_SCORE = Number(process.env.CHIBA_TENDER_ALERT_SCORE || 80);
+const CHIBA_TENDER_MAX_PRIORITY = Number(process.env.CHIBA_TENDER_MAX_PRIORITY || 2);
+const CHIBA_TENDER_CRON = process.env.CHIBA_TENDER_CRON || '30 8 * * 2,5';
+const PUBLIC_OPPORTUNITY_OPENAI_MODEL = process.env.PUBLIC_OPPORTUNITY_OPENAI_MODEL || 'gpt-5.6-luna';
 
 // === 農業AI通信のDiscord投稿リンクUTM設定 ===
 const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
@@ -3692,6 +3707,63 @@ async function postPublicOpportunities() {
   }
 }
 
+// === 千葉県自治体案件レーダー ===
+/**
+ * 千葉県＋近隣6市の企画提案（プロポーザル）・公募を収集〜採点〜通知する。
+ * 80点以上は個別Embed、60〜79点は1件のダイジェスト、締切リマインドも同時に出す。
+ *
+ * 公募モニターと違い、該当0件でも1行だけ投稿する。
+ * 週2回運用では沈黙が「該当なし」なのか「壊れている」のか区別できないため。
+ */
+async function postChibaTenders() {
+  if (DISABLE_CHIBA_TENDER) {
+    console.log('[Chiba Tender] DISABLE_CHIBA_TENDER=true のためスキップします。');
+    return;
+  }
+  if (!CHIBA_TENDER_CHANNEL_ID) {
+    console.log('[Chiba Tender] 投稿先チャンネルIDが未設定のためスキップします。');
+    return;
+  }
+
+  try {
+    const summary = await runChibaTenderRadar({
+      client,
+      channelId: CHIBA_TENDER_CHANNEL_ID,
+      openai: OPENAI_API_KEY ? openai : null,
+      model: PUBLIC_OPPORTUNITY_OPENAI_MODEL,
+      minScore: CHIBA_TENDER_MIN_SCORE,
+      alertScore: CHIBA_TENDER_ALERT_SCORE,
+      maxPriority: CHIBA_TENDER_MAX_PRIORITY
+    });
+
+    if (summary.notified > 0) {
+      await sendMonitoringNotification(
+        '千葉県案件レーダー通知',
+        `新規・更新案件 ${summary.notified}件（個別${summary.alerts}・ダイジェスト${summary.digest}・リマインド${summary.reminders}）を投稿しました`,
+        'info'
+      );
+    }
+
+    // 収穫0件は「その週に公募が無かった」のか「ページ構造が変わった」のか区別できない。
+    // 監視Webhookへ出しておき、2回続いたら check-chiba-tender-sources.js を実行する。
+    if (summary.harvested === 0) {
+      await sendMonitoringNotification(
+        '千葉県案件レーダー 警告',
+        '一覧ページから候補を1件も収穫できませんでした。監視先のURL・ページ構造の変更が疑われます（scripts/check-chiba-tender-sources.js で確認）',
+        'error'
+      );
+    }
+  } catch (error) {
+    console.error('[Chiba Tender] タスク実行エラー:', error.message);
+    await sendMonitoringNotification(
+      '千葉県案件レーダーエラー',
+      '千葉県自治体案件の収集・通知処理に失敗しました',
+      'error',
+      error.stack || error.message
+    );
+  }
+}
+
 // Botが起動したときの処理
 client.once("ready", async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
@@ -4674,6 +4746,15 @@ if (process.env.AI_GUIDE_GAS_URL) {
     timezone: "Asia/Tokyo"
   });
 
+  // === 千葉県自治体案件レーダー（火・金 8:30 JST） ===
+  // 8:00 の厳選ニュースと 7:30 の公募モニターの後ろに置いている。
+  cron.schedule(CHIBA_TENDER_CRON, async () => {
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    await postChibaTenders();
+  }, {
+    timezone: "Asia/Tokyo"
+  });
+
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00 JST');
@@ -4683,6 +4764,7 @@ if (process.env.AI_GUIDE_GAS_URL) {
   console.log('- Popular Book Recommendation: 10:00 JST');
   console.log('- AI Guide (農業AI通信): Mon/Wed/Fri 9:50 JST');
   console.log(`- Public Opportunity Monitor: ${PUBLIC_OPPORTUNITY_CRON} JST`);
+  console.log(`- Chiba Tender Radar: ${CHIBA_TENDER_CRON} JST`);
 }); 
 
 

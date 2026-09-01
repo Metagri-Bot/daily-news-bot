@@ -51,6 +51,12 @@ jobs:
           echo "PUBLIC_OPPORTUNITY_CRON=${{ secrets.PUBLIC_OPPORTUNITY_CRON }}" >> .env
           echo "PUBLIC_OPPORTUNITY_MIN_SCORE=${{ secrets.PUBLIC_OPPORTUNITY_MIN_SCORE }}" >> .env
           echo "PUBLIC_OPPORTUNITY_MAX_PRIORITY=${{ secrets.PUBLIC_OPPORTUNITY_MAX_PRIORITY }}" >> .env
+          echo "CHIBA_TENDER_CHANNEL_ID=${{ secrets.CHIBA_TENDER_CHANNEL_ID }}" >> .env
+          echo "DISABLE_CHIBA_TENDER=${{ secrets.DISABLE_CHIBA_TENDER }}" >> .env
+          echo "CHIBA_TENDER_CRON=${{ secrets.CHIBA_TENDER_CRON }}" >> .env
+          echo "CHIBA_TENDER_MIN_SCORE=${{ secrets.CHIBA_TENDER_MIN_SCORE }}" >> .env
+          echo "CHIBA_TENDER_ALERT_SCORE=${{ secrets.CHIBA_TENDER_ALERT_SCORE }}" >> .env
+          echo "CHIBA_TENDER_MAX_PRIORITY=${{ secrets.CHIBA_TENDER_MAX_PRIORITY }}" >> .env
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d
