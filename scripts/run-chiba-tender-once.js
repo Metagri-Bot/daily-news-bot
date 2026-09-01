@@ -13,7 +13,7 @@
 
 require('dotenv').config();
 
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, Events, GatewayIntentBits } = require('discord.js');
 const OpenAI = require('openai');
 
 const { runChibaTenderRadar, DEFAULT_AI_MODEL } = require('../chiba-tender-radar');
@@ -52,8 +52,9 @@ async function main() {
     if (!channelId) throw new Error('CHIBA_TENDER_CHANNEL_ID が未設定です');
 
     client = new Client({ intents: [GatewayIntentBits.Guilds] });
+    const ready = new Promise(resolve => client.once(Events.ClientReady, resolve));
     await client.login(process.env.DISCORD_BOT_TOKEN);
-    await new Promise(resolve => client.once('ready', resolve));
+    await ready;
   }
 
   try {
