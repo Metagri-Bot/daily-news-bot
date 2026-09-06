@@ -123,7 +123,7 @@ client.once('ready', async () => {
 
       try {
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4.1',
+          model: 'gpt-5.6-luna',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `タイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}` }

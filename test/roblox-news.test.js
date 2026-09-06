@@ -37,7 +37,7 @@ test('企業事例枠、URL/タイトル重複、投稿済み除外', () => {
   const platform = Array.from({ length: 8 }, (_, i) => article(`Roblox developer revenue AI update ${i}`));
   const copy = { ...business, link: business.link + '?utm_source=test' };
   const result = selectRobloxArticles([...platform, business, copy], { now });
-  assert.equal(result.length, 5);
+  assert.equal(result.length, 8);
   assert.equal(result[0].title, business.title);
   assert.equal(result.filter(a => a.business).length, 1);
   const sent = Object.fromEntries(articleKeys(business).map(k => [k, now.toISOString()]));

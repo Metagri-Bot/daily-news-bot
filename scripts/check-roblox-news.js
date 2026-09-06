@@ -1,11 +1,11 @@
 'use strict';
 
-// Read-only: no Discord client, OpenAI calls, or history writes.
+// No Discord posting or history writes. --editorial opts into OpenAI evaluation.
 require('dotenv').config({ quiet: true });
 const axios = require('axios');
 const Parser = require('rss-parser');
 const path = require('node:path');
-const { getRobloxFeeds, collectRobloxArticles, selectRobloxArticles, loadHistory } = require('../roblox-news');
+const { getRobloxFeeds, collectRobloxArticles, selectRobloxArticles, rankRobloxArticles, loadHistory } = require('../roblox-news');
 
 async function main() {
   const parser = new Parser();
@@ -18,9 +18,23 @@ async function main() {
     },
   });
   const sent = loadHistory(path.join(__dirname, '..', 'state', 'roblox-news-sent.json'));
-  const selected = selectRobloxArticles(articles, { sent });
-  console.log(JSON.stringify(selected.map(({ title, source, score, link }) => ({ title, source, score, link })), null, 2));
-  console.log('Reference coverage:', JSON.stringify(articles.filter(a => /daise|bldr|the doux|evaluation changes/i.test(a.title)).map(a => ({ title: a.title, published: a.published }))));
+  let selected;
+  if (process.argv.includes('--editorial')) {
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { curateRobloxArticles } = require('../roblox-news-editorial');
+    selected = await curateRobloxArticles({ candidates: rankRobloxArticles(articles, { sent, logger: console }), sent, historyArticles: articles,
+      evaluate: async prompt => {
+        const response = await openai.chat.completions.create({ model: 'gpt-4.1-mini', temperature: 0, max_tokens: 10000,
+          response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] });
+        return JSON.parse(response.choices[0].message.content);
+      },
+    });
+  } else {
+    selected = selectRobloxArticles(articles, { sent, logger: console });
+    console.log('[Roblox News] 候補プレビュー（重要度審査前）。最終選定の確認は --editorial を指定。');
+  }
+  console.log(JSON.stringify(selected.map(({ title, source, score, link, importance, importanceReason }) => ({ title, source, score, link, importance, importanceReason })), null, 2));
   if (!articles.length) process.exitCode = 1;
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

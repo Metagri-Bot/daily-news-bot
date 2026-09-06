@@ -21,7 +21,10 @@ const {
   isNewsWithinFreshness
 } = require('./news-freshness');
 const path = require('node:path');
-const { getRobloxFeeds, collectRobloxArticles, selectRobloxArticles, loadHistory, saveHistory } = require('./roblox-news');
+const { getRobloxFeeds, collectRobloxArticles, rankRobloxArticles, loadHistory, saveHistory } = require('./roblox-news');
+const { curateRobloxArticles } = require('./roblox-news-editorial');
+const { recoverDiscordHistory, deliverDigest } = require('./roblox-news-delivery');
+let robloxNewsRunning = false;
 const ROBLOX_HISTORY_FILE = path.join(__dirname, 'state', 'roblox-news-sent.json');
 const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
@@ -458,7 +461,7 @@ ${contentForAI} // ← 変数を置き換え
 
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-5.6-luna",
       messages: [{ role: "user", content: prompt }],
        temperature: 0.3,
       max_tokens: 2048, // ▼▼▼ 1000から2048に増やします ▼▼▼
@@ -626,7 +629,7 @@ ${article.contentSnippet || ''}
 `;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-5.6-luna",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.7,
       max_tokens: 500,
@@ -4362,8 +4365,16 @@ cron.schedule('0 6 * * *', async () => {
       return;
     }
 
+    if (robloxNewsRunning) {
+      console.log('[Roblox News] 前回処理が実行中のためスキップします。');
+      return;
+    }
+    robloxNewsRunning = true;
     try {
-      const sent = loadHistory(ROBLOX_HISTORY_FILE);
+      const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
+      if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Roblox通知用チャンネルが見つかりません。');
+      const sent = await recoverDiscordHistory(channel, client.user.id, loadHistory(ROBLOX_HISTORY_FILE));
+      saveHistory(ROBLOX_HISTORY_FILE, sent, []);
       const recentArticles = await collectRobloxArticles({
         urls: ROBLOX_RSS_FEEDS,
         fetchPage: async url => (await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })).data,
@@ -4372,7 +4383,15 @@ cron.schedule('0 6 * * *', async () => {
           return parser.parseString(response.data);
         },
       });
-      const finalRobloxArticles = selectRobloxArticles(recentArticles, { sent });
+      const candidates = rankRobloxArticles(recentArticles, { sent, logger: console });
+      const finalRobloxArticles = await curateRobloxArticles({ candidates, sent, historyArticles: recentArticles, evaluate: async prompt => {
+        const response = await openai.chat.completions.create({
+          model: 'gpt-4.1-mini', temperature: 0, max_tokens: 10000,
+          response_format: { type: 'json_object' },
+          messages: [{ role: 'user', content: prompt }],
+        });
+        return JSON.parse(response.choices[0].message.content);
+      } });
       console.log('[Roblox News] selected=' + finalRobloxArticles.length + ' business=' + finalRobloxArticles.filter(a => a.business).length);
 
          if (finalRobloxArticles.length === 0) {
@@ -4386,7 +4405,7 @@ cron.schedule('0 6 * * *', async () => {
       const translatedArticles = [];
       for (const article of finalRobloxArticles) {
         const translation = await translateAndSummarizeRobloxArticle(article);
-        if (translation) {
+        if (typeof translation?.titleJa === 'string' && typeof translation?.summary === 'string' && translation.titleJa.trim() && translation.summary.trim()) {
           translatedArticles.push({
             original: article,
             translated: translation
@@ -4400,53 +4419,13 @@ cron.schedule('0 6 * * *', async () => {
         return;
       }
 
-      // --- ステップ4: Discordへの通知 ---
-      const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
-      if (!channel || channel.type !== ChannelType.GuildText) {
-        console.error('[Roblox News] 通知用チャンネルが見つかりません。');
-        return;
-      }
-      
-      // --- ステップ5: Embedメッセージの作成 ---
-      const embed = new EmbedBuilder()
-        .setColor(0x00A2FF)
-        .setTitle(`🤖 Roblox ビジネス・アップデート速報 (${new Date().toLocaleDateString('ja-JP')})`)
-        .setDescription(`**${translatedArticles.length}件**の重要ニュースをAIが翻訳・要約しました。`)
-        .setTimestamp();
-        
-      for (const item of translatedArticles) {
-        const { original, translated } = item;
-        const escapedTitle = translated.titleJa.replace(/\[/g, '［').replace(/\]/g, '］');
-        
-   // ▼▼▼ ここからが修正箇所です ▼▼▼
-        
-        // valueに含める情報を定義
-        const summary = translated.summary;
-        const linkText = `\n\n[原文を読む](${original.link}) (*Source: ${original.source}*)`;
-        
-        let valueText = summary + linkText;
-
-        // 文字数制限のチェックと切り詰め処理
-        const MAX_VALUE_LENGTH = 1024;
-        if (valueText.length > MAX_VALUE_LENGTH) {
-          // summary部分を短くして、linkTextが必ず入るように調整
-          const availableLength = MAX_VALUE_LENGTH - linkText.length - 4; // "..."とマージン
-          const truncatedSummary = summary.substring(0, availableLength) + "...";
-          valueText = truncatedSummary + linkText;
-        }
-
-        const fieldName = `[${original.score}点 | ${original.label}] ${escapedTitle}`;
-        
-        embed.addFields({ name: fieldName.slice(0, 256), value: valueText });
-        // ▲▲▲ ▲▲▲
-      }
-      
-      await channel.send({ embeds: [embed] });
-      saveHistory(ROBLOX_HISTORY_FILE, sent, translatedArticles.map(item => item.original));
+      await deliverDigest({ channel, translatedArticles, historyFile: ROBLOX_HISTORY_FILE, sent });
       console.log(`[Roblox News] ${translatedArticles.length}件の翻訳済みニュースを投稿しました。`);
 
     } catch (error) {
       console.error('[Roblox News] タスク実行中にエラーが発生しました:', error);
+    } finally {
+      robloxNewsRunning = false;
     }
   }, {
     timezone: "Asia/Tokyo"
@@ -4564,7 +4543,7 @@ cron.schedule('50 9 * * 1,3,5', async () => {
 }`;
 
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4.1', // または 'gpt-4o-mini'
+          model: 'gpt-5.6-luna',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `タイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}` }
