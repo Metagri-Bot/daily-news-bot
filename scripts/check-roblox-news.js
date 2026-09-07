@@ -6,6 +6,7 @@ const axios = require('axios');
 const Parser = require('rss-parser');
 const path = require('node:path');
 const { getRobloxFeeds, collectRobloxArticles, selectRobloxArticles, rankRobloxArticles, loadHistory } = require('../roblox-news');
+const { buildJsonCompletionParams } = require('../openai-chat');
 
 async function main() {
   const parser = new Parser();
@@ -25,8 +26,11 @@ async function main() {
     const { curateRobloxArticles } = require('../roblox-news-editorial');
     selected = await curateRobloxArticles({ candidates: rankRobloxArticles(articles, { sent, logger: console }), sent, historyArticles: articles,
       evaluate: async prompt => {
-        const response = await openai.chat.completions.create({ model: 'gpt-4.1-mini', temperature: 0, max_tokens: 10000,
-          response_format: { type: 'json_object' }, messages: [{ role: 'user', content: prompt }] });
+        const response = await openai.chat.completions.create(buildJsonCompletionParams({
+          model: process.env.OPENAI_MODEL || 'gpt-5.6-luna',
+          messages: [{ role: 'user', content: prompt }],
+          maxTokens: 10000
+        }));
         return JSON.parse(response.choices[0].message.content);
       },
     });

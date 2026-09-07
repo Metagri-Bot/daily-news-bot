@@ -5,11 +5,14 @@ const Parser = require('rss-parser');
 const parser = new Parser();
 const axios = require('axios');
 const OpenAI = require('openai');
+const { buildJsonCompletionParams } = require('./openai-chat');
+const { normalizeAiGuideResult } = require('./ai-guide-content');
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const AI_GUIDE_CHANNEL_ID = '952206763539714088';
 const AI_GUIDE_RSS_URL = 'https://metagri-labo.com/ai-guide/feed/';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
 const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
 const DISCORD_UTM_MEDIUM = process.env.DISCORD_UTM_MEDIUM || 'social';
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -110,7 +113,9 @@ client.once('ready', async () => {
 - 不明な場合は推測せず "不明" と書く
 - 断定は本文が断定している場合のみ。基本は「〜の可能性があります」「〜が有効な場合があります」
 - JSON以外は一切出力しない
-- evidence は本文からの短い抜粋を必ず入れる
+- evidence は重要度の高いものを原則2件、最大2件に絞る
+- evidence は単独で読んでも意味が分かる発言・事実を選び、数値や数量だけの項目（例: "約9000坪"）は含めない
+- evidence の文字列には外側の括弧・引用符（「」『』など）を付けない
 
 【出力JSON形式】
 {
@@ -122,17 +127,18 @@ client.once('ready', async () => {
 }`;
 
       try {
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-5.6-luna',
+        const completion = await openai.chat.completions.create(buildJsonCompletionParams({
+          model: OPENAI_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `タイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}` }
           ],
-          temperature: 0.3
-        });
+          maxTokens: 2048
+        }));
 
-        const parsed = safeJsonParse(completion.choices[0].message.content);
-        if (!parsed) throw new Error('Invalid JSON');
+        const rawParsed = safeJsonParse(completion.choices[0].message.content);
+        if (!rawParsed) throw new Error('Invalid JSON');
+        const parsed = normalizeAiGuideResult(rawParsed);
 
         const disclaimer = '*※この記事はAIによって要約されています。正確な情報は必ず原文をご確認ください。*';
         const embed = new EmbedBuilder()

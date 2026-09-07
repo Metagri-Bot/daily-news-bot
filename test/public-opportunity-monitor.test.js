@@ -349,6 +349,7 @@ test('GPT-5系は temperature を送らず max_completion_tokens を使う', () 
   assert.equal(params.max_tokens, undefined);
   assert.equal(params.max_completion_tokens, 4000);
   assert.equal(params.reasoning_effort, 'low');
+  assert.deepEqual(params.response_format, { type: 'json_object' });
 });
 
 test('従来モデルは temperature と max_tokens を使う', () => {
@@ -357,6 +358,7 @@ test('従来モデルは temperature と max_tokens を使う', () => {
   assert.equal(params.max_tokens, 1200);
   assert.equal(params.max_completion_tokens, undefined);
   assert.equal(params.reasoning_effort, undefined);
+  assert.deepEqual(params.response_format, { type: 'json_object' });
 });
 
 test('パラメータ非対応で400が返っても最小構成で再試行して通知できる', async () => {

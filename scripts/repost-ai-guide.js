@@ -4,6 +4,8 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const Parser = require('rss-parser');
 const OpenAI = require('openai');
+const { buildJsonCompletionParams } = require('../openai-chat');
+const { normalizeAiGuideResult } = require('../ai-guide-content');
 
 const parser = new Parser();
 
@@ -103,7 +105,9 @@ async function summarizeArticle(article, articleContent) {
 - 不明な場合は推測せず "不明" と書く
 - 断定は本文が断定している場合のみ。基本は「〜の可能性があります」「〜が有効な場合があります」
 - JSON以外は一切出力しない
-- evidence は本文からの短い抜粋を必ず入れる
+- evidence は重要度の高いものを原則2件、最大2件に絞る
+- evidence は単独で読んでも意味が分かる発言・事実を選び、数値や数量だけの項目（例: "約9000坪"）は含めない
+- evidence の文字列には外側の括弧・引用符（「」『』など）を付けない
 
 【出力JSON形式】
 {
@@ -114,21 +118,21 @@ async function summarizeArticle(article, articleContent) {
   "evidence": ["本文抜粋1", "本文抜粋2"]
 }`;
 
-  const completion = await openai.chat.completions.create({
-    model: process.env.OPENAI_MODEL || 'gpt-4.1',
+  const completion = await openai.chat.completions.create(buildJsonCompletionParams({
+    model: process.env.OPENAI_MODEL || 'gpt-5.6-luna',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `タイトル: ${article.title}\n\n本文: ${String(articleContent || '').slice(0, 3000)}` }
     ],
-    temperature: 0.3
-  });
+    maxTokens: 2048
+  }));
 
   const parsed = safeJsonParse(completion.choices[0].message.content);
   if (!parsed) {
     throw new Error('OpenAI returned invalid JSON');
   }
 
-  return parsed;
+  return normalizeAiGuideResult(parsed);
 }
 
 function buildEmbed(article, articleDate, parsed) {

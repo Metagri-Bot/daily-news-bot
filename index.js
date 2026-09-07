@@ -29,6 +29,8 @@ const ROBLOX_HISTORY_FILE = path.join(__dirname, 'state', 'roblox-news-sent.json
 const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
 const { runChibaTenderRadar } = require('./chiba-tender-radar');
+const { buildJsonCompletionParams } = require('./openai-chat');
+const { normalizeAiGuideResult } = require('./ai-guide-content');
 
 // .envから設定を読み込む
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -63,6 +65,7 @@ const AI_GUIDE_RSS_URL = 'https://metagri-labo.com/ai-guide/feed/';
 
 // OpenAI API設定（.envに追加が必要）
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // ロールIDを読み込む
@@ -351,12 +354,11 @@ ${contentForAI}
 `;
     // ▲▲▲ ▲▲▲
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4.1-mini",
+    const response = await openai.chat.completions.create(buildJsonCompletionParams({
+      model: DEFAULT_OPENAI_MODEL,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-      max_tokens: 1024,
-    });
+      maxTokens: 1024
+    }));
 
     const content = response.choices[0].message.content;
 
@@ -460,12 +462,11 @@ ${contentForAI} // ← 変数を置き換え
 `;
 
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.6-luna",
+    const response = await openai.chat.completions.create(buildJsonCompletionParams({
+      model: DEFAULT_OPENAI_MODEL,
       messages: [{ role: "user", content: prompt }],
-       temperature: 0.3,
-      max_tokens: 2048, // ▼▼▼ 1000から2048に増やします ▼▼▼
-    });
+      maxTokens: 2048
+    }));
 
     const content = response.choices[0].message.content;
 
@@ -628,12 +629,11 @@ ${article.contentSnippet || ''}
 # あなたの成果物 (JSON形式で出力)
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.6-luna",
+    const response = await openai.chat.completions.create(buildJsonCompletionParams({
+      model: DEFAULT_OPENAI_MODEL,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-      max_tokens: 500,
-    });
+      maxTokens: 500
+    }));
 
     const content = response.choices[0].message.content;
 
@@ -2839,8 +2839,8 @@ async function selectBestBookWithAI(scoredBooks, audienceDescription) {
       return `${i + 1}. 『${s.title}』 著者: ${s.author || '不明'} / 出版社: ${s.publisher || '不明'} / 発売日: ${s.pubdate || '不明'} / ${review}\n   概要: ${desc || '（概要なし）'}`;
     }).join('\n');
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+    const response = await openai.chat.completions.create(buildJsonCompletionParams({
+      model: DEFAULT_OPENAI_MODEL,
       messages: [
         {
           role: 'system',
@@ -2851,10 +2851,8 @@ async function selectBestBookWithAI(scoredBooks, audienceDescription) {
           content: `読者層: ${audienceDescription}\n\n以下の新刊候補から、読者に最も刺さる1冊を選んでください。\n選定基準: (1)読者層との関連性 (2)内容の濃さ・専門性 (3)話題性。\nタイトルにキーワードを詰め込んだだけの薄い入門ムック・キーワード羅列本は避けてください。\n\n${lines}\n\n回答形式: {"index": 番号, "reason": "60字以内の選定理由"}`
         }
       ],
-      response_format: { type: 'json_object' },
-      temperature: 0.3,
-      max_tokens: 200
-    });
+      maxTokens: 1024
+    }));
 
     const parsed = JSON.parse(response.choices[0].message.content);
     const idx = parseInt(parsed.index, 10) - 1;
@@ -4385,11 +4383,11 @@ cron.schedule('0 6 * * *', async () => {
       });
       const candidates = rankRobloxArticles(recentArticles, { sent, logger: console });
       const finalRobloxArticles = await curateRobloxArticles({ candidates, sent, historyArticles: recentArticles, evaluate: async prompt => {
-        const response = await openai.chat.completions.create({
-          model: 'gpt-4.1-mini', temperature: 0, max_tokens: 10000,
-          response_format: { type: 'json_object' },
+        const response = await openai.chat.completions.create(buildJsonCompletionParams({
+          model: DEFAULT_OPENAI_MODEL,
           messages: [{ role: 'user', content: prompt }],
-        });
+          maxTokens: 10000
+        }));
         return JSON.parse(response.choices[0].message.content);
       } });
       console.log('[Roblox News] selected=' + finalRobloxArticles.length + ' business=' + finalRobloxArticles.filter(a => a.business).length);
@@ -4439,7 +4437,7 @@ cron.schedule('0 6 * * *', async () => {
     timezone: "Asia/Tokyo"
   });
 
-  // === 一般新刊紹介タスク（毎日朝10時） ===
+  // === 一般新刊紹介タスク（毎日朝10時10分） ===
   cron.schedule('10 10 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     await postDailyPopularBook();
@@ -4531,7 +4529,9 @@ cron.schedule('50 9 * * 1,3,5', async () => {
 - 不明な場合は推測せず "不明" と書く
 - 断定は本文が断定している場合のみ。基本は「〜の可能性があります」「〜が有効な場合があります」
 - JSON以外は一切出力しない
-- evidence は本文からの短い抜粋を必ず入れる
+- evidence は重要度の高いものを原則2件、最大2件に絞る
+- evidence は単独で読んでも意味が分かる発言・事実を選び、数値や数量だけの項目（例: "約9000坪"）は含めない
+- evidence の文字列には外側の括弧・引用符（「」『』など）を付けない
 
 【出力JSON形式】
 {
@@ -4542,17 +4542,18 @@ cron.schedule('50 9 * * 1,3,5', async () => {
   "evidence": ["本文抜粋1", "本文抜粋2"]
 }`;
 
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-5.6-luna',
+        const completion = await openai.chat.completions.create(buildJsonCompletionParams({
+          model: DEFAULT_OPENAI_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `タイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}` }
           ],
-          temperature: 0.3 // 低めにして精度優先
-        });
+          maxTokens: 2048
+        }));
 
-        const parsed = safeJsonParse(completion.choices[0].message.content);
-        if (!parsed) throw new Error('Invalid JSON');
+        const rawParsed = safeJsonParse(completion.choices[0].message.content);
+        if (!rawParsed) throw new Error('Invalid JSON');
+        const parsed = normalizeAiGuideResult(rawParsed);
 
         // --- 5) Discord投稿：情報の階層化と視覚的整理 ---
 
@@ -4679,7 +4680,7 @@ if (process.env.AI_GUIDE_GAS_URL) {
   console.log('- Global Research Digest: 10:00, 19:00 JST');
   console.log('- Roblox News Digest: 7:00 JST');
   console.log('- AgriTech Book Recommendation: 10:00 JST');
-  console.log('- Popular Book Recommendation: 10:00 JST');
+  console.log('- Popular Book Recommendation: 10:10 JST');
   console.log('- AI Guide (農業AI通信): Mon/Wed/Fri 9:50 JST');
   console.log(`- Public Opportunity Monitor: ${PUBLIC_OPPORTUNITY_CRON} JST`);
   console.log(`- Chiba Tender Radar: ${CHIBA_TENDER_CRON} JST`);

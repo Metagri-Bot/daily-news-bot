@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { buildJsonCompletionParams } = require('./openai-chat');
 
 const {
   MIN_NOTIFY_SCORE,
@@ -335,17 +336,12 @@ function safeJsonParse(text) {
  * 出力上限は max_completion_tokens。reasoningの消費分を見込んで枠を広く取る。
  */
 function buildCompletionParams(model, messages) {
-  const isReasoningModel = /^(gpt-5|o[1-9])/i.test(String(model));
-
-  if (isReasoningModel) {
-    return {
-      model,
-      messages,
-      max_completion_tokens: 4000,
-      reasoning_effort: 'low'
-    };
-  }
-  return { model, messages, temperature: 0.2, max_tokens: 1200 };
+  return buildJsonCompletionParams({
+    model,
+    messages,
+    maxTokens: /^(gpt-5|gpt-6|o[1-9])/i.test(String(model)) ? 4000 : 1200,
+    temperature: 0.2
+  });
 }
 
 /** 未対応パラメータで400が返った場合に、最小構成で1回だけ再試行する */

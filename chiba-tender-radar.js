@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { buildJsonCompletionParams } = require('./openai-chat');
 
 const {
   MIN_NOTIFY_SCORE,
@@ -440,11 +441,12 @@ function safeJsonParse(text) {
 
 /** GPT-5系はtemperature非対応・max_completion_tokens＋reasoning_effort */
 function buildCompletionParams(model, messages) {
-  const isReasoningModel = /^(gpt-5|o[1-9])/i.test(String(model));
-  if (isReasoningModel) {
-    return { model, messages, max_completion_tokens: 4000, reasoning_effort: 'low' };
-  }
-  return { model, messages, temperature: 0.2, max_tokens: 1200 };
+  return buildJsonCompletionParams({
+    model,
+    messages,
+    maxTokens: /^(gpt-5|gpt-6|o[1-9])/i.test(String(model)) ? 4000 : 1200,
+    temperature: 0.2
+  });
 }
 
 async function createCompletion(openai, model, messages) {

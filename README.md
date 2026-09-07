@@ -9,12 +9,12 @@
 | 機能 | 実行時間 | 概要 |
 |------|---------|------|
 | **AI研究員による厳選ニュース** | 毎日 8:00 | 7日以内の国内ニュースから1件選出、gpt-5.6-lunaが「見解」と「問いかけ」を生成 |
-| **国内情報収集ヘッドライン** | 6:00-18:00 (3時間毎) | 7日以内の記事を対象に、関連性の高いニュース最大3件を選出 |
+| **国内情報収集ヘッドライン** | 毎日 6:00 | 7日以内の記事を対象に、関連性の高いニュース最大3件を選出 |
 | **Robloxビジネス速報** | 毎日 7:00 | 21日以内のRoblox関連英語ニュース・企業事例をAI翻訳・要約 |
 | **農業・Web3関連 新刊紹介** | 毎日 10:00 | 楽天Books APIで新刊検索、スコアリングで選出して投稿 |
-| **一般書 新刊紹介** | 毎日 10:05 | 小説・ビジネス書の新刊を紹介 |
-| **海外文献ダイジェスト** | 毎日 10:10 & 19:10 | 7日以内の英語文献をスクレイピング→AIが日本語翻訳・要約 |
-| **農業AI通信** | 毎日 10:30 | metagri-labo.comのAI Guide記事をGoogle Sheetsに転記 |
+| **一般書 新刊紹介** | 毎日 10:10 | 小説・ビジネス書の新刊を紹介 |
+| **海外文献ダイジェスト** | 停止中 | 旧設定は毎日10:10・19:10。現在はコード上で無効化 |
+| **農業AI通信** | 月・水・金 9:50 | AI Guide記事を要約してDiscordへ投稿し、Google Sheetsへ記録 |
 | **官公庁・自治体 公募モニター** | 平日 7:30 | 省庁・自治体の公募を収集し、農情人との親和性を100点評価してS・Aランクのみ通知 |
 | **千葉県自治体案件レーダー** | 火・金 8:50 | 千葉県＋近隣6市の企画提案（プロポーザル）を収集し、100点評価して通知＋締切リマインド |
 | **活動ログの自動記録** | リアルタイム | スレッド内の発言をGoogleスプレッドシートに自動記録 |
@@ -66,7 +66,7 @@ sequenceDiagram
     DailyNewsTask->>GoogleSheets: 投稿ログとAIの分析結果を記録
 ```
 
-### 2. 情報収集ヘッドライン (AM 6:00 - PM 18:00 / 3時間ごと)
+### 2. 情報収集ヘッドライン (毎日 AM 6:00)
 
 個人の情報収集をサポートするため、幅広いニュースソースから関連性の高い最新ニュースを最大3件、重複なく届け続けます。
 
@@ -78,7 +78,7 @@ sequenceDiagram
     participant NewsSites as ニュースサイト (RSS)
     participant Discord
 
-    Scheduler->>InfoGatheringTask: 3時間ごとに実行命令
+    Scheduler->>InfoGatheringTask: 毎朝6時に実行命令
     InfoGatheringTask->>GoogleSheets: 投稿済みURLリストを要求
     GoogleSheets-->>InfoGatheringTask: URLリストを返す
     InfoGatheringTask->>NewsSites: 全ソースから最新記事を要求
@@ -111,7 +111,7 @@ sequenceDiagram
     RobloxTask->>Discord: 整形してEmbed形式で投稿
 ```
 
-### 4. 新刊紹介 (毎日 AM 10:00 & 10:05)
+### 4. 新刊紹介 (毎日 AM 10:00 & 10:10)
 
 農業・Web3関連の専門書と一般書の新刊を自動で紹介します。
 
@@ -124,7 +124,7 @@ sequenceDiagram
     participant Discord
     participant GoogleSheets as Googleスプレッドシート
 
-    Scheduler->>BookTask: 毎日10:00/10:05に実行命令
+    Scheduler->>BookTask: 毎日10:00/10:10に実行命令
     BookTask->>GoogleSheets: 投稿済み書籍リスト(ISBN)を要求
     GoogleSheets-->>BookTask: ISBNリストを返す
     BookTask->>RakutenAPI: キーワード検索
@@ -136,9 +136,9 @@ sequenceDiagram
     BookTask->>GoogleSheets: 投稿済み書籍として記録
 ```
 
-### 5. 海外文献ダイジェスト (毎日 AM 10:10 & PM 19:10)
+### 5. 海外文献ダイジェスト（現在停止中）
 
-収集、フィルタリング、スクレイピング、AI分析という多段階のプロセスを経て、世界の最先端情報を届けます。
+収集、フィルタリング、スクレイピング、AI分析という多段階のプロセスです。旧設定は毎日10:10・19:10ですが、現在は `index.js` の `if (false)` により無効化されています。
 
 ```mermaid
 sequenceDiagram
@@ -150,7 +150,7 @@ sequenceDiagram
     participant Discord
     participant GoogleSheets as Googleスプレッドシート
 
-    Scheduler->>GlobalTask: 1日2回実行命令
+    Scheduler--xGlobalTask: 現在は実行しない（旧設定: 1日2回）
     GlobalTask->>NewsSites: 最新記事を要求
     NewsSites-->>GlobalTask: 記事リストを返す
     GlobalTask->>GlobalTask: スコアリングで候補を厳選
@@ -162,22 +162,26 @@ sequenceDiagram
     GlobalTask->>GoogleSheets: 投稿ログを記録
 ```
 
-### 6. 農業AI通信 (毎日 AM 10:30)
+### 6. 農業AI通信 (月・水・金 AM 9:50)
 
-metagri-labo.comのAI Guide記事を取得し、Google Sheetsに転記します。
+metagri-labo.comのAI Guide記事を取得し、`gpt-5.6-luna` で要約してDiscordへ投稿し、Google Sheetsへ記録します。
 
 ```mermaid
 sequenceDiagram
     participant Scheduler as スケジューラ (Bot内部)
     participant AIGuideTask as 農業AI通信機能
     participant MetagriSite as metagri-labo.com
+    participant OpenAI
+    participant Discord
     participant GoogleSheets as Googleスプレッドシート
 
-    Scheduler->>AIGuideTask: 毎日10:30に実行命令
+    Scheduler->>AIGuideTask: 月・水・金9:50に実行命令
     AIGuideTask->>MetagriSite: AI Guide記事を要求
     MetagriSite-->>AIGuideTask: 記事コンテンツを返す
-    AIGuideTask->>AIGuideTask: コンテンツを整形・クリーンアップ
-    AIGuideTask->>GoogleSheets: A1セルに本文、A2セルにURLを上書き
+    AIGuideTask->>OpenAI: 記事本文の要約・要点抽出を依頼
+    OpenAI-->>AIGuideTask: JSON形式の要約を返す
+    AIGuideTask->>Discord: Embed形式で投稿
+    AIGuideTask->>GoogleSheets: 投稿内容を記録
 ```
 
 ### 7. 官公庁・自治体 公募モニター (平日 AM 7:30)
@@ -517,17 +521,16 @@ node scripts/check-chiba-tender-sources.js
 |-----------|-----------|------|
 | discord.js | ^14.21.0 | Discord Bot実装 |
 | axios | ^1.11.0 | HTTP通信 |
-| rss-parser | ^3.13.gpt-5.6-lunaSフィード解析 |
+| rss-parser | ^3.13.0 | RSSフィード解析 |
 | cheerio | ^1.1.2 | Webスクレイピング |
 | node-cron | ^4.2.1 | スケジュール処理 |
-| openai | ^5.15.0 | GPT-4o API呼び出し |
+| openai | ^5.15.0 | OpenAI API（既定 `gpt-5.6-luna`）呼び出し |
 | dotenv | ^17.2.1 | 環境変数読み込み |
 
 ### 外部API
-gpt-5.6-luna
 | API | 用途 |
 |-----|------|
-| OpenAI API (GPT-4o) | ニュース分析、翻訳・要約生成 |
+| OpenAI API (`gpt-5.6-luna`) | ニュース分析、翻訳・要約・新刊選定 |
 | Google Apps Script WebApp | Google Sheets連携、ログ記録 |
 | 楽天Books API | 新刊検索 |
 | OpenBD API | 書籍詳細情報取得 |
@@ -585,6 +588,7 @@ gpt-5.6-luna
 | `NEW_BOOK_CHANNEL_ID` | 農業・Web3新刊投稿先 |
 | `POPULAR_BOOK_CHANNEL_ID` | 一般書新刊投稿先 |
 | `OPENAI_API_KEY` | OpenAI APIキー |
+| `OPENAI_MODEL` | 通常のニュース分析・翻訳・新刊選定・農業AI通信で使うモデル（既定 `gpt-5.6-luna`） |
 | `GOOGLE_APPS_SCRIPT_URL` | GAS WebアプリURL |
 | `AI_GUIDE_GAS_URL` | 農業AI通信専用GAS URL |
 | `BIGNER_ROLE_ID` | Bigner ロールID |
@@ -597,7 +601,7 @@ gpt-5.6-luna
 | `PUBLIC_OPPORTUNITY_CHANNEL_ID` | 公募モニター投稿先（未設定なら`NEWS_CHANNEL_ID`） |
 | `PUBLIC_OPPORTUNITY_CRON` | 公募モニターの実行スケジュール（既定 `30 7 * * 1-5`） |
 | `PUBLIC_OPPORTUNITY_MIN_SCORE` | 通知の下限点（既定 `65`） |
-| `PUBLIC_OPPORTUNITY_OPENAI_MODEL` | 公募モニターの要約に使うモデル（既定 `gpt-5.6-luna`） |
+| `PUBLIC_OPPORTUNITY_OPENAI_MODEL` | 公募モニターと千葉県レーダーの要約に使う共通モデル（既定 `gpt-5.6-luna`） |
 | `PUBLIC_OPPORTUNITY_MAX_PRIORITY` | 監視先の優先度上限 1〜3（既定 `3`） |
 | `DISABLE_PUBLIC_OPPORTUNITY` | `true` で公募モニターを停止 |
 | `CHIBA_TENDER_CHANNEL_ID` | 千葉県レーダー投稿先（未設定なら`PUBLIC_OPPORTUNITY_CHANNEL_ID`→`NEWS_CHANNEL_ID`） |
@@ -605,7 +609,6 @@ gpt-5.6-luna
 | `CHIBA_TENDER_MIN_SCORE` | 通知の下限点（既定 `60`） |
 | `CHIBA_TENDER_ALERT_SCORE` | 個別Embedで立てる下限点（既定 `80`） |
 | `CHIBA_TENDER_MAX_PRIORITY` | 監視先の優先度上限 1〜2（既定 `2`） |
-| `PUBLIC_OPPORTUNITY_OPENAI_MODEL` | 千葉県レーダーの要約に使うモデル（既定 `gpt-5.6-luna`） |
 | `DISABLE_CHIBA_TENDER` | `true` で千葉県レーダーを停止 |
 
 ---
@@ -857,7 +860,7 @@ daily-news-bot/
 
 ## スケジュール一覧
 
-⚠ **正は `index.js` の `cron.schedule(...)` です。** cronを足すときはこの表ではなく `index.js` を見てください。2026-09-01 に実測したところ、この表は実装と2か所ずれていました（農業AI通信は「毎日10:30」ではなく月・水・金の9:50、情報収集ヘッドラインは「3時間ごと」ではなく6:00の1回のみ）。下記は是正後の内容です。
+⚠ **正は `index.js` の `cron.schedule(...)` です。** 下表は2026-09-07時点の実装に同期しています。
 
 | 時刻 | タスク | Cron式 |
 |------|--------|--------|
@@ -868,8 +871,8 @@ daily-news-bot/
 | 8:50（火・金） | **千葉県自治体案件レーダー** | `50 8 * * 2,5` |
 | 9:50（月・水・金） | 農業AI通信 | `50 9 * * 1,3,5` |
 | 10:00 | 農業・Web3新刊紹介 | `0 10 * * *` |
-| 10:05 | 一般書新刊紹介 | `5 10 * * *` |
-| 10:10 / 19:10 | 海外文献ダイジェスト | `10 10,19 * * *` |
+| 10:10 | 一般書新刊紹介 | `10 10 * * *` |
+| 停止中 | 海外文献ダイジェスト | 旧設定 `10 10,19 * * *`（`if (false)` で無効） |
 
 ---
 

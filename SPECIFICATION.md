@@ -353,11 +353,11 @@ Daily Insight、国内情報収集ヘッドライン、海外文献ダイジェ�
 | 列 | フィールド名 | 型 | 説明 |
 |----|-------------|----|----|
 | A | 投稿日時 | DateTime | Bot投稿日時 |
-| B | タイトル | String | ニgpt-5.6-lunaル |
-| C | URL | String | ニュgpt-5.6-luna|
+| B | タイトル | String | ニュースタイトル |
+| C | URL | String | ニュースURL |
 | D | ニュースの日付 | DateTime | 記事公開日 |
-| E | AIの見解 | String | GPT-4o生成見解 |
-| F | AIの質問 | String | GPT-4o生成質問（改行区切り） |
+| E | AIの見解 | String | gpt-5.6-luna生成見解 |
+| F | AIの質問 | String | gpt-5.6-luna生成質問（改行区切り） |
 
 #### Posted_URLsシート
 | 列 | フィールド名 | 型 | 説明 |
