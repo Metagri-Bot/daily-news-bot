@@ -31,6 +31,9 @@ const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
 const { runChibaTenderRadar } = require('./chiba-tender-radar');
 const { buildJsonCompletionParams } = require('./openai-chat');
 const { normalizeAiGuideResult } = require('./ai-guide-content');
+const aiGuideDelivery = require('./ai-guide-delivery');
+const AI_GUIDE_STATE_FILE = path.join(__dirname, 'state', 'ai-guide-delivery.json');
+let aiGuideRunning = false;
 
 // .envから設定を読み込む
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -4445,82 +4448,36 @@ cron.schedule('0 6 * * *', async () => {
     timezone: "Asia/Tokyo"
   });
 
-  // === 農業AI通信タスク（月・水・金 午前9時50分 JST） ===
+  // === 農業AI通信（月水金9:50 JST、未配信記事を1件ずつ） ===
 cron.schedule('50 9 * * 1,3,5', async () => {
-// cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
-  console.log('[AI Guide] 農業AI通信の配信タスクを開始します...');
-
+  if (aiGuideRunning) return;
+  aiGuideRunning = true;
   try {
     const channel = await client.channels.fetch(AI_GUIDE_CHANNEL_ID);
-    if (!channel || channel.type !== ChannelType.GuildText) {
-      console.log('[AI Guide] チャンネルが見つかりません。');
-      return;
-    }
-
-    // RSSフィード取得
-    const response = await axios.get(AI_GUIDE_RSS_URL, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-      },
-      timeout: 15000
-    });
+    if (!channel || channel.type !== ChannelType.GuildText) throw new Error('AI Guide channel unavailable');
+    const response = await axios.get(AI_GUIDE_RSS_URL, { timeout: 15000, headers: { 'User-Agent': 'Metagri-AI-Guide/1.0' } });
     const feed = await parser.parseString(response.data);
-
-    if (!feed.items || feed.items.length === 0) {
-      console.log('[AI Guide] 記事が取得できませんでした。');
-      return;
-    }
-
-    const latestArticle = feed.items[0];
-    const articleDate = new Date(latestArticle.isoDate || latestArticle.pubDate);
-    const now = new Date();
-    const hoursSincePublished = (now - articleDate) / (1000 * 60 * 60);
-
-    if (hoursSincePublished > 48) {
-      console.log('[AI Guide] 48時間以内の新しい記事がありません。');
-      return;
-    }
-
-    // 本文抽出処理
-    let articleContent = latestArticle.contentSnippet || latestArticle.content || '';
-    try {
-      const articleResponse = await axios.get(latestArticle.link, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
-        timeout: 15000
-      });
-      const $ = cheerio.load(articleResponse.data);
-      $('script, style, nav, header, footer, .date, .meta, .tags, .category, .breadcrumb, .social-share, .author-info, time').remove();
-
-      const selectors = ['.entry-content', '.post-content', 'article .content', '.article-content', 'main article'];
-      for (const selector of selectors) {
-        const content = $(selector).text().trim()
-          .replace(/\s+/g, ' ')
-          .replace(/\d{4}[年\/\-]\d{1,2}[月\/\-]\d{1,2}日?/g, '')
-          .trim();
-        if (content && content.length > 200) {
-          articleContent = content;
-          break;
-        }
-      }
-    } catch (e) {
-      console.log('[AI Guide] 本文取得失敗、RSSを使用');
-    }
-
-    // AI解析セクション
-    if (articleContent && OPENAI_API_KEY) {
-      try {
-        // --- 安全なJSONパース関数 ---
-        const safeJsonParse = (text) => {
+    const state = aiGuideDelivery.loadState(AI_GUIDE_STATE_FILE);
+    const now = Date.now();
+    await aiGuideDelivery.deliver({
+      state, items: feed.items || [], now,
+      recover: current => aiGuideDelivery.recoverHistory(channel, client.user.id, current, now),
+      save: current => aiGuideDelivery.saveState(AI_GUIDE_STATE_FILE, current),
+      prepare: async article => {
+        let content = article.contentSnippet || '';
+        try {
+          const response = await axios.get(article.link, { timeout: 15000 });
+          const $ = cheerio.load(response.data);
+          $('script,style,nav,header,footer,.agri-rss-cta,.metagri-article-cta,.metagri-topoffer').remove();
+          for (const selector of ['.entry-content', '.post-content', 'article .content', '.article-content', 'main article']) {
+            const text = $(selector).text().replace(/\s+/g, ' ').trim();
+            if (text.length > 200) { content = text; break; }
+          }
+        } catch { console.warn('[AI Guide] Article fetch failed; using RSS excerpt'); }
+        let parsed = { summary: content.slice(0, 500) || '記事の詳細はリンクをご覧ください。' };
+        let aiSummary = false;
+        if (OPENAI_API_KEY && content) {
           try {
-            const jsonStr = text.replace(/```json\s*|\s*```/g, '').trim();
-            const first = jsonStr.indexOf('{');
-            const last = jsonStr.lastIndexOf('}');
-            return JSON.parse(jsonStr.slice(first, last + 1));
-          } catch { return null; }
-        };
-
-        // --- 2) ハルシネーション抑制プロンプト ---
         const systemPrompt = `あなたは農業とAI技術に詳しい専門家です。
 以下の本文に「書かれていることだけ」に基づいて要約してください。
 
@@ -4541,121 +4498,43 @@ cron.schedule('50 9 * * 1,3,5', async () => {
   "facts": ["本文から直接確認できた事実1", "事実2"],
   "evidence": ["本文抜粋1", "本文抜粋2"]
 }`;
-
-        const completion = await openai.chat.completions.create(buildJsonCompletionParams({
-          model: DEFAULT_OPENAI_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `タイトル: ${latestArticle.title}\n\n本文: ${articleContent.substring(0, 3000)}` }
-          ],
-          maxTokens: 2048
-        }));
-
-        const rawParsed = safeJsonParse(completion.choices[0].message.content);
-        if (!rawParsed) throw new Error('Invalid JSON');
-        const parsed = normalizeAiGuideResult(rawParsed);
-
-        // --- 5) Discord投稿：情報の階層化と視覚的整理 ---
-
-const disclaimer = '*※この記事はAIによって要約されています。正確な情報は必ず原文をご確認ください。*';
-
-const embed = new EmbedBuilder()
-  .setColor(0x2ECC71) // 鮮やかな緑
-  .setTitle(`🌾 ${latestArticle.title}`)
-  .setURL(addDiscordUtm(latestArticle.link, 'ai_guide'))
-  .setDescription(`${disclaimer}\n\n**【概要】**\n${parsed.summary || '記事の詳細はリンクをご覧ください。'}`)
-  .setFooter({ text: '農業AI通信 | metagri-labo.com', iconURL: client.user.displayAvatarURL() })
-  .setTimestamp(articleDate);
-
-// 1. 事実（Facts）- 最も重要なデータ
-if (parsed.facts?.length > 0) {
-  embed.addFields({
-    name: '📊 本文が伝える具体的な事実',
-    value: parsed.facts.map(f => `・${f}`).join('\n'),
-    inline: false
-  });
-}
-
-// 2. 実践のヒント（Actionable）- 読者が次に何をすべきか
-if (parsed.actionable) {
-  embed.addFields({
-    name: '💡 明日から使えるヒント',
-    value: `> ${parsed.actionable}`, // 引用符で強調
-    inline: false
-  });
-}
-
-// 3. 根拠（Evidence）- 信頼性の担保（折りたたみ風に短く）
-if (parsed.evidence?.length > 0) {
-  embed.addFields({
-    name: '🧾 記事中の注目キーワード・発言',
-    value: parsed.evidence.map(e => `*「${e}」*`).join('\n'),
-    inline: false
-  });
-}
-
-// メインのテキストメッセージ
-const postContent = `### 📡 農業AI通信 - 本日のピックアップ\n農業をアップデートする最新情報をお届けします。`;
-
-await channel.send({ content: postContent, embeds: [embed] });
-
-        // --- 6) スプレッドシート記録：データを整形して送信 ---
-if (process.env.AI_GUIDE_GAS_URL) {
-  try {
-    console.log('[AI Guide] GASへの記録を開始します...');
-
-    const payload = {
-      type: 'aiGuide',
-      title: latestArticle.title,
-      url: latestArticle.link.split('?utm')[0],
-      // 配列を改行区切りの文字列に変換（GAS側でエラーにならないため）
-      summary: parsed.summary || '',
-      keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints.join('\n') : '',
-      actionable: parsed.actionable || '',
-      facts: Array.isArray(parsed.facts) ? parsed.facts.join('\n') : '',
-      evidence: Array.isArray(parsed.evidence) ? parsed.evidence.join('\n') : '',
-      articleDate: articleDate.toISOString()
-    };
-
-    const gasResponse = await axios.post(process.env.AI_GUIDE_GAS_URL, payload, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 10000
-    });
-
-    const gasResult = gasResponse.data || {};
-    if (gasResult.status !== 'success') {
-      throw new Error(`GAS returned non-success response: ${JSON.stringify(gasResult)}`);
-    }
-
-    console.log(`[AI Guide] GAS記録完了: requestId=${gasResult.requestId || 'n/a'}, sheet=${gasResult.sheetName || 'n/a'} (${gasResult.sheetId || 'n/a'})`);
-  } catch (logError) {
-    // 詳細なエラーログを出力
-    if (logError.response) {
-      console.error(`[AI Guide] GAS記録失敗 (HTTP ${logError.response.status}):`, logError.response.data);
-    } else {
-      console.error('[AI Guide] GAS接続エラー:', logError.message);
-    }
-  }
-} else {
-  console.warn('[AI Guide] AI_GUIDE_GAS_URL が設定されていません。');
-}
-
-      } catch (aiError) {
-        console.error('[AI Guide] AI解析エラー、フォールバック実行:', aiError.message);
-        // エラー時の簡易投稿（既存ロジック）
-        const fallbackEmbed = new EmbedBuilder()
-          .setColor(0x00AA00)
-          .setTitle(`🌾 ${latestArticle.title}`)
-          .setURL(addDiscordUtm(latestArticle.link, 'ai_guide'))
-          .setDescription(latestArticle.contentSnippet?.substring(0, 300) + '...')
-          .setFooter({ text: '農業AI通信（要約エラー時）' });
-        await channel.send({ embeds: [fallbackEmbed] });
+            const completion = await openai.chat.completions.create(buildJsonCompletionParams({
+              model: DEFAULT_OPENAI_MODEL,
+              messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: `タイトル: ${article.title}\n\n本文: ${content.slice(0, 6000)}` }],
+              maxTokens: 2048
+            }));
+            const raw = completion.choices[0].message.content;
+            parsed = normalizeAiGuideResult(JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)));
+            aiSummary = true;
+          } catch (error) { console.warn('[AI Guide] AI summary failed; using excerpt:', error.message); }
+        }
+        const slug = new URL(article.link).pathname.split('/').filter(Boolean).pop();
+        const embed = new EmbedBuilder().setColor(0x2ECC71)
+          .setTitle(`🌾 ${article.title}`.slice(0, 256))
+          .setURL(addDiscordUtm(article.link, 'ai_guide', slug))
+          .setDescription(`${aiSummary ? '※AI要約です。正確な情報は原文をご確認ください。' : '※記事本文からの抜粋です。'}\n\n${parsed.summary || ''}`.slice(0, 2500))
+          .setFooter({ text: '農業AI通信 | metagri-labo.com' }).setTimestamp(new Date(article.isoDate));
+        const addField = (name, value) => { if (value) embed.addFields({ name, value: value.slice(0, 900) }); };
+        addField('📊 本文が伝える具体的な事実', (parsed.facts || []).map(f => `・${f}`).join('\n'));
+        addField('💡 明日から使えるヒント', parsed.actionable || '');
+        addField('🧾 記事中の注目キーワード・発言', (parsed.evidence || []).map(e => `「${e}」`).join('\n'));
+        return {
+          message: { content: '### 📡 農業AI通信 - 本日のピックアップ', embeds: [embed.toJSON()], allowedMentions: { parse: [] } },
+          payload: { type: 'aiGuide', title: article.title, url: article.link, summary: parsed.summary || '',
+            keyPoints: (parsed.keyPoints || []).join('\n'), facts: (parsed.facts || []).join('\n'),
+            actionable: parsed.actionable || '', evidence: (parsed.evidence || []).join('\n'), articleDate: article.isoDate }
+        };
+      },
+      send: message => channel.send(message),
+      record: async payload => {
+        if (!process.env.AI_GUIDE_GAS_URL) throw new Error('AI_GUIDE_GAS_URL missing; transfer remains pending');
+        const response = await axios.post(process.env.AI_GUIDE_GAS_URL, payload, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
+        if (response.data?.status !== 'success') throw new Error('GAS did not confirm success; transfer remains pending');
       }
-    }
-  } catch (error) {
-    console.error('[AI Guide] タスク実行エラー:', error.message);
-  }
-}, { timezone: "Asia/Tokyo" });
+    });
+  } catch (error) { console.error('[AI Guide] Delivery failed:', error.message); }
+  finally { aiGuideRunning = false; }
+}, { timezone: 'Asia/Tokyo' });
 
   // === 官公庁・自治体 公募モニタータスク（平日7:30 JST） ===
   cron.schedule(PUBLIC_OPPORTUNITY_CRON, async () => {
