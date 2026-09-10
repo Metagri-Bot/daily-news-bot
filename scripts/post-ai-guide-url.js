@@ -6,7 +6,10 @@ const OpenAI = require('openai');
 const { buildJsonCompletionParams } = require('../openai-chat');
 const { normalizeAiGuideResult } = require('../ai-guide-content');
 
-const TARGET_URL = process.argv[2] || process.env.AI_GUIDE_TARGET_URL;
+const cliArgs = process.argv.slice(2);
+const GAS_ONLY = cliArgs.includes('--gas-only');
+const FORCE_OVERWRITE = cliArgs.includes('--force-overwrite');
+const TARGET_URL = cliArgs.find((arg) => !arg.startsWith('--')) || process.env.AI_GUIDE_TARGET_URL;
 const AI_GUIDE_CHANNEL_ID = process.env.AI_GUIDE_CHANNEL_ID || '952206763539714088';
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -14,7 +17,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
 const DISCORD_UTM_SOURCE = process.env.DISCORD_UTM_SOURCE || 'discord';
 const DISCORD_UTM_MEDIUM = process.env.DISCORD_UTM_MEDIUM || 'social';
 
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+let openai;
 
 function requireValue(name, value) {
   if (!value) throw new Error(`${name} is not set`);
@@ -212,7 +215,7 @@ async function postToDiscord(article, parsed) {
 async function logToGas(article, parsed) {
   if (!process.env.AI_GUIDE_GAS_URL) {
     console.warn('[AI Guide URL Post] AI_GUIDE_GAS_URL が未設定のためGAS記録をスキップします。');
-    return;
+    return false;
   }
 
   const payload = {
@@ -225,7 +228,8 @@ async function logToGas(article, parsed) {
     facts: Array.isArray(parsed.facts) ? parsed.facts.join('\n') : '',
     evidence: Array.isArray(parsed.evidence) ? parsed.evidence.join('\n') : '',
     articleDate: article.articleDate.toISOString(),
-    manualPost: true
+    manualPost: true,
+    forceOverwrite: FORCE_OVERWRITE
   };
 
   const response = await axios.post(process.env.AI_GUIDE_GAS_URL, payload, {
@@ -237,12 +241,16 @@ async function logToGas(article, parsed) {
   if (result.status !== 'success') {
     throw new Error(`GAS returned non-success response: ${JSON.stringify(result)}`);
   }
+  return true;
 }
 
 async function main() {
   requireValue('AI_GUIDE_TARGET_URL or first argument', TARGET_URL);
-  requireValue('DISCORD_BOT_TOKEN', DISCORD_BOT_TOKEN);
+  if (!GAS_ONLY) requireValue('DISCORD_BOT_TOKEN', DISCORD_BOT_TOKEN);
+  if (GAS_ONLY || FORCE_OVERWRITE) requireValue('AI_GUIDE_GAS_URL', process.env.AI_GUIDE_GAS_URL);
   requireValue('OPENAI_API_KEY', OPENAI_API_KEY);
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  if (FORCE_OVERWRITE) console.warn('[AI Guide URL Post] --force-overwrite is advisory: the bundled AIGuideCode.gs always overwrites A1/A2.');
 
   console.log(`[AI Guide URL Post] Fetching article: ${TARGET_URL}`);
   const article = await fetchArticle(TARGET_URL);
@@ -250,11 +258,14 @@ async function main() {
   console.log(`[AI Guide URL Post] Article date: ${article.articleDate.toISOString()}`);
 
   const parsed = await summarizeArticle(article);
-  const message = await postToDiscord(article, parsed);
-  console.log(`[AI Guide URL Post] Discord posted: https://discord.com/channels/${message.guild_id}/${message.channel_id}/${message.id}`);
+  if (!GAS_ONLY) {
+    const message = await postToDiscord(article, parsed);
+    console.log(`[AI Guide URL Post] Discord posted: channel=${message.channel_id} message=${message.id}`);
+  } else {
+    console.log('[AI Guide URL Post] Discord skipped (--gas-only).');
+  }
 
-  await logToGas(article, parsed);
-  console.log('[AI Guide URL Post] GAS logged.');
+  if (await logToGas(article, parsed)) console.log('[AI Guide URL Post] GAS logged.');
 }
 
 main().catch((error) => {

@@ -263,15 +263,39 @@ Daily Insight、国内情報収集ヘッドライン、海外文献ダイジェ�
 
 ### 2.6 農業AI通信
 
-#### 実行タイミング
-- Cron式: `30 10 * * *`（毎日 10:30 JST）
+#### 実行タイミング・入力
+- Cron式: `50 9 * * 1,3,5`（月・水・金 9:50 JST）
+- RSS: `https://metagri-labo.com/ai-guide/feed/`
+- 投稿先: `952206763539714088`
 
-#### 処理フロー
-1. metagri-labo.comからAI Guide記事を取得
-2. コンテンツをクリーンアップ（不要なHTML除去）
-3. AIGuideCode.gs経由でGoogle Sheetsに転記
-   - A1セル: 本文
-   - A2セル: URL
+#### 処理フロー（2026-09-10確認）
+1. RSS内の公開から14日以内の記事をすべて候補台帳に追加。未来・日付不明・対象外URLは除外し、登録済みの未配信記事は14日経過後も保持する。
+2. Discordの自分の投稿履歴を最大2,000件確認して重複を防止。履歴の取得失敗・走査不足時は投稿しない。
+3. GAS転記待ちがあれば優先して再送。それ以外は未配信記事を古い順に1回1件処理する。
+4. 記事本文を5種類のセレクタで抽出（200字超を採用）。取得失敗・本文不足時はRSS抜粋を使用する。
+5. `OPENAI_MODEL` で本文に基づくJSON要約を作成。AI解析失敗時は本文抜粋に切り替える。
+6. Discordへ緑色（`0x2ECC71`）のEmbedを投稿し、送信結果を保存する。
+7. `AI_GUIDE_GAS_URL` へ要約等を転記する。付属 `AIGuideCode.gs` はA1に本文、A2にURLを上書きする単一の下書き枠であり、追記型の台帳ではない。
+
+#### 永続化・再試行
+- `state/ai-guide-delivery.json` に記事・投稿内容・Discord送信結果・GAS転記結果を保存する。Dockerでは `bot-state` ボリュームで保持する。
+- GAS未設定・失敗時は転記待ちを残し、次回実行時にDiscordへ再投稿せず転記を再試行する。
+- 台帳導入前のDiscord投稿はGAS完了状況が不明なため `legacy_unknown` とし、自動転記しない。
+- 定期実行はRSS取得成功後に台帳を処理するため、RSS障害中はGAS再試行も次回へ持ち越す。
+
+#### 計測（UTM）
+- Embedのタイトルリンクに `utm_source=discord`、`utm_medium=social`、`utm_campaign=ai_guide`、`utm_content=記事スラッグ` を付与する。source・mediumは環境変数で変更可能。
+- 定期配信の台帳とGASにはクエリ・フラグメントを除いた正規URLを使用する。投稿本文にはURLを置かない。
+
+#### 単発投稿（cronの外）
+| スクリプト | 用途 | utm_campaign |
+|---|---|---|
+| `scripts/post-ai-guide-url.js` | URL指定で1本投稿 | `ai_guide_manual` |
+| `scripts/repost-ai-guide.js` | 過去記事の再投稿 | `ai_guide_repost` |
+
+- `node scripts/post-ai-guide-url.js <URL> --gas-only` はDiscord投稿を省略し、GASだけに転記する。Discordトークンは不要、OpenAIキーとGAS URLは必須。
+- `--force-overwrite` はGASへのフラグ送信のみ。付属GASはこのフラグを判定せず常にA1/A2を上書きするため、上書き保護機能ではない。
+- 単発スクリプトは定期配信の台帳を更新しない。通常の単発投稿は次回のDiscord履歴確認で検出できるが、GAS専用実行はDiscord履歴に残らないため、後日の定期配信を抑止しない。
 
 ### 2.7 官公庁・自治体 公募モニター
 

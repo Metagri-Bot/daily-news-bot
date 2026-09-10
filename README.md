@@ -166,6 +166,11 @@ sequenceDiagram
 
 metagri-labo.comのAI Guide記事を取得し、`gpt-5.6-luna` で要約してDiscordへ投稿し、Google Sheetsへ記録します。
 
+RSS内の14日以内の記事を候補に登録し、未配信記事を古い順に1回1件処理します。履歴は `state/ai-guide-delivery.json` に保存し、GAS転記失敗時は次回に転記だけを再試行します。SheetsはA1/A2の単一下書き枠を上書きします。詳細は `SPECIFICATION.md` §2.6 を参照してください。
+
+GASだけへ手動転記する場合は `node scripts/post-ai-guide-url.js <URL> --gas-only` を使用します（OpenAIキー・GAS URL必須、Discordトークン不要）。これは定期配信の抑止にはなりません。`--force-overwrite` は送信フラグであり、付属GASは指定の有無によらずA1/A2を上書きします。
+
+
 ```mermaid
 sequenceDiagram
     participant Scheduler as スケジューラ (Bot内部)
