@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { getArticlePublishedDate, isNewsWithinFreshness } = require('./news-freshness');
 
-const LOOKBACK_DAYS = 21;
+const LOOKBACK_DAYS = 7;
 // US English search is independent of the deployment machine's locale.
 const SEARCH_QUERIES = [
   'Roblox (brand OR partnership OR integration OR activation OR campaign)',
@@ -17,14 +17,42 @@ const SEARCH_QUERIES = [
   'Roblox site:fashionista.com',
 ];
 
+function canonicalFeedUrl(value) {
+  const raw = String(value || '').trim();
+  try {
+    const url = new URL(raw);
+    url.hash = '';
+    if (url.hostname === 'news.google.com') {
+      const query = (url.searchParams.get('q') || '')
+        .normalize('NFKC')
+        .replace(/\s+/g, ' ')
+        .trim();
+      url.searchParams.set('q', query);
+    }
+    url.searchParams.sort();
+    return url.href;
+  } catch {
+    return raw;
+  }
+}
+
 function getRobloxFeeds(configured = '') {
-  const custom = configured.split(',').map(s => s.trim()).filter(Boolean);
+  const custom = configured.split(',').map(s => s.trim()).filter(Boolean).map(value => {
+    try {
+      const url = new URL(value);
+      if (url.hostname === 'news.google.com') {
+        const query = (url.searchParams.get('q') || '').replace(/\bwhen:\S+/gi, '').trim();
+        url.searchParams.set('q', `(${query}) when:7d`);
+        return url.href;
+      }
+    } catch { /* feed errors are logged during collection */ }
+    return value;
+  });
   return [...new Set([...custom, ...SEARCH_QUERIES.map(query =>
     `https://news.google.com/rss/search?q=${encodeURIComponent(`${query} when:${LOOKBACK_DAYS}d`)}&hl=en-US&gl=US&ceid=US:en`
   ),
-  // Search-engine date filters can omit correctly dated articles. Validate dates locally.
-  `https://news.google.com/rss/search?q=${encodeURIComponent('Roblox site:licenseglobal.com (collection OR launches OR toys)')}&hl=en-US&gl=US&ceid=US:en`,
-  ])];
+  `https://news.google.com/rss/search?q=${encodeURIComponent('Roblox site:licenseglobal.com (collection OR launches OR toys) when:7d')}&hl=en-US&gl=US&ceid=US:en`,
+  ].map(canonicalFeedUrl))];
 }
 
 function cleanText(text = '') {
@@ -121,7 +149,14 @@ function scoreRobloxArticle(article) {
   // Never match feed title or source domain: broad business feeds contain unrelated news.
   // Long press releases can mention Roblox only in an unrelated biography/footer.
   const snippet = cleanText(article.contentSnippet || '');
-  const relevantSentences = snippet.split(/(?<=[.!?])\s+/).filter(sentence => /\broblox\b/i.test(sentence)).join(' ');
+  const title = cleanText(article.title || '');
+  // If Roblox is absent from the headline, require it near the start of the body.
+  // Boilerplate, company histories, and executive bios are normally at the end.
+  const leadSnippet = snippet.slice(0, 3000);
+  if (!/\broblox\b/i.test(title) && !/\broblox\b/i.test(leadSnippet)) {
+    return { score: 0, label: '', business: false };
+  }
+  const relevantSentences = leadSnippet.split(/(?<=[.!?])\s+/).filter(sentence => /\broblox\b/i.test(sentence)).join(' ');
   const text = cleanText(`${article.title || ''} ${relevantSentences}`).toLowerCase();
   if (!/\broblox\b/.test(text)) return { score: 0, label: '', business: false };
   const isForum = /^https?:\/\/devforum\.roblox\.com\//i.test(article.link || '');
@@ -194,7 +229,7 @@ function selectRobloxArticles(articles, { limit, ...options } = {}) {
   return [...priority, ...unique.filter(a => !priority.includes(a))].slice(0, limit);
 }
 
-async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = console, now = new Date() }) {
+async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = console, now = new Date(), directSources }) {
   const articles = [];
   // Bounded batches keep the extra search feeds from overwhelming the network.
   for (let i = 0; i < urls.length; i += 4) {
@@ -218,10 +253,11 @@ async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = cons
   }
   if (fetchPage) {
     const { collectDirectArticles } = require('./roblox-news-sources');
-    articles.push(...await collectDirectArticles({ fetchPage, logger }));
+    articles.push(...await collectDirectArticles({ fetchPage, logger, sources: directSources }));
   }
   logger.log(`[Roblox News] collected=${articles.length} fresh=${articles.filter(a => isNewsWithinFreshness(a, now, LOOKBACK_DAYS)).length}`);
-  return articles;
+  const { verifyFreshArticles } = require('./roblox-news-sources');
+  return verifyFreshArticles(articles, { fetchPage, now, logger });
 }
 
 function loadHistory(file) {

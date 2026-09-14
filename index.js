@@ -32,6 +32,7 @@ const { runChibaTenderRadar } = require('./chiba-tender-radar');
 const { buildJsonCompletionParams } = require('./openai-chat');
 const { normalizeAiGuideResult } = require('./ai-guide-content');
 const aiGuideDelivery = require('./ai-guide-delivery');
+const { resolveMonitoringWebhookUrl } = require('./monitoring-webhook');
 const AI_GUIDE_STATE_FILE = path.join(__dirname, 'state', 'ai-guide-delivery.json');
 let aiGuideRunning = false;
 
@@ -76,7 +77,7 @@ const BIGNER_ROLE_ID = process.env.BIGNER_ROLE_ID;
 const METAGRI_ROLE_ID = process.env.METAGRI_ROLE_ID;
 
 // === 監視用Webhook設定 ===
-const MONITORING_WEBHOOK_URL = process.env.MONITORING_WEBHOOK_URL;
+const MONITORING_WEBHOOK_URL = resolveMonitoringWebhookUrl(process.env.MONITORING_WEBHOOK_URL);
 
 // === 官公庁・自治体 公募モニター設定 ===
 // 投稿先は未設定ならニュースチャンネルにフォールバックする
@@ -734,7 +735,7 @@ const sendMonitoringNotification = async (title, description, level = 'info', de
   }
 
   try {
-    await axios.post(`https://discord.com/api/webhooks/${MONITORING_WEBHOOK_URL}`, {
+    await axios.post(MONITORING_WEBHOOK_URL, {
       embeds: [embed]
     });
   } catch (error) {
@@ -3760,7 +3761,7 @@ async function postChibaTenders() {
 }
 
 // Botが起動したときの処理
-client.once("ready", async () => {
+client.once('clientReady', async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
 
   // === BOT起動通知を送信 ===
@@ -4359,8 +4360,6 @@ cron.schedule('0 6 * * *', async () => {
   // === 4. 新機能：Robloxニュースの収集・投稿（毎日 AM 7:00 JST） ===
   cron.schedule('0 7 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
-    console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
-    
     if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
       console.log('[Roblox News] チャンネルIDまたはRSSフィードが設定されていません。');
       return;
@@ -4370,6 +4369,7 @@ cron.schedule('0 6 * * *', async () => {
       console.log('[Roblox News] 前回処理が実行中のためスキップします。');
       return;
     }
+    console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
     robloxNewsRunning = true;
     try {
       const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);

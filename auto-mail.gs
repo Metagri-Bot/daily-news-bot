@@ -41,15 +41,17 @@ function onOpen() {
     .addItem('2. 読者へ一斉配信（本番）', 'broadcastEmail')
     .addItem('3. 送信予約を設定する', 'setSchedule')
     .addItem('4. 予約をキャンセルする', 'cancelSchedule')
+    .addItem('5. Brevo接続確認（送信なし）', 'checkBrevoConnection')
+    .addItem('6. Brevo配信状況を更新', 'refreshBrevoStatus')
     .addToUi();
 }
 
 /**
- * 定期実行用の関数（月〜金 10:00〜10:59 JSTにこれを呼ぶ）
+ * 定期実行用の関数（月・水・金 10:00〜10:59 JSTにこれを呼ぶ）
  */
 function scheduledDailyDraft() {
-  if (!isWeekdayTestDraftWindow_()) {
-    console.log('scheduledDailyDraft skipped: outside weekday 10:00-10:59 JST window.');
+  if (!isMondayWednesdayFridayTestDraftWindow_()) {
+    console.log('scheduledDailyDraft skipped: outside Mon/Wed/Fri 10:00-10:59 JST window.');
     return;
   }
 
@@ -60,11 +62,11 @@ function scheduledDailyDraft() {
 /**
  * 1. AIで下書きを作り（メルマガ＆X＆カタログ）、自分にテスト送信する機能
  */
-function isWeekdayTestDraftWindow_() {
+function isMondayWednesdayFridayTestDraftWindow_() {
   const now = new Date();
   const dayOfWeek = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'u')); // Mon=1, Sun=7
   const hour = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'H'));
-  return dayOfWeek >= 1 && dayOfWeek <= 5 && hour === 10;
+  return [1, 3, 5].includes(dayOfWeek) && hour === 10;
 }
 
 function setupWeekdayTestDraftTrigger() {
@@ -72,9 +74,7 @@ function setupWeekdayTestDraftTrigger() {
 
   const weekdays = [
     ScriptApp.WeekDay.MONDAY,
-    ScriptApp.WeekDay.TUESDAY,
     ScriptApp.WeekDay.WEDNESDAY,
-    ScriptApp.WeekDay.THURSDAY,
     ScriptApp.WeekDay.FRIDAY
   ];
 
@@ -88,7 +88,7 @@ function setupWeekdayTestDraftTrigger() {
       .create();
   });
 
-  console.log('Weekday test draft triggers created: Monday-Friday, 10:00-11:00 JST.');
+  console.log('Test draft triggers created: Mon/Wed/Fri, 10:00-11:00 JST.');
 }
 
 function deleteTriggersByHandler_(handlerName) {
@@ -99,7 +99,7 @@ function deleteTriggersByHandler_(handlerName) {
   });
 }
 
-function generateDraftAndTest(isAuto = false, options = {}) {
+function generateDraftAndTestCore_(isAuto = false, options = {}) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const draftSheet = ss.getSheetByName('原稿作成');
   const ui = isAuto ? null : SpreadsheetApp.getUi();
@@ -191,6 +191,7 @@ function generateDraftAndTest(isAuto = false, options = {}) {
     draftSheet.getRange('B1').setValue(content.subject);
     draftSheet.getRange('B2').setValue(fullHtmlBody);
     draftSheet.getRange('B4').setValue(content.x_post).setWrap(true);
+    SCRIPT_PROPERTIES.setProperty('AI_GUIDE_DRAFT_URL', aiGuideCanonicalUrl_(articleUrl));
 
     // ★新規：コンテンツカタログに自動追加
     updateContentCatalog(content.catalog, content.subject, articleUrl);
@@ -204,7 +205,7 @@ function generateDraftAndTest(isAuto = false, options = {}) {
     }
 
   } catch (e) {
-    if (isAuto) console.error('エラー発生：' + e.toString());
+    if (isAuto) throw e;
     else ui.alert('エラーが発生しました：\n' + e.toString());
   }
 }
@@ -213,25 +214,11 @@ function generateDraftAndTest(isAuto = false, options = {}) {
  * 自動実行用：テストメール作成後、当日15時の配信予約をセットする
  */
 function setAutomaticSchedule() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const draftSheet = ss.getSheetByName('原稿作成');
-  
-  // 当日15:00を取得
-  const broadcastTime = getTodayAtJst_(15, 0);
-
-  // B3セルに予約日時を書き込む（運用確認のため）
-  draftSheet.getRange('B3').setValue(broadcastTime);
-
-  // 既存の予約をキャンセル
-  cancelSchedule(true);
-
-  // 予約トリガーを作成
-  ScriptApp.newTrigger('scheduledBroadcast')
-    .timeBased()
-    .at(broadcastTime)
-    .create();
-
-  console.log(`自動予約完了：${Utilities.formatDate(broadcastTime, AUTOMATION_TIMEZONE, "yyyy/MM/dd HH:mm")} に配信予約しました。`);
+  const when = getTodayAtJst_(15, 0);
+  if (when <= new Date()) throw new Error('本日15時を過ぎています。B3に未来の日時を設定してください。');
+  SpreadsheetApp.getActiveSpreadsheet().getSheetByName('原稿作成').getRange('B3').setValue(when);
+  brevoReserve_(when);
+  console.log('Brevo配信を本日15時に予約しました。');
 }
 
 function getTodayAtJst_(hour, minute) {
@@ -331,45 +318,18 @@ function getXPostExamples() {
  */
 function sendManualTest(isFromAI = false, isAuto = false) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const draftSheet = ss.getSheetByName('原稿作成');
-  const configSheet = ss.getSheetByName('設定');
-  const ui = isAuto ? null : SpreadsheetApp.getUi();
-
-  const subject = draftSheet.getRange('B1').getValue();
-  const htmlBody = draftSheet.getRange('B2').getValue();
-  const senderName = configSheet.getRange('B2').getValue();
-
-  if (!subject || !htmlBody) {
-    if (!isAuto) ui.alert('件名または本文が空です。');
-    return false;
-  }
-
-  const sheetUrl = ss.getUrl();
-  const plainTextBody = htmlBody.replace(/<br>/g, '\n').replace(/<[^>]*>/g, '');
-
+  const sheet = ss.getSheetByName('原稿作成');
+  const subject = String(sheet.getRange('B1').getValue());
+  const html = String(sheet.getRange('B2').getValue());
+  if (!subject || !html) throw new Error('件名または本文が空です。');
+  const senderName = String(ss.getSheetByName('設定').getRange('B2').getValue()) || '農業AI通信 編集部';
   try {
-    GmailApp.sendEmail(
-      OWNER_EMAIL, 
-      `【テスト確認】${subject}`,
-      plainTextBody,
-      { 
-        name: senderName,
-        from: OWNER_EMAIL,
-        htmlBody: `※これは下書き確認用のテストメールです。<br>修正リンク: <a href="${sheetUrl}">スプレッドシート</a><br><br>----------------------------<br><br>${htmlBody}` 
-      }
-    );
-
-    if (!isAuto) {
-      if (isFromAI) ui.alert(`下書きを作成しました。${OWNER_EMAIL} 宛にテストメールを送りました。`);
-      else ui.alert(`現在の内容で ${OWNER_EMAIL} 宛にテストメールを送りました。`);
-    } else {
-      console.log("定期テストメール送信完了");
-    }
+    brevoSendTest_(subject, '※下書き確認用です。<br>修正リンク: <a href="' + ss.getUrl() + '">スプレッドシート</a><br><br>' + html, senderName);
+    if (!isAuto) SpreadsheetApp.getUi().alert('現在の原稿をBrevo経由で自分宛てにテスト送信しました。');
     return true;
-
   } catch (e) {
-    if (isAuto) console.error('送信エラー：' + e.toString());
-    else ui.alert('送信エラー：' + e.toString());
+    if (isAuto) throw e;
+    SpreadsheetApp.getUi().alert('下書きは保存済みですが、テスト送信できませんでした。\n' + e.message);
     return false;
   }
 }
@@ -387,100 +347,35 @@ function broadcastEmail() {
  * 3. 送信予約を設定
  */
 function setSchedule() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const draftSheet = ss.getSheetByName('原稿作成');
-  const ui = SpreadsheetApp.getUi();
-
-  const scheduleTime = draftSheet.getRange('B3').getValue();
-  if (!scheduleTime || !(scheduleTime instanceof Date)) {
-    ui.alert('エラー：B3セルに正しい日時を入力してください。');
-    return;
+  const when = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('原稿作成').getRange('B3').getValue();
+  if (!(when instanceof Date) || !isFinite(when.getTime()) || when <= new Date()) {
+    throw new Error('B3セルに未来の予約日時を入力してください。');
   }
-
-  const now = new Date();
-  if (scheduleTime <= now) {
-    ui.alert('エラー：現在時刻より未来の日時を指定してください。');
-    return;
-  }
-
-  cancelSchedule(true);
-  ScriptApp.newTrigger('scheduledBroadcast').timeBased().at(scheduleTime).create();
-  
-  const formattedTime = Utilities.formatDate(scheduleTime, Session.getScriptTimeZone(), "yyyy/MM/dd HH:mm");
-  ui.alert(`予約完了！\n${formattedTime} に自動配信されます。`);
+  const id = brevoReserve_(when);
+  SpreadsheetApp.getUi().alert('Brevo予約を保存しました。\n予約ID: ' + id + '\n予約時点の原稿を配信します。修正後は再予約してください。');
 }
 
 /**
  * 4. 予約キャンセル
  */
 function cancelSchedule(isSilent = false) {
-  const triggers = ScriptApp.getProjectTriggers();
-  let count = 0;
-  for (const trigger of triggers) {
-    if (trigger.getHandlerFunction() === 'scheduledBroadcast') {
-      ScriptApp.deleteTrigger(trigger);
-      count++;
-    }
-  }
-  if (!isSilent) SpreadsheetApp.getUi().alert(count > 0 ? '予約をキャンセルしました。' : '予約はありません。');
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try { brevoCancelPending_(); } finally { lock.releaseLock(); }
+  if (!isSilent) SpreadsheetApp.getUi().alert('GASの未送信予約をキャンセルしました。Brevo受付済みの配信はBrevo管理画面で確認してください。');
 }
 
 function scheduledBroadcast() {
-  cancelSchedule(true);
-  executeBroadcast(true); 
+  brevoWorker();
 }
 
 /**
  * 共通の送信処理 ＋ アーカイブ保存（X投稿対応版）
  */
-function executeBroadcast(isAuto = false) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const listSheet = ss.getSheetByName('配信リスト');
-  const draftSheet = ss.getSheetByName('原稿作成');
-  const configSheet = ss.getSheetByName('設定');
-  
-  const subject = draftSheet.getRange('B1').getValue();
-  const htmlBody = draftSheet.getRange('B2').getValue();
-  const xPost = draftSheet.getRange('B4').getValue(); // ★追加：X投稿案を読み取る
-  const articleUrl = draftSheet.getRange('A2').getValue();
-  const senderName = configSheet.getRange('B2').getValue();
-
-  if (!subject || !htmlBody) {
-    if(!isAuto) SpreadsheetApp.getUi().alert('件名または本文が空です。');
-    return;
-  }
-
-  const lastRow = listSheet.getLastRow();
-  if (lastRow < 2) return;
-  const emails = listSheet.getRange(2, 1, lastRow - 1).getValues().flat().filter(String);
-
-  const BATCH_SIZE = 50; 
-  const plainTextBody = htmlBody.replace(/<br>/g, '\n').replace(/<[^>]*>/g, '');
-
-  try {
-    for (let i = 0; i < emails.length; i += BATCH_SIZE) {
-      const batchEmails = emails.slice(i, i + BATCH_SIZE);
-      GmailApp.sendEmail(OWNER_EMAIL, subject, plainTextBody, {
-          bcc: batchEmails.join(','),
-          name: senderName,
-          from: OWNER_EMAIL,
-          htmlBody: htmlBody 
-      });
-      Utilities.sleep(1000);
-    }
-    
-    // ★アーカイブへの引数に xPost を追加
-    saveToArchive(subject, htmlBody, articleUrl, emails.length, xPost);
-
-    if (!isAuto) {
-      SpreadsheetApp.getUi().alert('配信完了し、アーカイブに記録しました！');
-    } else {
-      GmailApp.sendEmail(OWNER_EMAIL, '【通知】予約配信が完了しました', `件名：${subject}\n読者数：${emails.length}名`);
-    }
-
-  } catch (e) {
-    console.error('送信エラー：' + e.toString());
-  }
+function executeBroadcastCore_(isAuto = false) {
+  // Old Gmail batch delivery has been replaced; no automatic Gmail fallback.
+  if (isAuto) { brevoWorker(); return; }
+  const id = brevoReserve_(new Date());
+  SpreadsheetApp.getUi().alert('Brevo配信を受け付けました。準備後にトリガーで配信します。\n予約ID: ' + id);
 }
 
 /**
@@ -549,7 +444,7 @@ function addTrackingParams(url) {
   const utmSource = "newsletter";
   const utmMedium = "email";
   const utmCampaign = "ai_guide_" + dateStr; // 例: ai_guide_20250131
-  const utmContent = domain.replace(/\./g, "_"); // ドメインのドットをアンダースコアに置換
+  const utmContent = url.split(/[?#]/)[0].split('/').filter(String).pop() || domain; // 記事単位で識別
 
   return addOrReplaceQueryParams_(url, {
     utm_source: utmSource,
@@ -580,4 +475,28 @@ function addOrReplaceQueryParams_(url, params) {
   });
 
   return baseUrl + '?' + queryParts.join('&') + hash;
+}
+
+function aiGuideCanonicalUrl_(raw) {
+  const base = String(raw || '').trim().split(/[?#]/)[0];
+  return /^https:\/\/metagri-labo\.com\/ai-guide\/[^/]+\/?$/.test(base) ? base.replace(/\/?$/, '/') : '';
+}
+
+function aiGuideArchived_(ss, url) {
+  const sheet = ss.getSheetByName('アーカイブ');
+  return !!(url && sheet && sheet.getLastRow() > 1 && sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues().some(row => aiGuideCanonicalUrl_(row[0]) === url));
+}
+
+function generateDraftAndTest(isAuto = false, options = {}) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const url = aiGuideCanonicalUrl_(ss.getSheetByName('原稿作成').getRange('A2').getValue());
+  if (isAuto && (!url || aiGuideArchived_(ss, url) || brevoJobs_().some(j => j.url === url && j.state !== 'CANCELLED'))) {
+    console.log('AI Guide: archived/reserved article; draft/test skipped.');
+    return;
+  }
+  return generateDraftAndTestCore_(isAuto, options);
+}
+
+function executeBroadcast(isAuto = false) {
+  return executeBroadcastCore_(isAuto);
 }

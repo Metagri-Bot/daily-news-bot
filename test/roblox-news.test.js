@@ -11,8 +11,8 @@ const article = (title, extra = {}) => ({ title, link: `https://example.com/${en
 
 test('添付3事例とGEEIQ分析が未知ブランド名でも選定される', () => {
   const examples = [
-    article('DAISE takes the gamification of beauty to the next level with Dollface blind boxes coming to Roblox', { published: '2026-08-28' }),
-    article('BLDR launches new Monster Jam collection and Roblox game', { published: '2026-08-24' }),
+    article('DAISE takes the gamification of beauty to the next level with Dollface blind boxes coming to Roblox', { published: '2026-09-01' }),
+    article('BLDR launches new Monster Jam collection and Roblox game', { published: '2026-09-01' }),
     article('The Doux launches My Salon Empire on Roblox celebrating textured hair', { published: '2026-08-31' }),
     article("What do Roblox's evaluation changes mean for brands?"),
   ];
@@ -26,8 +26,15 @@ test('短い語の部分一致とRoblox無関係記事を加点しない', () =>
   assert.equal(scoreRobloxArticle(article('Roblox AI and AR rendering')).score, 3);
 });
 
-test('21日境界・未来・日付不明を検証', () => {
-  const items = ['2026-08-15T00:00:00Z', '2026-08-14T23:59:59Z', '2026-09-06', null, 'invalid']
+test('本文末尾の会社沿革・人物略歴にRobloxがあるだけの記事を除外する', () => {
+  const unrelated = article('Drift launches an exclusive scented product collection', {
+    contentSnippet: `${'Twilight fragrance product details. '.repeat(120)}Previous integrations included Call of Duty, Roblox, and Fortnite.`
+  });
+  assert.deepEqual(scoreRobloxArticle(unrelated), { score: 0, label: '', business: false });
+});
+
+test('7日境界・未来・日付不明を検証', () => {
+  const items = ['2026-08-29T00:00:00Z', '2026-08-28T23:59:59Z', '2026-09-06', null, 'invalid']
     .map((published, i) => article(`Roblox brand ${i}`, { published }));
   assert.equal(selectRobloxArticles(items, { now }).length, 1);
 });
@@ -47,12 +54,22 @@ test('企業事例枠、URL/タイトル重複、投稿済み除外', () => {
 test('設定RSSを保持し、英語検索を追加、空要素・重複を除く', () => {
   const feeds = getRobloxFeeds(' https://example.com/rss, ,https://example.com/rss');
   assert.equal(feeds.filter(f => f === 'https://example.com/rss').length, 1);
-  assert.ok(feeds.some(f => f.includes('prnewswire.com') && f.includes('ceid=US:en')));
+  assert.ok(feeds.some(feed => {
+    const url = new URL(feed);
+    return url.searchParams.get('q')?.includes('prnewswire.com') && url.searchParams.get('ceid') === 'US:en';
+  }));
+});
+
+test('同じGoogle News検索はURLのエンコードやクエリ順が違っても1回だけ取得する', () => {
+  const encoded = 'https://news.google.com/rss/search?ceid=US%3Aen&gl=US&hl=en-US&q=Roblox+site%3Afashionista.com+when%3A7d';
+  const feeds = getRobloxFeeds(encoded);
+  assert.equal(feeds.filter(feed => new URL(feed).searchParams.get('q') === 'Roblox site:fashionista.com when:7d').length, 1);
 });
 
 test('一部取得失敗でも継続しRSS本文を選定に渡す', async () => {
   const errors = [];
-  const articles = await collectRobloxArticles({ urls: ['bad', 'good'], now,
+  const articles = await collectRobloxArticles({ urls: ['bad', 'good'], now, directSources: [],
+    fetchPage: async () => '<meta name="date" content="2026-09-03"><h1>New collection</h1><article>Roblox brand integration</article>',
     logger: { log() {}, error(message) { errors.push(message); } },
     fetchFeed: async url => {
       if (url === 'bad') throw new Error('timeout');
@@ -90,8 +107,8 @@ test('見出しが異なっても引用された体験名で重複を除く', ()
 test('直接記事では発売日・更新日を公開日として使わない', () => {
   const { parseArticle, discoverLinks } = require('../roblox-news-sources');
   const item = parseArticle('<meta name="date" content="2026-08-19"><h1>DAISE Roblox beauty</h1><article>Launch August 28</article>', 'https://example.com/a', 'PR Newswire');
-  assert.equal(item.published, '2026-08-19');
-  assert.equal(selectRobloxArticles([item], { now }).length, 1);
+  assert.equal(item.published, '2026-08-19T00:00:00.000Z');
+  assert.equal(selectRobloxArticles([item], { now }).length, 0);
   const undated = parseArticle('<script type="application/ld+json">{"dateModified":"2026-09-01"}</script>', 'https://example.com/a', 'test');
   assert.equal(undated.published, undefined);
   const links = discoverLinks('<a href="/news/a">A</a><a href="https://other.com/news/b">B</a><a href="/news/a">A</a>', { url: 'https://example.com/list', pattern: /\/news\// });
@@ -110,5 +127,5 @@ test('直接収集経路は一媒体が403でも残りを取得する', async ()
     },
   });
   assert.equal(result.length, 1);
-  assert.equal(result[0].published, '2026-09-01');
+  assert.equal(result[0].published, '2026-09-01T00:00:00.000Z');
 });
