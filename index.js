@@ -24,6 +24,7 @@ const path = require('node:path');
 const { getRobloxFeeds, collectRobloxArticles, rankRobloxArticles, loadHistory, saveHistory } = require('./roblox-news');
 const { curateRobloxArticles } = require('./roblox-news-editorial');
 const { recoverDiscordHistory, deliverDigest } = require('./roblox-news-delivery');
+const { describeRobloxNewsRun } = require('./roblox-news-report');
 let robloxNewsRunning = false;
 const ROBLOX_HISTORY_FILE = path.join(__dirname, 'state', 'roblox-news-sent.json');
 const { evaluateEditorialFit } = require('./news-editorial-fit');
@@ -743,6 +744,13 @@ const sendMonitoringNotification = async (title, description, level = 'info', de
     // Webhook送信エラーはコンソールにのみ出力（無限ループ防止）
     console.error('[Monitoring] Webhook送信に失敗しました:', error.message);
   }
+};
+
+// === Robloxビジネス速報の実行レポート ===
+// 成功・0件・失敗のいずれでも必ず1通送る。監視が届かないと沈黙＝正常に見える。
+const reportRobloxNewsRun = async (stats, error) => {
+  const report = describeRobloxNewsRun(stats, error);
+  await sendMonitoringNotification(report.title, report.description, report.level, report.details);
 };
 
 // Discordクライアントを初期化
@@ -4363,15 +4371,21 @@ cron.schedule('0 6 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
       console.log('[Roblox News] チャンネルIDまたはRSSフィードが設定されていません。');
+      await sendMonitoringNotification('Robloxビジネス速報を実行できません',
+        'ROBLOX_NEWS_CHANNEL_ID または ROBLOX_RSS_FEEDS が未設定です。', 'error');
       return;
     }
 
     if (robloxNewsRunning) {
       console.log('[Roblox News] 前回処理が実行中のためスキップします。');
+      await sendMonitoringNotification('Robloxビジネス速報をスキップしました',
+        '前回の実行が終了していないため、本日の実行を見送りました。', 'warn');
       return;
     }
     console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
     robloxNewsRunning = true;
+    const robloxStats = {};
+    let robloxFailure = null;
     try {
       const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Roblox通知用チャンネルが見つかりません。');
@@ -4379,14 +4393,15 @@ cron.schedule('0 6 * * *', async () => {
       saveHistory(ROBLOX_HISTORY_FILE, sent, []);
       const recentArticles = await collectRobloxArticles({
         urls: ROBLOX_RSS_FEEDS,
+        stats: robloxStats,
         fetchPage: async url => (await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })).data,
         fetchFeed: async url => {
           const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 });
           return parser.parseString(response.data);
         },
       });
-      const candidates = rankRobloxArticles(recentArticles, { sent, logger: console });
-      const finalRobloxArticles = await curateRobloxArticles({ candidates, sent, historyArticles: recentArticles, evaluate: async prompt => {
+      const candidates = rankRobloxArticles(recentArticles, { sent, logger: console, stats: robloxStats });
+      const finalRobloxArticles = await curateRobloxArticles({ candidates, sent, historyArticles: recentArticles, stats: robloxStats, evaluate: async prompt => {
         const response = await openai.chat.completions.create(buildJsonCompletionParams({
           model: DEFAULT_OPENAI_MODEL,
           messages: [{ role: 'user', content: prompt }],
@@ -4415,19 +4430,24 @@ cron.schedule('0 6 * * *', async () => {
         }
       }
 
+      robloxStats.translated = translatedArticles.length;
       if (translatedArticles.length === 0) {
         console.log('[Roblox News] 翻訳に成功した記事がありませんでした。');
-        // この場合、通知はしない
+        // Discordへの投稿はしないが、監視通知はfinallyで必ず送る。
         return;
       }
 
-      await deliverDigest({ channel, translatedArticles, historyFile: ROBLOX_HISTORY_FILE, sent });
+      robloxStats.posted = await deliverDigest({ channel, translatedArticles, historyFile: ROBLOX_HISTORY_FILE, sent });
       console.log(`[Roblox News] ${translatedArticles.length}件の翻訳済みニュースを投稿しました。`);
 
     } catch (error) {
+      robloxFailure = error;
       console.error('[Roblox News] タスク実行中にエラーが発生しました:', error);
     } finally {
       robloxNewsRunning = false;
+      // 監視通知の失敗でタスク本体を落とさない。
+      try { await reportRobloxNewsRun(robloxStats, robloxFailure); }
+      catch (reportError) { console.error('[Roblox News] 実行レポートの送信に失敗しました:', reportError.message); }
     }
   }, {
     timezone: "Asia/Tokyo"

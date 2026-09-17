@@ -98,7 +98,10 @@ function duplicateKeys(article) {
       phrases.push(`named-phrase:${phrase.join(' ').toLowerCase()}`);
     }
   }
-  return [...articleKeys(article), ...phrases, `fingerprint:${JSON.stringify(titleTokens(article))}`];
+  // History written before relay resolution only holds the news.google.com URL,
+  // so a resolved article must still be recognised through its relay spelling.
+  const relayKeys = (article.relayLinks || []).flatMap(link => articleKeys({ link, title: '' }));
+  return [...articleKeys(article), ...relayKeys, ...phrases, `fingerprint:${JSON.stringify(titleTokens(article))}`];
 }
 
 function matchesKeys(article, keys) {
@@ -200,7 +203,7 @@ function articleKeys(article) {
   return [`url:${url.href}`, ...(title ? [`title:${title}`] : []), ...campaigns.map(name => `experience:${name}`)];
 }
 
-function rankRobloxArticles(articles, { now = new Date(), sent = {}, logger } = {}) {
+function rankRobloxArticles(articles, { now = new Date(), sent = {}, logger, stats = {} } = {}) {
   const seen = new Set(Object.entries(sent)
     .filter(([, date]) => new Date(date).getTime() >= new Date(now).getTime() - 30 * 86400000)
     .map(([key]) => key));
@@ -217,6 +220,7 @@ function rankRobloxArticles(articles, { now = new Date(), sent = {}, logger } = 
     .map(group => ({ ...group.articles.sort((a, b) => b.score - a.score || getArticlePublishedDate(b) - getArticlePublishedDate(a))[0],
       duplicateKeys: [...group.keys], relatedArticleCount: group.articles.length }))
     .sort((a, b) => b.score - a.score || getArticlePublishedDate(b) - getArticlePublishedDate(a));
+  Object.assign(stats, { eligible: candidates.length, topics: groups.length, unseen: unique.length });
   logger?.log(`[Roblox News] eligible=${candidates.length} topics=${groups.length} unseen=${unique.length}`);
   return unique;
 }
@@ -229,7 +233,7 @@ function selectRobloxArticles(articles, { limit, ...options } = {}) {
   return [...priority, ...unique.filter(a => !priority.includes(a))].slice(0, limit);
 }
 
-async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = console, now = new Date(), directSources }) {
+async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = console, now = new Date(), directSources, stats = {} }) {
   const articles = [];
   // Bounded batches keep the extra search feeds from overwhelming the network.
   for (let i = 0; i < urls.length; i += 4) {
@@ -255,9 +259,11 @@ async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = cons
     const { collectDirectArticles } = require('./roblox-news-sources');
     articles.push(...await collectDirectArticles({ fetchPage, logger, sources: directSources }));
   }
-  logger.log(`[Roblox News] collected=${articles.length} fresh=${articles.filter(a => isNewsWithinFreshness(a, now, LOOKBACK_DAYS)).length}`);
+  const fresh = articles.filter(a => isNewsWithinFreshness(a, now, LOOKBACK_DAYS)).length;
+  Object.assign(stats, { collected: articles.length, fresh });
+  logger.log(`[Roblox News] collected=${articles.length} fresh=${fresh}`);
   const { verifyFreshArticles } = require('./roblox-news-sources');
-  return verifyFreshArticles(articles, { fetchPage, now, logger });
+  return verifyFreshArticles(articles, { fetchPage, now, logger, stats });
 }
 
 function loadHistory(file) {

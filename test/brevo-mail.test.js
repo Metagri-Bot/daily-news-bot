@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const code = fs.readFileSync('auto-mail.gs', 'utf8') + '\n' + fs.readFileSync('BrevoMail.gs', 'utf8');
+const autoMail = fs.readFileSync('auto-mail.gs', 'utf8');
+// 本番の auto-mail.gs は Brevo 予約配信を統合済み。統合前の構成のときだけ BrevoMail.gs を足す
+const code = autoMail.includes('function brevoConfig_') ? autoMail : autoMail + '\n' + fs.readFileSync('BrevoMail.gs', 'utf8');
 
 function harness(options = {}) {
   const data = {
@@ -39,7 +41,7 @@ function harness(options = {}) {
     SpreadsheetApp: {getActiveSpreadsheet: () => ss, flush() {}, getUi: () => ({alert() {}})},
     Utilities: {getUuid: () => 'job-' + nextId++, sleep() {}},
     ScriptApp: {getProjectTriggers: () => triggers.slice(), deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1),
-      newTrigger(handler) { const t = {getHandlerFunction: () => handler}; const b = {timeBased: () => b, everyMinutes: () => b, at: () => b, create: () => {triggers.push(t);return t;}}; return b;}},
+      newTrigger(handler) { const t = {getHandlerFunction: () => handler}; const b = {timeBased: () => b, everyMinutes: () => b, everyHours: h => { t.hours = h; return b; }, at: () => b, create: () => {triggers.push(t);return t;}}; return b;}},
     GmailApp: {sendEmail() { throw new Error('Gmail must not be used'); }},
     UrlFetchApp: {fetch(url, request) {
       const path = url.replace('https://api.brevo.com/v3', '');
@@ -167,4 +169,86 @@ test('test preview goes only to owner through Brevo and does not reserve campaig
 test('API errors do not expose provider response bodies', () => {
   const h = harness({api: () => ({status: 401, body: {message: 'private-address-secret'}})});
   assert.throws(() => h.c.brevoApi_('get', '/account'), e => /HTTP 401/.test(e.message) && !e.message.includes('private-address'));
+});
+
+test('member list contacts are merged; blacklisted and list-unsubscribed members are excluded', () => {
+  const h = harness({api: item => item.path.startsWith('/contacts/lists/7/contacts') ? {body: {contacts: [
+    {email: 'Member@Example.com', emailBlacklisted: false, listUnsubscribed: []},
+    {email: 'two@example.com', emailBlacklisted: false},
+    {email: 'blocked@example.com', emailBlacklisted: true},
+    {email: 'left@example.com', emailBlacklisted: false, listUnsubscribed: [7]}
+  ]}} : undefined});
+  h.props.BREVO_MEMBER_LIST_ID = '7';
+  assert.deepEqual([...h.c.brevoEmails_()], ['one@example.com', 'two@example.com', 'member@example.com']);
+});
+
+test('without BREVO_MEMBER_LIST_ID the sheet stays the only source and Brevo is not queried', () => {
+  const h = harness();
+  assert.deepEqual([...h.c.brevoEmails_()], ['one@example.com', 'two@example.com']);
+  assert.equal(h.requests.length, 0);
+});
+
+test('member list fetch failure stops instead of silently dropping members', () => {
+  const h = harness({api: item => item.path.startsWith('/contacts/lists/7') ? {status: 500} : undefined});
+  h.props.BREVO_MEMBER_LIST_ID = '7';
+  assert.throws(() => h.c.brevoEmails_(), /Brevo HTTP 500/);
+});
+
+test('members only (empty sheet) is still a valid audience', () => {
+  const h = harness({api: item => item.path.startsWith('/contacts/lists/7/contacts') ? {body: {contacts: [{email: 'm@example.com'}]}} : undefined});
+  h.data.配信リスト.length = 1; h.props.BREVO_MEMBER_LIST_ID = '7';
+  assert.deepEqual([...h.c.brevoEmails_()], ['m@example.com']);
+});
+
+test('form unsubscribe also blocks the address in Brevo', () => {
+  const h = harness({api: item => item.method === 'put' ? {status: 404} : undefined});
+  h.data.配信リスト[0] = ['メール'];
+  h.data.配信リスト.forEach(r => r.length = 1);
+  const sheet = h.c.SpreadsheetApp.getActiveSpreadsheet().getSheetByName('配信リスト');
+  sheet.getDataRange = () => ({getValues: () => h.data.配信リスト.map(r => [...r])});
+  sheet.deleteRow = i => h.data.配信リスト.splice(i - 1, 1);
+  h.c.autoDeleteSubscriber({namedValues: {'メールアドレス': ['two@example.com']}});
+  assert.equal(h.data.配信リスト.length, 2);
+  const put = h.requests.find(r => r.method === 'put');
+  assert.equal(put.path, '/contacts/two%40example.com'); assert.deepEqual(put.body, {emailBlacklisted: true});
+  assert.deepEqual(h.requests.find(r => r.method === 'post').body, {email: 'two@example.com', emailBlacklisted: true});
+});
+
+test('member sheet keeps every row and flags stops, withdrawals and removals instead of deleting', () => {
+  let contacts = [{email: 'b@example.com'}, {email: 'a@example.com'}, {email: 'x@example.com', emailBlacklisted: true}];
+  const h = harness({api: item => item.path.startsWith('/contacts/lists/7/contacts') ? {body: {contacts}} : undefined});
+  h.props.BREVO_MEMBER_LIST_ID = '7';
+  h.c.setupWpMemberSync();
+  const rows = h.data['会員（WordPress）'];
+  const view = () => Object.fromEntries(rows.slice(1).map(r => [r[0], [r[1], r[2]]]));
+  assert.deepEqual(view(), {'b@example.com': ['配信中', true], 'a@example.com': ['配信中', true], 'x@example.com': ['配信停止', false]});
+  assert.equal(h.triggers.filter(t => t.getHandlerFunction() === 'syncWpMembersToSheet').length, 1);
+  assert.equal(h.triggers.find(t => t.getHandlerFunction() === 'syncWpMembersToSheet').hours, 6);
+  contacts = [{email: 'b@example.com', emailBlacklisted: true, attributes: {WP_MEMBER_STATUS: '退会申請', WP_WITHDRAW_REASON: '記事を読み終えたため'}},
+    {email: 'x@example.com'}, {email: 'c@example.com', emailBlacklisted: true, attributes: {WP_MEMBER_STATUS: '配信中'}}];
+  h.c.setupWpMemberSync();
+  assert.equal(h.triggers.filter(t => t.getHandlerFunction() === 'syncWpMembersToSheet').length, 1);
+  assert.deepEqual(view(), {'b@example.com': ['退会申請', false], 'a@example.com': ['リスト外', false],
+    'x@example.com': ['配信中', true], 'c@example.com': ['配信停止', false]});
+  assert.equal(rows.length, 5);
+  assert.equal(rows.find(r => r[0] === 'b@example.com')[6], '記事を読み終えたため');
+  assert.equal(rows.find(r => r[0] === 'x@example.com')[6], '');
+  assert.equal(rows[0][6], '退会理由');
+  assert.deepEqual([...h.c.brevoEmails_()], ['one@example.com', 'two@example.com', 'x@example.com']);
+  assert.equal(h.data.配信リスト.length, 3);
+});
+
+test('legacy 3-column member sheet is upgraded in place without losing rows', () => {
+  const h = harness({api: item => item.path.startsWith('/contacts/lists/7/contacts') ? {body: {contacts: [{email: 'a@example.com'}]}} : undefined});
+  h.props.BREVO_MEMBER_LIST_ID = '7';
+  h.data['会員（WordPress）'] = [['メール', '連携元', '最終同期'], ['a@example.com', 'WordPress会員', 'old'], ['gone@example.com', 'WordPress会員', 'old']];
+  h.c.syncWpMembersToSheet();
+  const rows = h.data['会員（WordPress）'];
+  assert.deepEqual(rows[0], ['メール', '状態', '配信対象', '初回登録', '状態変更', '最終同期', '退会理由']);
+  assert.deepEqual(rows.slice(1).map(r => [r[0], r[1], r[2]]), [['a@example.com', '配信中', true], ['gone@example.com', 'リスト外', false]]);
+});
+
+test('member sync does nothing without BREVO_MEMBER_LIST_ID', () => {
+  const h = harness(); h.c.syncWpMembersToSheet();
+  assert.equal(h.data['会員（WordPress）'], undefined); assert.equal(h.requests.length, 0);
 });

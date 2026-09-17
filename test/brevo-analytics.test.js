@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const code = fs.readFileSync('auto-mail.gs', 'utf8') + '\n' + fs.readFileSync('BrevoMail.gs', 'utf8')
+const autoMail = fs.readFileSync('auto-mail.gs', 'utf8');
+const code = (autoMail.includes('function brevoConfig_') ? autoMail : autoMail + '\n' + fs.readFileSync('BrevoMail.gs', 'utf8'))
   + '\n' + fs.readFileSync('BrevoAnalytics.gs', 'utf8');
 
 const CAMPAIGN = (id, sentDate, stats, subject) => ({

@@ -74,9 +74,10 @@ function chooseImportantArticles(candidates, response, sent = {}, now = new Date
   return important.slice(0, adaptiveLimit(important.length));
 }
 
-async function curateRobloxArticles({ candidates, sent, evaluate, now = new Date(), logger = console, historyArticles = [] }) {
+async function curateRobloxArticles({ candidates, sent, evaluate, now = new Date(), logger = console, historyArticles = [], stats = {} }) {
   // Deterministic relevance/dedup runs first; bound model input and daily evaluation cost.
   const pool = candidates.slice(0, 40);
+  Object.assign(stats, { evaluated: pool.length, selected: 0, threshold: MIN_IMPORTANCE });
   if (!pool.length) return [];
   const prompt = editorialPrompt(pool, sent, now, historyArticles);
   let result = await evaluate(prompt);
@@ -87,6 +88,7 @@ async function curateRobloxArticles({ candidates, sent, evaluate, now = new Date
     result = await evaluate(`${prompt}\n前回の出力は検証に失敗しました: ${error.message}\n再度全候補を評価してください。evidenceは要約や省略記号で加工せず、各候補自身のtitleまたはexcerptから短い連続した文字列をそのままコピーしてください。`);
     selected = chooseImportantArticles(pool, result, sent, now);
   }
+  stats.selected = selected.length;
   logger.log(`[Roblox News] editorial evaluated=${pool.length} selected=${selected.length} threshold=${MIN_IMPORTANCE}`);
   return selected;
 }

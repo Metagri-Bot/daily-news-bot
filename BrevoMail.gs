@@ -1,6 +1,7 @@
 // 農業AI通信: GAS予約 + Brevo Marketing Campaigns (2026-09-10)
 // Script properties: BREVO_API_KEY, BREVO_FOLDER_ID, BREVO_ENABLED=true
 // Optional: BREVO_SENDER_EMAIL (default OWNER_EMAIL), BREVO_MAX_RECIPIENTS (default 290)
+// Optional: BREVO_MEMBER_LIST_ID = WordPress無料会員のメルマガ希望者リスト（2026-09-16 追加）
 const BREVO_JOBS_SHEET = 'Brevo配信管理';
 const BREVO_TERMINAL = ['SENT', 'CANCELLED', 'FAILED', 'REVIEW', 'SUSPENDED'];
 
@@ -24,7 +25,11 @@ function brevoApi_(method, path, payload) {
   const status = response.getResponseCode();
   // Never log provider bodies: they may contain addresses or credentials.
   if (status < 200 || status >= 300) {
-    const error = new Error('Brevo HTTP ' + status + '。Brevo管理画面で認証・残量・配信状態を確認してください。');
+    // 本文は出さず、Brevoのエラーコード（例: unauthorized）だけ添える
+    let code = '';
+    try { code = String(JSON.parse(response.getContentText()).code || '').replace(/[^\w-]/g, '').slice(0, 40); } catch (_) {}
+    const hint = status === 401 ? '（APIキーが無効か、Brevoの「許可IP」でGoogleからの接続が止められている可能性）' : '';
+    const error = new Error('Brevo HTTP ' + status + (code ? ' ' + code : '') + hint + '。Brevo管理画面で認証・残量・配信状態を確認してください。');
     error.httpStatus = status;
     throw error;
   }
@@ -116,14 +121,126 @@ function brevoJobs_() {
 }
 
 function brevoEmails_() {
+  // 宛先 = シート「配信リスト」（フォーム登録者）＋ Brevoの会員用リスト（WordPress無料会員の希望者）
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('配信リスト');
-  if (!sheet || sheet.getLastRow() < 2) throw new Error('配信リストが空です。');
-  const emails = [...new Set(sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
-    .flat().map(v => String(v).trim().toLowerCase()).filter(Boolean))];
-  if (!emails.length || emails.some(e => !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(e))) {
+  const sheetEmails = sheet && sheet.getLastRow() >= 2
+    ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().flat().map(v => String(v).trim().toLowerCase()).filter(Boolean)
+    : [];
+  if (sheetEmails.some(e => !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(e))) {
     throw new Error('配信リストに無効なメールアドレスがあります。');
   }
+  const emails = [...new Set(sheetEmails.concat(brevoMemberEmails_()))];
+  if (!emails.length) throw new Error('配信リストが空です。');
   return emails;
+}
+
+// WordPress会員リストの連絡先（配信停止・退会の人も含む）。取得に失敗したら例外で止める。
+function brevoMemberContacts_() {
+  const listId = Number(PropertiesService.getScriptProperties().getProperty('BREVO_MEMBER_LIST_ID'));
+  if (!Number.isInteger(listId) || listId < 1) return [];
+  const out = [];
+  for (let offset = 0; offset < 50000; offset += 500) {
+    const contacts = brevoApi_('get', '/contacts/lists/' + listId + '/contacts?limit=500&offset=' + offset).contacts || [];
+    contacts.forEach(c => {
+      const email = String(c.email || '').trim().toLowerCase();
+      if (!email || !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email)) return;
+      const unsubscribed = (c.listUnsubscribed || []).map(Number).includes(listId);
+      const wpStatus = String((c.attributes || {}).WP_MEMBER_STATUS || '').trim();
+      const active = !c.emailBlacklisted && !unsubscribed;
+      // 状態の優先順位：WordPressが記録した状態（退会申請など）＞Brevo上の配信可否
+      const status = !active && (!wpStatus || wpStatus === '配信中') ? '配信停止' : (wpStatus || '配信中');
+      const reason = active ? '' : String((c.attributes || {}).WP_WITHDRAW_REASON || '').trim();
+      out.push({email: email, active: active, status: active ? '配信中' : status, created: c.createdAt || '', reason: reason});
+    });
+    if (contacts.length < 500) break;
+  }
+  return out;
+}
+
+// WordPress会員の希望者＝配信対象だけ。配信停止（emailBlacklisted）とリスト解除済みは含めない。
+function brevoMemberEmails_() {
+  return brevoMemberContacts_().filter(c => c.active).map(c => c.email);
+}
+
+// ---- WordPress会員をシートで管理する（2026-09-16 追加・6時間ごと）----
+// 正はBrevoの会員用リスト。シート「会員（WordPress）」は台帳で、行は消さずに状態を上書きする（物理削除しない）。
+//   状態：配信中／配信停止／退会申請／退会（削除）／リスト外（Brevoのリストから消えた）
+//   配信対象：TRUE のときだけ配信される（判定は配信のたびにBrevoから直接読む。シートを手で書き換えても配信は変わらない）
+//   退会理由：配信対象が FALSE の会員だけ、WordPressの退会申請で書かれた理由を入れる（配信中に戻ったら空にする）
+const BREVO_MEMBER_SHEET = '会員（WordPress）';
+const BREVO_MEMBER_HEADER = ['メール', '状態', '配信対象', '初回登録', '状態変更', '最終同期', '退会理由'];
+
+function syncWpMembersToSheet() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return;
+  try {
+    const listId = Number(PropertiesService.getScriptProperties().getProperty('BREVO_MEMBER_LIST_ID'));
+    if (!Number.isInteger(listId) || listId < 1) { console.log('BREVO_MEMBER_LIST_ID未設定のため会員同期をスキップ'); return; }
+    const contacts = brevoMemberContacts_();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(BREVO_MEMBER_SHEET) || ss.insertSheet(BREVO_MEMBER_SHEET);
+    const now = new Date();
+    const width = BREVO_MEMBER_HEADER.length;
+    sheet.getRange(1, 1, 1, width).setValues([BREVO_MEMBER_HEADER]);
+    sheet.setFrozenRows(1);
+    const last = sheet.getLastRow();
+    const rows = last > 1 ? sheet.getRange(2, 1, last - 1, width).getValues() : [];
+    const index = {};
+    rows.forEach((r, i) => {
+      const email = String(r[0] || '').trim().toLowerCase();
+      if (!email) return;
+      // 旧形式（メール／連携元／最終同期）の行は、状態を空にして読み替える
+      if (r[1] === 'WordPress会員') { r[1] = ''; r[2] = ''; r[5] = r[5] || ''; }
+      index[email] = i;
+    });
+    const seen = {};
+    contacts.forEach(c => {
+      seen[c.email] = true;
+      if (index[c.email] === undefined) {
+        rows.push([c.email, c.status, c.active, c.created ? new Date(c.created) : now, now, now, c.reason]);
+        index[c.email] = rows.length - 1;
+        return;
+      }
+      const r = rows[index[c.email]];
+      if (r[1] !== c.status || r[2] !== c.active) { r[1] = c.status; r[2] = c.active; r[4] = now; }
+      if (!r[3]) r[3] = c.created ? new Date(c.created) : now;
+      r[5] = now;
+      r[6] = c.active ? '' : (c.reason || r[6] || '');
+    });
+    // Brevoのリストから消えた会員も行は残し、状態だけ「リスト外」にする
+    Object.keys(index).forEach(email => {
+      if (seen[email]) return;
+      const r = rows[index[email]];
+      if (r[1] !== 'リスト外' || r[2] !== false) { r[1] = 'リスト外'; r[2] = false; r[4] = now; }
+      r[5] = now;
+    });
+    if (rows.length) sheet.getRange(2, 1, rows.length, width).setValues(rows);
+    console.log('会員同期: ' + contacts.length + '件（配信対象 ' + contacts.filter(c => c.active).length + '件）');
+  } finally { lock.releaseLock(); }
+}
+
+// 実行すると同期トリガーを「6時間ごと」に作り直し、すぐ1回同期する（何回実行してもトリガーは1つ）
+function setupWpMemberSync() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'syncWpMembersToSheet')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('syncWpMembersToSheet').timeBased().everyHours(6).create();
+  syncWpMembersToSheet();
+}
+
+// 解約フォームなどでシートから外した人を、Brevo側でも配信停止にする（会員用リスト経由で届き続けないように）
+function brevoBlockEmail_(email) {
+  const p = PropertiesService.getScriptProperties();
+  if (p.getProperty('BREVO_ENABLED') !== 'true' || !p.getProperty('BREVO_API_KEY')) return false;
+  const address = String(email || '').trim().toLowerCase();
+  if (!address) return false;
+  try {
+    brevoApi_('put', '/contacts/' + encodeURIComponent(address), {emailBlacklisted: true});
+  } catch (error) {
+    if (error.httpStatus !== 404) { console.error('Brevo配信停止に失敗: ' + error.message); return false; }
+    brevoApi_('post', '/contacts', {email: address, emailBlacklisted: true});
+  }
+  return true;
 }
 
 function brevoSnapshot_() {
