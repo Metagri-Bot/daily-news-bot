@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main" ] # mainブランチにプッシュされたときに実行
   workflow_dispatch: # 手動でも実行できるようにする
+    inputs:
+      send_farm_partner_once:
+        description: '農家・食品パートナー案件を今すぐ1回収集・配信（履歴で重複抑止）'
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -57,8 +62,18 @@ jobs:
           echo "CHIBA_TENDER_MIN_SCORE=${{ secrets.CHIBA_TENDER_MIN_SCORE }}" >> .env
           echo "CHIBA_TENDER_ALERT_SCORE=${{ secrets.CHIBA_TENDER_ALERT_SCORE }}" >> .env
           echo "CHIBA_TENDER_MAX_PRIORITY=${{ secrets.CHIBA_TENDER_MAX_PRIORITY }}" >> .env
+          echo "FARM_PARTNER_CHANNEL_ID=${{ secrets.FARM_PARTNER_CHANNEL_ID }}" >> .env
+          echo "FARM_PARTNER_CRON=${{ secrets.FARM_PARTNER_CRON }}" >> .env
+          echo "FARM_PARTNER_MIN_SCORE=${{ secrets.FARM_PARTNER_MIN_SCORE }}" >> .env
+          echo "DISABLE_FARM_PARTNER_RADAR=${{ secrets.DISABLE_FARM_PARTNER_RADAR }}" >> .env
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d
+        env:
+          DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
+
+      - name: Send farm partner opportunities once
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_farm_partner_once }}
+        run: docker compose exec -T app node scripts/farm-partner-radar.js --send
         env:
           DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'

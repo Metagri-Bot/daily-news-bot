@@ -29,6 +29,7 @@ const ROBLOX_HISTORY_FILE = path.join(__dirname, 'state', 'roblox-news-sent.json
 const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
 const { runChibaTenderRadar } = require('./chiba-tender-radar');
+const { runRadar: runFarmPartnerRadar } = require('./farm-partner-radar');
 const { buildJsonCompletionParams } = require('./openai-chat');
 const { normalizeAiGuideResult } = require('./ai-guide-content');
 const aiGuideDelivery = require('./ai-guide-delivery');
@@ -4552,6 +4553,34 @@ cron.schedule('50 9 * * 1,3,5', async () => {
   }, {
     timezone: "Asia/Tokyo"
   });
+
+  // 農家との接点・AI/DX・販促支援案件。新規と重要更新だけを配信する。
+  if (process.env.DISABLE_FARM_PARTNER_RADAR !== 'true') {
+    const schedule = process.env.FARM_PARTNER_CRON || '20 8 * * 1-5';
+    if (!cron.validate(schedule)) throw new Error('Invalid FARM_PARTNER_CRON');
+    cron.schedule(schedule, async () => {
+      try {
+        const channelId = process.env.FARM_PARTNER_CHANNEL_ID || PUBLIC_OPPORTUNITY_CHANNEL_ID;
+        const channel = await client.channels.fetch(channelId);
+        if (!channel?.isTextBased() || typeof channel.send !== 'function') throw new Error('Farm partner channel is not sendable');
+        const result = await runFarmPartnerRadar({
+          minScore: Number(process.env.FARM_PARTNER_MIN_SCORE || 65),
+          send: message => channel.send(message),
+          recover: async () => [...(await channel.messages.fetch({ limit: 100 })).values()]
+            .filter(m => m.author.id === client.user.id).flatMap(m => m.embeds.map(e => e.footer?.text || ''))
+        });
+        console.log('[Farm Partner Radar]', JSON.stringify({ stats: result.stats, sent: result.sent, skipped: result.skipped, errors: result.errors }));
+        if (result.errors?.length) throw new Error(result.errors.join('; '));
+      } catch (error) {
+        console.error('[Farm Partner Radar]', error.message);
+        if (MONITORING_WEBHOOK_URL) {
+          await axios.post(MONITORING_WEBHOOK_URL, { content: '農家・食品パートナー案件レーダーの収集／配信に失敗しました。Botログを確認してください。', allowed_mentions: { parse: [] } }, { timeout: 10000 })
+            .catch(() => console.error('[Farm Partner Radar] Monitoring webhook failed'));
+        }
+      }
+    }, { timezone: 'Asia/Tokyo', noOverlap: true });
+    console.log(`- Farm Partner Radar: ${schedule} JST`);
+  }
 
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
