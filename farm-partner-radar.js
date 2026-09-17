@@ -9,6 +9,7 @@ const cheerio = require('cheerio');
 const STATE_FILE = path.join(__dirname, 'state', 'farm-partner-radar.json');
 const SKILL_API = 'https://www.skill-shift.com/api/v1/jobs';
 const FURUSATO_LIST = 'https://www.furusatokengyo.jp/project/case/search/typeA2';
+const YOSOMON_LIST = 'https://yosomon.etic.or.jp/projects';
 const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
 const hash = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24);
 const pause = () => new Promise(resolve => setTimeout(resolve, 250));
@@ -51,11 +52,36 @@ function parseFurusato(html, url, fallbackTitle, now = new Date()) {
     status: closed ? 'closed' : deadline && apply ? 'open' : 'unknown' };
 }
 
+function parseYosomon(html, url) {
+  const $ = cheerio.load(html);
+  const title = clean($('.project-head__title').first().text());
+  const company = clean($('.project-head__org').first().text());
+  const statusText = clean($('.project-head .cat-list').first().text());
+  if (!title || !company || !/募集(?:中|終了)/.test(statusText) || !$('table.project-table').length) {
+    throw new Error('YOSOMON detail schema changed');
+  }
+  const rows = {};
+  $('table.project-table tr').each((i, e) => {
+    const key = clean($(e).find('th').first().text());
+    if (key) rows[key] = clean($(e).find('td').first().text());
+  });
+  const entry = $('a[href$="/entry/new"]').length > 0;
+  const status = /募集終了/.test(statusText) ? 'closed'
+    : /マッチングイベント|説明会/.test(title) ? 'unknown'
+      : /募集中/.test(statusText) && entry ? 'open' : 'unknown';
+  const body = clean($('.project-body__copy, .project-body__description').map((i, e) => $(e).text()).get().join(' '));
+  return { id: `yosomon:${new URL(url).pathname.split('/').pop()}`, source: 'YOSOMON!', url,
+    title, company, location: clean($('.project-head .cat-list__item').first().text()).replace(/募集(?:中|終了)/g, '').trim(),
+    industry: rows['事業のテーマ'] || '', body, conditions: rows['募集する人材像、スキル'] || '',
+    style: rows['勤務スタイル'] || '', pay: rows['謝礼'] || rows['謝礼の詳細'] || '要確認',
+    deadline: null, applicants: null, status };
+}
+
 function scoreJob(j) {
   const t = [j.title, j.company, j.industry, j.body].join(' ');
   const direct = /農園|農場|養鶏|農業・林業|水産・農林業/.test(j.company + j.industry)
     || /自社農園|自社農場|農家です|梅農家|果樹園を運営/.test(j.body);
-  const food = direct || /食品|食肉|製菓|和菓子|お茶|茶葉|ホルモン|醤油|米飯|農産|農林水産|農・食/.test(j.title + j.company + j.industry);
+  const food = direct || /食品|食肉|製菓|和菓子|お茶|茶葉|ホルモン|醤油|米飯|農産|農林水産|農・食|食・ライフスタイル/.test(j.title + j.company + j.industry);
   const task = j.title + ' ' + j.conditions;
   const ai = /生成AI|ChatGPT|AI活用|AIツール|自動化|DX|データ抽出/i.test(task);
   const digital = /EC|SNS|Web|ウェブ|マーケティング|販促|リーフレット|ブランディング|ブランド|PR戦略/i.test(task);
@@ -89,9 +115,10 @@ function fingerprint(j) {
   return hash([j.title, j.company, j.body, j.conditions, j.style, j.pay, j.deadline, j.status]);
 }
 
-async function collectJobs({ fetchJson = get, now = new Date(), skillPages = 4, furusatoPages = 3 } = {}) {
+async function collectJobs({ fetchJson = get, now = new Date(), skillPages = 4, furusatoPages = 3, yosomonPages = 3 } = {}) {
   const jobs = [], errors = [], candidates = new Map();
-  const stats = { skillListed: 0, furusatoListed: 0, skillDetails: 0, furusatoDetails: 0 };
+  const stats = { skillListed: 0, furusatoListed: 0, yosomonListed: 0,
+    skillDetails: 0, furusatoDetails: 0, yosomonDetails: 0 };
   for (let page = 1; page <= skillPages; page++) {
     try {
       const data = await fetchJson(SKILL_API, { sort: 'new_arrival', per_page: 100, page });
@@ -131,6 +158,27 @@ async function collectJobs({ fetchJson = get, now = new Date(), skillPages = 4, 
   for (const [url, title] of [...links].slice(0, 20)) {
     try { jobs.push(parseFurusato(await fetchJson(url), url, title, now)); stats.furusatoDetails++; }
     catch (e) { errors.push(`Furusato detail: ${e.message}`); }
+    await pause();
+  }
+  const yosomonLinks = new Set();
+  for (let page = 1; page <= yosomonPages; page++) {
+    try {
+      const html = await fetchJson(YOSOMON_LIST, { 'q[only_recruiting]': 'true', page });
+      const $ = cheerio.load(html);
+      const cards = $('.project-card a[href^="/projects/"]').filter((i, e) => !$(e).closest('.prj-btn-list').length);
+      if (!cards.length && page === 1) throw new Error('No project cards; source may have changed');
+      stats.yosomonListed += cards.length;
+      cards.each((i, e) => {
+        const url = new URL($(e).attr('href'), YOSOMON_LIST);
+        if (url.origin === new URL(YOSOMON_LIST).origin && /^\/projects\/\d+$/.test(url.pathname)) yosomonLinks.add(url.href);
+      });
+      if (!cards.length || !$('a[href*="page="]').length) break;
+    } catch (e) { errors.push(`YOSOMON list page ${page}: ${e.message}`); break; }
+    await pause();
+  }
+  for (const url of [...yosomonLinks].slice(0, 30)) {
+    try { jobs.push(parseYosomon(await fetchJson(url), url)); stats.yosomonDetails++; }
+    catch (e) { errors.push(`YOSOMON detail ${url}: ${e.message}`); }
     await pause();
   }
   return { checkedAt: now.toISOString(), stats, errors, jobs: jobs.map(scoreJob).sort((a, b) => b.score - a.score) };
@@ -181,7 +229,7 @@ async function runRadar({ send, recover = async () => [], collect = collectJobs,
     // Recover recent sent fingerprints if a process died between Discord acknowledgement and disk write.
     const recovered = await recover();
     for (const footer of recovered) {
-      const m = /^farm-partner:((?:skill|furusato):[^:]+):([a-f0-9]{24})/.exec(footer);
+      const m = /^farm-partner:((?:skill|furusato|yosomon):[^:]+):([a-f0-9]{24})/.exec(footer);
       if (m && !state.notified[m[1]]) state.notified[m[1]] = { fingerprint: m[2], recovered: true };
     }
     let sent = 0;
@@ -205,4 +253,4 @@ async function runRadar({ send, recover = async () => [], collect = collectJobs,
   } finally { activeFiles.delete(file); }
 }
 
-module.exports = { normalizeSkill, parseFurusato, scoreJob, fingerprint, collectJobs, readState, saveState, buildMessage, runRadar, STATE_FILE };
+module.exports = { normalizeSkill, parseFurusato, parseYosomon, scoreJob, fingerprint, collectJobs, readState, saveState, buildMessage, runRadar, STATE_FILE };

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { normalizeSkill, parseFurusato, scoreJob, fingerprint, buildMessage, runRadar, readState } = require('../farm-partner-radar');
+const { normalizeSkill, parseFurusato, parseYosomon, scoreJob, fingerprint, buildMessage, collectJobs, runRadar, readState } = require('../farm-partner-radar');
 const raw = overrides => ({ job_id: 1, position: '農家のSNS・EC販促支援', company_name: '試験農園',
   industries: '農業・林業', business_content: '自社農園の直販改善', applicant_condition: 'SNS運用経験',
   side_job_style: 'リモート', salary: 30000, is_applicable: true, expire: false, disabled: false, suspended: false, ...overrides });
@@ -39,6 +39,25 @@ test('furusato requires a future deadline plus application control', () => {
   assert.equal(parse(html('')).status, 'unknown');
   assert.equal(parse(html('2026-10-01').replace('応募する', 'ログイン')).status, 'unknown');
   assert.throws(() => parse('<html>ログイン</html>'), /schema/);
+});
+test('YOSOMON detail requires a current recruitment label and entry link', () => {
+  const html = label => `<div class="project-head"><ul class="cat-list"><li>${label}</li></ul><h1 class="project-head__title">農園のSNS販促支援</h1><div class="project-head__org">試験農園</div></div><div class="project-body__copy">農産物の直販改善</div><table class="project-table"><tr><th>事業のテーマ</th><td>農林水産</td></tr><tr><th>募集する人材像、スキル</th><td>SNS運用経験</td></tr><tr><th>勤務スタイル</th><td>オンライン</td></tr><tr><th>謝礼</th><td>月額3万円</td></tr></table><a href="/projects/12/entry/new">エントリーする</a>`;
+  const parse = h => parseYosomon(h, 'https://yosomon.etic.or.jp/projects/12');
+  assert.equal(parse(html('募集中')).status, 'open');
+  assert.equal(parse(html('募集終了')).status, 'closed');
+  assert.equal(parse(html('募集中').replace('/entry/new', '/closed')).status, 'unknown');
+  assert.equal(parse(html('募集中')).pay, '月額3万円');
+  assert.throws(() => parse('<html>ログイン</html>'), /schema/);
+});
+test('YOSOMON list is collected and detail is checked before notification', async () => {
+  const detail = `<div class="project-head"><ul class="cat-list"><li>募集中</li></ul><h1 class="project-head__title">農園のSNS販促支援</h1><div class="project-head__org">試験農園</div></div><div class="project-body__copy">農産物の直販改善</div><table class="project-table"><tr><th>事業のテーマ</th><td>農林水産</td></tr><tr><th>募集する人材像、スキル</th><td>SNS運用経験</td></tr><tr><th>勤務スタイル</th><td>オンライン</td></tr></table><a href="/projects/12/entry/new">エントリーする</a>`;
+  const fetchJson = async url => url.endsWith('/projects')
+    ? '<div class="project-card"><a href="/projects/12">案件</a></div>' : detail;
+  const result = await collectJobs({ fetchJson, skillPages: 0, furusatoPages: 0 });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.stats.yosomonDetails, 1);
+  assert.equal(result.jobs[0].id, 'yosomon:12');
+  assert.ok(result.jobs[0].score >= 65);
 });
 test('dry run never sends or writes state', async t => {
   const file = stateFile(t);
