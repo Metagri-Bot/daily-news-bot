@@ -32,6 +32,9 @@ const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
 const { runChibaTenderRadar } = require('./chiba-tender-radar');
 const { runRadar: runFarmPartnerRadar } = require('./farm-partner-radar');
+const { runDiscordChannelLog } = require('./discord-channel-log');
+const discordChannelLogStore = require('./discord-channel-log-store');
+const { runDiaryDraft } = require('./discord-day-digest');
 const { buildJsonCompletionParams } = require('./openai-chat');
 const { normalizeAiGuideResult } = require('./ai-guide-content');
 const aiGuideDelivery = require('./ai-guide-delivery');
@@ -4706,6 +4709,47 @@ cron.schedule('50 9 * * 1,3,5', async () => {
     console.log(`- Farm Partner Radar: ${schedule} JST`);
   }
 
+  // === Discordチャンネル投稿ログ（日次バッチ / 既定 毎日 5:10 JST） ===
+  // 前回記録した最後のMessage IDを起点に、指定チャンネル直下の投稿をまとめて取得し、
+  // 専用スプレッドシートへ追記する。リアルタイム監視はしない（本人判断 2026-09-18）。
+  if (process.env.DISABLE_DISCORD_CHANNEL_LOG !== 'true') {
+    const schedule = process.env.DISCORD_CHANNEL_LOG_CRON || '10 5 * * *';
+    if (!cron.validate(schedule)) throw new Error('Invalid DISCORD_CHANNEL_LOG_CRON');
+    const channelIds = (process.env.DISCORD_CHANNEL_LOG_CHANNEL_IDS || '')
+      .split(',').map(id => id.trim()).filter(Boolean);
+
+    if (channelIds.length === 0) {
+      console.log('- Discord Channel Log: skipped (DISCORD_CHANNEL_LOG_CHANNEL_IDS is empty)');
+    } else {
+      cron.schedule(schedule, async () => {
+        await runDiscordChannelLogJob(channelIds);
+      }, { timezone: 'Asia/Tokyo', noOverlap: true });
+      console.log(`- Discord Channel Log: ${schedule} JST (${channelIds.length} channels)`);
+    }
+  }
+
+  // === 日誌素案（週次 / 既定 毎週木曜 6:00 JST） ===
+  // 前日ぶんの生ログを、01_input/discord-log_YYYY-MM-DD.md と同じ形式のまま日誌素案チャンネルへ流す。
+  // 要約も見解も入れない。日誌を書く人が素材をその場で読めるようにするのが目的なので、
+  // 判断を挟むと「素案」でなく「下書き」になり、書く人の仕事を先に決めてしまう。
+  if (process.env.DISABLE_DIARY_DRAFT !== 'true') {
+    const schedule = process.env.DIARY_DRAFT_CRON || '0 6 * * 4';
+    if (!cron.validate(schedule)) throw new Error('Invalid DIARY_DRAFT_CRON');
+    const targetChannelId = process.env.DIARY_DRAFT_CHANNEL_ID || '';
+    const sourceChannelIds = (process.env.DIARY_DRAFT_SOURCE_CHANNEL_IDS || process.env.DISCORD_CHANNEL_LOG_CHANNEL_IDS || '')
+      .split(',').map(id => id.trim()).filter(Boolean);
+
+    if (!targetChannelId || sourceChannelIds.length === 0) {
+      // 投稿先か収集対象が空のまま動かすと、無言で何も起きないより悪い（空投稿になる）。
+      console.log('- Diary Draft: skipped (DIARY_DRAFT_CHANNEL_ID or source channels is empty)');
+    } else {
+      cron.schedule(schedule, async () => {
+        await runDiaryDraftJob(targetChannelId, sourceChannelIds);
+      }, { timezone: 'Asia/Tokyo', noOverlap: true });
+      console.log(`- Diary Draft: ${schedule} JST (${sourceChannelIds.length} channels)`);
+    }
+  }
+
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00 JST');
@@ -4720,6 +4764,89 @@ cron.schedule('50 9 * * 1,3,5', async () => {
 
 
 
+
+// === Discordチャンネル投稿ログの実行本体 ===
+// カーソル（チャンネル別の最終Message ID）の正はスプレッドシート側。
+// 追記が1件でも失敗したらローカルの写しを進めない＝次回まとめて取り直す。
+async function runDiscordChannelLogJob(channelIds) {
+  const gasUrl = process.env.DISCORD_CHANNEL_LOG_GAS_URL;
+  try {
+    const { cursors, source } = await discordChannelLogStore.loadCursors({ gasUrl });
+    const result = await runDiscordChannelLog({
+      channelIds,
+      fetchChannel: id => client.channels.fetch(id),
+      cursors,
+      includeBots: process.env.DISCORD_CHANNEL_LOG_INCLUDE_BOTS !== 'false',
+      maxMessages: Number(process.env.DISCORD_CHANNEL_LOG_MAX_PER_RUN || 1000),
+      lookbackDays: Number(process.env.DISCORD_CHANNEL_LOG_INITIAL_LOOKBACK_DAYS || 7)
+    });
+
+    const saved = await discordChannelLogStore.saveRows({ gasUrl, rows: result.rows });
+
+    if (saved.errors.length === 0) {
+      const next = { ...cursors };
+      result.perChannel.forEach(channel => {
+        if (channel.lastMessageId) next[channel.channelId] = channel.lastMessageId;
+      });
+      discordChannelLogStore.writeLocalCursors(next);
+    }
+
+    console.log('[Channel Log]', JSON.stringify({
+      cursorSource: source,
+      stats: result.stats,
+      saved,
+      channels: result.perChannel
+    }));
+
+    const errors = [...result.errors, ...saved.errors];
+    if (errors.length > 0) throw new Error(errors.join('; '));
+  } catch (error) {
+    console.error('[Channel Log]', error.message);
+    await sendMonitoringNotification(
+      'Discord Channel Log',
+      'チャンネル投稿ログの収集／記録に失敗しました。Botログを確認してください。',
+      'error',
+      error.message
+    );
+  }
+}
+
+// === 日誌素案の実行本体 ===
+// 生ログをそのまま流すので、本文にはロールメンションが素の形で入っている。
+// allowedMentions を空にしておかないと、素案の投稿で本番のロールを鳴らす。
+async function runDiaryDraftJob(targetChannelId, sourceChannelIds, options = {}) {
+  try {
+    const target = await client.channels.fetch(targetChannelId);
+    if (!target?.isTextBased() || typeof target.send !== 'function') throw new Error('Diary draft channel is not sendable');
+
+    const result = await runDiaryDraft({
+      channelIds: sourceChannelIds,
+      fetchChannel: id => client.channels.fetch(id),
+      send: content => target.send({ content, allowedMentions: { parse: [] } }),
+      offsetDays: Number(process.env.DIARY_DRAFT_OFFSET_DAYS || 1),
+      ...options
+    });
+
+    console.log('[Diary Draft]', JSON.stringify({
+      date: result.dateText,
+      rows: result.rows,
+      messages: result.messages,
+      channels: result.perChannel
+    }));
+
+    // 取得できなかったチャンネルがあっても投稿は済ませる（素材は部分的でも役に立つ）。
+    // ただし気づけるように監視へは上げる。
+    if (result.errors.length > 0) throw new Error(result.errors.join('; '));
+  } catch (error) {
+    console.error('[Diary Draft]', error.message);
+    await sendMonitoringNotification(
+      'Diary Draft',
+      '日誌素案の収集／投稿に失敗しました。Botログを確認してください。',
+      'error',
+      error.message
+    );
+  }
+}
 
 // ★★★ 議論スレッドのメッセージ監視ロジックを更新 ★★★
 client.on('messageCreate', async message => {

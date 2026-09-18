@@ -5,3 +5,4 @@ secrets.env
 .env
 state/*.json
 /tmp/
+.env.bak-20260918

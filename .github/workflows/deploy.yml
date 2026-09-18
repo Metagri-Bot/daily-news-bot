@@ -66,6 +66,24 @@ jobs:
           echo "FARM_PARTNER_CRON=${{ secrets.FARM_PARTNER_CRON }}" >> .env
           echo "FARM_PARTNER_MIN_SCORE=${{ secrets.FARM_PARTNER_MIN_SCORE }}" >> .env
           echo "DISABLE_FARM_PARTNER_RADAR=${{ secrets.DISABLE_FARM_PARTNER_RADAR }}" >> .env
+          # Discordチャンネル投稿ログ（日次バッチ・2026-09-18 追加）
+          # 既定値: 毎日5:10 JST / Botの投稿も含む / 初回は7日さかのぼり / 1回あたり1000件
+          # DISCORD_CHANNEL_LOG_CHANNEL_IDS が空のときはジョブ自体を登録しない（誤作動しない側へ倒す）
+          echo "DISCORD_CHANNEL_LOG_CHANNEL_IDS=${{ secrets.DISCORD_CHANNEL_LOG_CHANNEL_IDS }}" >> .env
+          echo "DISCORD_CHANNEL_LOG_GAS_URL=${{ secrets.DISCORD_CHANNEL_LOG_GAS_URL }}" >> .env
+          echo "DISCORD_CHANNEL_LOG_CRON=${{ secrets.DISCORD_CHANNEL_LOG_CRON }}" >> .env
+          echo "DISCORD_CHANNEL_LOG_INCLUDE_BOTS=${{ secrets.DISCORD_CHANNEL_LOG_INCLUDE_BOTS }}" >> .env
+          echo "DISCORD_CHANNEL_LOG_INITIAL_LOOKBACK_DAYS=${{ secrets.DISCORD_CHANNEL_LOG_INITIAL_LOOKBACK_DAYS }}" >> .env
+          echo "DISCORD_CHANNEL_LOG_MAX_PER_RUN=${{ secrets.DISCORD_CHANNEL_LOG_MAX_PER_RUN }}" >> .env
+          echo "DISABLE_DISCORD_CHANNEL_LOG=${{ secrets.DISABLE_DISCORD_CHANNEL_LOG }}" >> .env
+          # 日誌素案（週次・既定 毎週木曜6:00 JST / 前日ぶんの生ログをそのまま投稿）
+          # DIARY_DRAFT_CHANNEL_ID が空のときはジョブ自体を登録しない
+          # 収集対象は未設定なら DISCORD_CHANNEL_LOG_CHANNEL_IDS を流用する
+          echo "DIARY_DRAFT_CHANNEL_ID=${{ secrets.DIARY_DRAFT_CHANNEL_ID }}" >> .env
+          echo "DIARY_DRAFT_CRON=${{ secrets.DIARY_DRAFT_CRON }}" >> .env
+          echo "DIARY_DRAFT_OFFSET_DAYS=${{ secrets.DIARY_DRAFT_OFFSET_DAYS }}" >> .env
+          echo "DIARY_DRAFT_SOURCE_CHANNEL_IDS=${{ secrets.DIARY_DRAFT_SOURCE_CHANNEL_IDS }}" >> .env
+          echo "DISABLE_DIARY_DRAFT=${{ secrets.DISABLE_DIARY_DRAFT }}" >> .env
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d
