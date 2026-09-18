@@ -7,6 +7,7 @@ const Parser = require('rss-parser');
 const path = require('node:path');
 const { getRobloxFeeds, collectRobloxArticles, selectRobloxArticles, rankRobloxArticles, loadHistory } = require('../roblox-news');
 const { buildJsonCompletionParams } = require('../openai-chat');
+const { BROWSER_HEADERS } = require('../roblox-news-sources');
 
 async function main() {
   const parser = new Parser();
@@ -15,9 +16,9 @@ async function main() {
   const articles = await collectRobloxArticles({
     urls: getRobloxFeeds(process.env.ROBLOX_RSS_FEEDS || ''),
     stats,
-    fetchPage: async url => (await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })).data,
+    fetchPage: async url => (await axios.get(url, { timeout: 15000, headers: BROWSER_HEADERS })).data,
     fetchFeed: async url => {
-      const response = await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+      const response = await axios.get(url, { timeout: 15000, headers: BROWSER_HEADERS });
       return parser.parseString(response.data);
     },
   });

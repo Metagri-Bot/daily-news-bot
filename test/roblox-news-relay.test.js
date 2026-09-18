@@ -125,3 +125,62 @@ test('保存する履歴に中継URLと元記事URLの両方を残す', async ()
   assert.ok(Object.keys(saved).some(key => key.startsWith('url:https://news.google.com/')));
   assert.ok(Object.keys(saved).some(key => key.startsWith('url:https://licenseglobal.com/')));
 });
+
+test('enabled:false の直接巡回ソースは取得しない', async () => {
+  const { collectDirectArticles } = require('../roblox-news-sources');
+  const fetched = [];
+  await collectDirectArticles({ logger, fetchPage: async url => { fetched.push(url); return '<a href="/x/y">x</a>'; },
+    sources: [{ name: '停止中', url: 'https://off.example.com/list', pattern: /./, enabled: false },
+      { name: '稼働中', url: 'https://on.example.com/list', pattern: /^\/x\/y$/ }] });
+  assert.ok(!fetched.some(url => url.startsWith('https://off.example.com')));
+  assert.ok(fetched.includes('https://on.example.com/list'));
+});
+
+test('解決先がトップページなら記事とみなさない', () => {
+  assert.equal(extractRelayDestination('<a href="https://www.licenseglobal.com/">home</a>'), null);
+  assert.equal(extractRelayDestination('<a href="https://www.licenseglobal.com/entertainment/x">a</a>'),
+    'https://www.licenseglobal.com/entertainment/x');
+});
+
+test('解決できても公開日が読めない中継は、着地先を集計して残す', async () => {
+  const stats = {};
+  const result = await verifyFreshArticles([relayItem()], { now, logger, stats,
+    fetchPage: async url => (url === RELAY ? `<meta http-equiv="refresh" content="0;URL=${ORIGIN}">` : '<h1>No date here</h1>') });
+  assert.equal(result.length, 0);
+  assert.equal(stats.relayResolved, 1);
+  assert.equal(stats.relayVerified, 0);
+  assert.equal(stats.relayLandings, 'www.licenseglobal.com:1');
+});
+
+test('公開日を読めた中継は relayVerified に計上する', async () => {
+  const stats = {};
+  await verifyFreshArticles([relayItem()], { now, logger, stats,
+    fetchPage: async url => (url === RELAY ? `<meta http-equiv="refresh" content="0;URL=${ORIGIN}">` : articleHtml()) });
+  assert.equal(stats.relayVerified, 1);
+  assert.equal(stats.relayLandings, '');
+});
+
+test('計測タグや資源リンクを元記事と取り違えない', () => {
+  // 実測では <link rel="dns-prefetch"> のGoogle Analyticsを全件拾っていた。
+  const html = `<link rel="dns-prefetch" href="https://www.google-analytics.com">
+    <link rel="preconnect" href="https://www.googletagmanager.com">
+    <script src="https://cdn.jsdelivr.net/npm/app.js"></script>
+    <a href="https://www.licenseglobal.com/entertainment/brand-launches-roblox-collection">記事</a>`;
+  assert.equal(extractRelayDestination(html), ORIGIN);
+});
+
+test('資源ファイルを指すURLは記事とみなさない', () => {
+  assert.equal(extractRelayDestination('<a href="https://example.com/assets/app.js">x</a>'), null);
+  assert.equal(extractRelayDestination('<a href="https://example.com/logo.png">x</a>'), null);
+});
+
+test('解決が連続で空振りしたら以降の中継解決を打ち切る', async () => {
+  const items = Array.from({ length: 30 }, (_, i) => relayItem(`https://news.google.com/rss/articles/S${i}?oc=5`));
+  const stats = {};
+  await verifyFreshArticles(items, { now, logger, stats,
+    fetchPage: async url => (url.startsWith('https://news.google.com')
+      ? `<a href="https://undated.example.com/a${url.slice(-6)}">記事</a>` : '<h1>No date</h1>') });
+  assert.ok(stats.relayResolved <= 24, `打ち切りが効いていない: ${stats.relayResolved}`);
+  assert.ok(stats.relaySkipped >= 5, `打ち切り件数が計上されていない: ${stats.relaySkipped}`);
+  assert.equal(stats.relayVerified, 0);
+});

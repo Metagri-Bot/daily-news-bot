@@ -21,9 +21,10 @@ const {
   isNewsWithinFreshness
 } = require('./news-freshness');
 const path = require('node:path');
-const { getRobloxFeeds, collectRobloxArticles, rankRobloxArticles, loadHistory, saveHistory } = require('./roblox-news');
+const { getRobloxFeeds, getRobloxFeedIssues, collectRobloxArticles, rankRobloxArticles, loadHistory, saveHistory } = require('./roblox-news');
 const { curateRobloxArticles } = require('./roblox-news-editorial');
 const { recoverDiscordHistory, deliverDigest } = require('./roblox-news-delivery');
+const { BROWSER_HEADERS } = require('./roblox-news-sources');
 const { describeRobloxNewsRun } = require('./roblox-news-report');
 let robloxNewsRunning = false;
 const ROBLOX_HISTORY_FILE = path.join(__dirname, 'state', 'roblox-news-sent.json');
@@ -59,6 +60,8 @@ const GLOBAL_RSS_FEEDS = process.env.GLOBAL_RSS_FEEDS ? process.env.GLOBAL_RSS_F
 // === Robloxニュース用の新しい環境変数 ===
 const ROBLOX_NEWS_CHANNEL_ID = process.env.ROBLOX_NEWS_CHANNEL_ID;
 const ROBLOX_RSS_FEEDS = getRobloxFeeds(process.env.ROBLOX_RSS_FEEDS || '');
+// URL以外が混ざった設定は、その項目が黙って失敗し続けるだけなので毎回通知に出す。
+const ROBLOX_FEED_ISSUES = getRobloxFeedIssues(process.env.ROBLOX_RSS_FEEDS || '');
 
 // === 新刊紹介機能用の環境変数 ===
 const NEW_BOOK_CHANNEL_ID = process.env.NEW_BOOK_CHANNEL_ID;
@@ -746,10 +749,71 @@ const sendMonitoringNotification = async (title, description, level = 'info', de
   }
 };
 
+// === 農業AI通信の実行レポート ===
+// Discord投稿とスプレッドシート転送は別々に失敗しうる。転送だけ落ちた状態は
+// 読み手からは見えないため、必ず通知に出す。
+const reportAiGuideRun = async (state, deliveredUrl, error) => {
+  const pending = aiGuideDelivery.pendingGasTransfers(state);
+  const pendingLines = pending.map(item => `${item.url}（${item.status}）`);
+  if (error?.code === 'AI_GUIDE_GAS_UNCERTAIN') {
+    await sendMonitoringNotification('農業AI通信：転送の成否が確定できません',
+      '「原稿作成」A2 の記事URLを確認してください。最新記事のURLになっていれば転送は成功しています。\n' +
+      'その場合、次回実行で同じ記事をもう一度書き込みますが、同じ内容の上書きなので実害はありません。',
+      'warn', [error.message, ...pendingLines].join('\n'));
+    return;
+  }
+  if (error?.code === 'AI_GUIDE_GAS_BUSY') {
+    await sendMonitoringNotification('農業AI通信：前回の原稿が未配信のため保留中です',
+      'Discordには投稿済みですが、「原稿作成」A1/A2 は前回の原稿が未配信のため上書きしていません。\n' +
+      '原稿を配信して「アーカイブ」に記録されると、次回実行で自動的に最新記事へ更新されます。' +
+      `${pending.length ? `\n未転送=${pending.length}件` : ''}`,
+      'warn', [error.message, ...pendingLines].join('\n'));
+    return;
+  }
+  if (error) {
+    await sendMonitoringNotification('農業AI通信の配信に失敗しました',
+      `Discord投稿またはスプレッドシート転送が完了していません。次回実行で再試行します。${pending.length ? `\n未転送=${pending.length}件` : ''}`,
+      'error', [error.message, ...pendingLines].join('\n'));
+    return;
+  }
+  if (pending.length) {
+    await sendMonitoringNotification('農業AI通信：スプレッドシート未転送の記事があります',
+      `Discordには投稿済みですが「原稿作成」への転送が完了していません（${pending.length}件）。\n` +
+      'status=legacy_unknown は台帳の再構築で転送済みか判定できなくなった記事で、放置すると自動では転送されません。',
+      'warn', pendingLines.join('\n'));
+    return;
+  }
+  await sendMonitoringNotification(
+    deliveredUrl ? '農業AI通信を配信しました' : '農業AI通信：未配信の記事はありません',
+    deliveredUrl ? `Discord投稿とスプレッドシート転送が完了しました。\n${deliveredUrl}` : '新しい記事がないため何も配信していません。',
+    'info');
+};
+
 // === Robloxビジネス速報の実行レポート ===
 // 成功・0件・失敗のいずれでも必ず1通送る。監視が届かないと沈黙＝正常に見える。
-const reportRobloxNewsRun = async (stats, error) => {
+const ROBLOX_REPORT_COLORS = { info: 0x2ECC71, warn: 0xF1C40F, error: 0xE74C3C, critical: 0xE74C3C };
+const ROBLOX_REPORT_EMOJIS = { info: ':white_check_mark:', warn: ':warning:', error: ':x:', critical: ':rotating_light:' };
+
+// 0件・失敗はRobloxニュースと同じチャンネルへ出す（配信が無い日に何が起きたかを、
+// ニュースを見に来た人がその場で分かるように）。配信できた日は速報そのものが結果なので、
+// 同じチャンネルに要約を重ねず監視Webhookへ送る。チャンネルに送れない場合も同様。
+const reportRobloxNewsRun = async (stats, error, channel) => {
   const report = describeRobloxNewsRun(stats, error);
+  if (channel && report.level !== 'info') {
+    try {
+      await channel.send({ embeds: [{
+        title: `${ROBLOX_REPORT_EMOJIS[report.level]} ${report.title}`,
+        description: report.description,
+        color: ROBLOX_REPORT_COLORS[report.level],
+        timestamp: new Date().toISOString(),
+        footer: { text: `daily-news-bot | ${report.level.toUpperCase()}` },
+        ...(report.details ? { fields: [{ name: '詳細', value: `\`\`\`\n${String(report.details).slice(0, 980)}\n\`\`\`` }] } : {}),
+      }] });
+      return;
+    } catch (sendError) {
+      console.error('[Roblox News] レポートのチャンネル投稿に失敗しました:', sendError.message);
+    }
+  }
   await sendMonitoringNotification(report.title, report.description, report.level, report.details);
 };
 
@@ -4368,7 +4432,7 @@ cron.schedule('0 6 * * *', async () => {
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
   // === 4. 新機能：Robloxニュースの収集・投稿（毎日 AM 7:00 JST） ===
   cron.schedule('0 7 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行（投稿を伴うため戻し忘れ注意）
     if (!ROBLOX_NEWS_CHANNEL_ID || ROBLOX_RSS_FEEDS.length === 0) {
       console.log('[Roblox News] チャンネルIDまたはRSSフィードが設定されていません。');
       await sendMonitoringNotification('Robloxビジネス速報を実行できません',
@@ -4384,19 +4448,22 @@ cron.schedule('0 6 * * *', async () => {
     }
     console.log('[Roblox News] Robloxニュース収集タスクを開始します...');
     robloxNewsRunning = true;
-    const robloxStats = {};
+    const robloxStats = { feeds: ROBLOX_RSS_FEEDS.length, feedsInvalid: ROBLOX_FEED_ISSUES.length,
+      invalidFeedSamples: ROBLOX_FEED_ISSUES.slice(0, 3) };
     let robloxFailure = null;
+    let robloxChannel = null;
     try {
       const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Roblox通知用チャンネルが見つかりません。');
+      robloxChannel = channel;
       const sent = await recoverDiscordHistory(channel, client.user.id, loadHistory(ROBLOX_HISTORY_FILE));
       saveHistory(ROBLOX_HISTORY_FILE, sent, []);
       const recentArticles = await collectRobloxArticles({
         urls: ROBLOX_RSS_FEEDS,
         stats: robloxStats,
-        fetchPage: async url => (await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })).data,
+        fetchPage: async url => (await axios.get(url, { timeout: 15000, headers: BROWSER_HEADERS })).data,
         fetchFeed: async url => {
-          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 });
+          const response = await axios.get(url, { headers: BROWSER_HEADERS, timeout: 15000 });
           return parser.parseString(response.data);
         },
       });
@@ -4446,7 +4513,7 @@ cron.schedule('0 6 * * *', async () => {
     } finally {
       robloxNewsRunning = false;
       // 監視通知の失敗でタスク本体を落とさない。
-      try { await reportRobloxNewsRun(robloxStats, robloxFailure); }
+      try { await reportRobloxNewsRun(robloxStats, robloxFailure, robloxChannel); }
       catch (reportError) { console.error('[Roblox News] 実行レポートの送信に失敗しました:', reportError.message); }
     }
   }, {
@@ -4471,16 +4538,21 @@ cron.schedule('0 6 * * *', async () => {
 
   // === 農業AI通信（月水金9:50 JST、未配信記事を1件ずつ） ===
 cron.schedule('50 9 * * 1,3,5', async () => {
+      // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
   if (aiGuideRunning) return;
   aiGuideRunning = true;
+  let aiGuideState = null;
+  let aiGuideDelivered = null;
+  let aiGuideFailure = null;
   try {
     const channel = await client.channels.fetch(AI_GUIDE_CHANNEL_ID);
     if (!channel || channel.type !== ChannelType.GuildText) throw new Error('AI Guide channel unavailable');
     const response = await axios.get(AI_GUIDE_RSS_URL, { timeout: 15000, headers: { 'User-Agent': 'Metagri-AI-Guide/1.0' } });
     const feed = await parser.parseString(response.data);
     const state = aiGuideDelivery.loadState(AI_GUIDE_STATE_FILE);
+    aiGuideState = state;
     const now = Date.now();
-    await aiGuideDelivery.deliver({
+    aiGuideDelivered = await aiGuideDelivery.deliver({
       state, items: feed.items || [], now,
       recover: current => aiGuideDelivery.recoverHistory(channel, client.user.id, current, now),
       save: current => aiGuideDelivery.saveState(AI_GUIDE_STATE_FILE, current),
@@ -4549,12 +4621,44 @@ cron.schedule('50 9 * * 1,3,5', async () => {
       send: message => channel.send(message),
       record: async payload => {
         if (!process.env.AI_GUIDE_GAS_URL) throw new Error('AI_GUIDE_GAS_URL missing; transfer remains pending');
-        const response = await axios.post(process.env.AI_GUIDE_GAS_URL, payload, { timeout: 15000, headers: { 'Content-Type': 'application/json' } });
+        // GAS側の doPost は lock.waitLock(30000) で最大30秒待つ。15秒で切ると
+        // 処理が正常でも必ず手前でタイムアウトする。ロック待ち＋処理時間を見込む。
+        const post = () => axios.post(process.env.AI_GUIDE_GAS_URL, payload,
+          { timeout: 45000, headers: { 'Content-Type': 'application/json' } });
+        // GASは doPost の実行後、script.googleusercontent.com へのリダイレクト経由で応答を返す。
+        // シートへの書き込みが終わっていても、この応答の取得だけが404などで失敗することがある
+        // （2026-09-18に実測）。同じ記事の再送は同じ内容の上書きなので、一度だけやり直す。
+        let response;
+        let transportFailure = null;
+        try {
+          response = await post();
+        } catch (error) {
+          transportFailure = error;
+          console.warn(`[AI Guide] GAS応答の取得に失敗しました（${error.message}）。書き込み済みの可能性があるため1回だけ再送します。`);
+          try { response = await post(); }
+          catch (retryError) { throw new Error(`GAS転送に失敗しました（再送も失敗）: ${retryError.message}`); }
+        }
+        // 本番のGASは「現在の原稿が未配信のうちは上書きしない」ガードを持ち、status='busy' を返す。
+        // これは障害ではなく意図的な待避なので、失敗と同じ扱いにすると原因を取り違える。
+        if (response.data?.status === 'busy') {
+          // 直前の応答取得に失敗していた場合、このbusyは自分の書き込みが原因かもしれず、
+          // 他人の未配信原稿と区別できない。人がA2を見るまで転送済みと断定しない。
+          const busy = new Error(transportFailure
+            ? `応答取得に失敗した直後にbusyが返りました。自分の書き込みが成功している可能性があります。「原稿作成」A2 の記事URLを確認してください（初回の失敗: ${transportFailure.message}）`
+            : `前回の原稿が未配信のため転送を保留しました（${response.data.message || 'busy'}）`);
+          busy.code = transportFailure ? 'AI_GUIDE_GAS_UNCERTAIN' : 'AI_GUIDE_GAS_BUSY';
+          throw busy;
+        }
         if (response.data?.status !== 'success') throw new Error('GAS did not confirm success; transfer remains pending');
       }
     });
-  } catch (error) { console.error('[AI Guide] Delivery failed:', error.message); }
-  finally { aiGuideRunning = false; }
+  } catch (error) { aiGuideFailure = error; console.error('[AI Guide] Delivery failed:', error.message); }
+  finally {
+    aiGuideRunning = false;
+    // 監視通知の失敗でタスク本体を落とさない。
+    try { await reportAiGuideRun(aiGuideState, aiGuideDelivered, aiGuideFailure); }
+    catch (reportError) { console.error('[AI Guide] 実行レポートの送信に失敗しました:', reportError.message); }
+  }
 }, { timezone: 'Asia/Tokyo' });
 
   // === 官公庁・自治体 公募モニタータスク（平日7:30 JST） ===

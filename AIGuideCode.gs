@@ -125,8 +125,8 @@ function handleFormRegistration(data) {
 function handleAiGuide(data) {
   const SPREADSHEET_ID = '1FVcqS0Ze2bouVIqHpHger3WaU5x8TSYqqHk8ZKAhSEU';
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sheets = ss.getSheets();
-  let sheet = sheets.find(s => s.getSheetId() == 1834867434) || sheets[0];
+  const sheet = ss.getSheetByName('原稿作成');
+  if (!sheet) throw new Error('原稿作成シートがありません');
 
   const formatList = (items, prefix = '・') => {
     if (Array.isArray(items)) return items.map(item => `${prefix} ${item}`).join('\n');
@@ -143,7 +143,18 @@ function handleAiGuide(data) {
   if (data.evidence)   contentParts.push(`\n＜根拠/キーワード＞\n${formatList(data.evidence, '-')}`);
 
   const articleInfo = contentParts.join('\n').trim();
-  const cleanUrl = (data.url || '').split('?utm')[0];
+  const cleanUrl = aiGuideCanonicalUrl_(data.url);
+  if (!cleanUrl) throw new Error('Invalid AI Guide article URL');
+  // 現在の原稿が未配信（アーカイブ未記録）なら上書きしない。
+  // ただし同じ記事の再送だけは許可する。Botは応答の取得に失敗したときに再送するため、
+  // ここで弾くと「書き込みは成功したのに失敗扱い」になり、同じ記事で足踏みする。
+  // 比較は auto-mail.gs と同じ正規化（aiGuideCanonicalUrl_）に揃える。
+  const currentUrl = aiGuideCanonicalUrl_(sheet.getRange('A2').getValue());
+  if (currentUrl && currentUrl !== cleanUrl && !aiGuideArchived_(ss, currentUrl)) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: 'busy', message: 'Current draft has not been mailed yet' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 
   sheet.getRange('A1').setValue(articleInfo).setWrap(true).setVerticalAlignment('top');
   sheet.getRange('A2').setValue(cleanUrl);
@@ -159,19 +170,61 @@ function handleAiGuide(data) {
  * 自動返信メール送信（汎用）
  */
 function sendAutoReplyEmail(email, name) {
-  const subject = '【農業AI通信】テンプレート集をお届けします';
-  const body = `平素よりお世話になっています。
+  const subject = '【農業AI通信】AI日報スターターキットをお届けします';
+
+  // 氏名が取得できない場合は、宛名を表示しない
+  const recipientName = name ? `${name} 様\n\n` : '';
+
+  const body = `${recipientName}平素よりお世話になっております。
 農業AI通信を運営する株式会社農情人の甲斐です。
 
-この度、農業AI通信にご登録いただき、誠にありがとうございます。
+この度は、農業AI通信にご登録いただき、誠にありがとうございます。
 
-「農家のための生成AIテンプレート集」をお送りいたします。
-下記のリンクをご参照いただけると幸いです！
+登録特典として、
+「AI日報スターターキット」をお届けいたします。
+
+スマートフォンと生成AIを使って、
+日々の農作業を約5分で記録するためのガイドと、
+そのまま使える記録用スプレッドシートをご用意しました。
+
+━━━━━━━━━━━━━━━━━━━━
+1．AI日報スターターキット（PDF）
+━━━━━━━━━━━━━━━━━━━━
+
+日報作成に使えるコピペ用プロンプトや、
+無理なく記録を続けるための方法をまとめています。
+
+▼PDFはこちら
+https://drive.google.com/file/d/1VhzNnE7DJZzosUsPsMm8C4-f-vojWf6v/view
+
+
+━━━━━━━━━━━━━━━━━━━━
+2．AI日報・記録用スプレッドシート
+━━━━━━━━━━━━━━━━━━━━
+
+AIで作成した日報を蓄積するための雛形です。
+ご自身のGoogleドライブにコピーしてお使いください。
+
+▼スプレッドシートはこちら
+https://docs.google.com/spreadsheets/d/1DxlhgdjuuH9v8adbI8pTnPnem0CTAadt_2ioUSBJJxU/
+
+
+まずはPDFを確認し、
+今日の作業内容をスマートフォンに話しかけるところから
+始めてみてください。
+
+今後も農業AI通信では、
+農業現場ですぐに試せる生成AIの活用方法をお届けしてまいります。
+
+
+【参考】「農家のための生成AIテンプレート集」
 https://metagrilabo.notion.site/ai-guide-start-present
 
-今後ともどうぞよろしくお願い致します。
+今後とも、どうぞよろしくお願いいたします。
+
 ━━━━━━━━━━━━━━━━━━━━
-農業AI通信 / Metagri研究所
+農業AI通信
+運営：Metagri研究所／株式会社農情人
 ━━━━━━━━━━━━━━━━━━━━`;
 
   GmailApp.sendEmail(email, subject, body, { name: 'Metagri研究所' });

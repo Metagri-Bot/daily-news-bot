@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { canonicalUrl, discover, deliver, recoverHistory, loadState, saveState } = require('./ai-guide-delivery');
+const { canonicalUrl, discover, deliver, recoverHistory, loadState, saveState, pendingGasTransfers } = require('./ai-guide-delivery');
 const now = Date.parse('2026-09-09T00:50:00Z');
 const url = slug => `https://metagri-labo.com/ai-guide/${slug}/`;
 const item = (slug, age = 3) => ({ title: slug, link: url(slug) + '?utm_source=rss', isoDate: new Date(now - age * 86400000).toISOString(), contentSnippet: slug });
@@ -72,4 +72,28 @@ test('state survives reload and corrupted file is not treated as empty', () => {
     assert.deepEqual(loadState(file), state);
     fs.writeFileSync(file, '{'); assert.throws(() => loadState(file));
   } finally { fs.rmSync(dir, { recursive: true }); }
+});
+
+test('Discord投稿済みで未転送の記事を、直近14日ぶんだけ表に出す', () => {
+  const now = Date.parse('2026-09-19T00:00:00Z');
+  const iso = days => new Date(now - days * 86400000).toISOString();
+  const state = { version: 1, articles: {
+    'https://metagri-labo.com/ai-guide/done/': { publishedAt: iso(1), discord: {}, gas: { status: 'recorded' } },
+    'https://metagri-labo.com/ai-guide/pending/': { publishedAt: iso(2), discord: {} },
+    'https://metagri-labo.com/ai-guide/legacy/': { publishedAt: iso(3), discord: {}, gas: { status: 'legacy_unknown' } },
+    'https://metagri-labo.com/ai-guide/old/': { publishedAt: iso(30), discord: {}, gas: { status: 'legacy_unknown' } },
+    'https://metagri-labo.com/ai-guide/queued/': { publishedAt: iso(1) },
+  } };
+  const pending = pendingGasTransfers(state, now);
+  assert.deepEqual(pending.map(item => item.url), [
+    'https://metagri-labo.com/ai-guide/legacy/',
+    'https://metagri-labo.com/ai-guide/pending/',
+  ]);
+  assert.deepEqual(pending.map(item => item.status), ['legacy_unknown', 'pending']);
+});
+
+test('すべて転送済みなら未転送は0件', () => {
+  const state = { version: 1, articles: { 'https://metagri-labo.com/ai-guide/a/': {
+    publishedAt: new Date().toISOString(), discord: {}, gas: { status: 'recorded' } } } };
+  assert.equal(pendingGasTransfers(state).length, 0);
 });

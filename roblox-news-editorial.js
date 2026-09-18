@@ -89,6 +89,23 @@ async function curateRobloxArticles({ candidates, sent, evaluate, now = new Date
     selected = chooseImportantArticles(pool, result, sent, now);
   }
   stats.selected = selected.length;
+  // 0件の日に「基準が厳しいのか、本当にニュースが無いのか」を後から判断できるよう、
+  // 採用に至らなかった上位候補を重要度と理由つきで残す。
+  const selectedTopics = new Set(selected.map(article => article.topicKey));
+  const rejected = (Array.isArray(result?.evaluations) ? result.evaluations : [])
+    .filter(evaluation => pool[evaluation.id] && !selectedTopics.has(String(evaluation.topicKey || '').trim().toLowerCase()))
+    .sort((a, b) => b.importance - a.importance)
+    .map(evaluation => ({ title: String(pool[evaluation.id].title || '').slice(0, 120),
+      importance: evaluation.importance, duplicate: evaluation.duplicateOfPosted === true,
+      reason: String(evaluation.reason || '').slice(0, 160) }));
+  // 既出で消えた分と重要度不足で消えた分を分けて持つ。混ぜると、既出が上位を占めた日に
+  // 「閾値が厳しすぎるのか」を判断する材料が見えなくなる（2026-09-18の実測がこの状態）。
+  stats.nearMiss = rejected.filter(miss => !miss.duplicate).slice(0, 3);
+  stats.duplicateMiss = rejected.filter(miss => miss.duplicate).slice(0, 3);
+  stats.duplicateSkipped = rejected.filter(miss => miss.duplicate).length;
+  for (const miss of [...stats.nearMiss, ...stats.duplicateMiss]) {
+    logger.log(`[Roblox News] 不採用 importance=${miss.importance}${miss.duplicate ? ' 既出' : ''} ${miss.title} :: ${miss.reason}`);
+  }
   logger.log(`[Roblox News] editorial evaluated=${pool.length} selected=${selected.length} threshold=${MIN_IMPORTANCE}`);
   return selected;
 }

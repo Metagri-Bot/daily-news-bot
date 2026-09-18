@@ -49,3 +49,43 @@ test('環境設定のGoogle検索を含め全検索がwhen:7dになる', () => {
   assert.ok(feeds.every(feed => /\bwhen:7d\b/.test(new URL(feed).searchParams.get('q'))));
   assert.ok(feeds.every(feed => !decodeURIComponent(feed).includes('when:21d')));
 });
+
+test('RSS日付が7日より古い項目は元記事を取りに行かない', async () => {
+  const fetched = [];
+  const old = { ...item, isoDate: '2026-09-01T00:00:00Z', pubDate: '2026-09-01T00:00:00Z' };
+  const result = await verifyFreshArticles([old], { now, logger,
+    fetchPage: async url => { fetched.push(url); return html('2026-09-15T00:00:00Z'); } });
+  assert.equal(result.length, 0);
+  assert.deepEqual(fetched, []);
+});
+
+test('RSS日付が無い項目はこれまでどおり元記事を取得して判定する', async () => {
+  const fetched = [];
+  const undated = { title: 'Roblox brand campaign', link: 'https://example.com/undated' };
+  const result = await verifyFreshArticles([undated], { now, logger,
+    fetchPage: async url => { fetched.push(url); return html('2026-09-14T00:00:00Z'); } });
+  assert.deepEqual(fetched, ['https://example.com/undated']);
+  assert.equal(result.length, 1);
+});
+
+test('媒体ごとに異なる公開日メタからも公開日を読む', async () => {
+  const variants = [
+    '<meta property="og:article:published_time" content="2026-09-14T00:00:00Z">',
+    '<meta name="parsely-pub-date" content="2026-09-14T00:00:00Z">',
+    '<meta name="pubdate" content="2026-09-14T00:00:00Z">',
+    '<meta name="DC.date.issued" content="2026-09-14T00:00:00Z">',
+    '<time itemprop="datePublished" datetime="2026-09-14T00:00:00Z">Sep 14</time>',
+  ];
+  for (const meta of variants) {
+    const result = await verifyFreshArticles([item], { now, logger,
+      fetchPage: async () => `${meta}<h1>Roblox brand campaign</h1><article>Confirmed brand integration.</article>` });
+    assert.equal(result.length, 1, meta);
+    assert.equal(result[0].published, '2026-09-14T00:00:00.000Z', meta);
+  }
+});
+
+test('更新日しか無い記事は引き続き見送る', async () => {
+  const result = await verifyFreshArticles([item], { now, logger,
+    fetchPage: async () => '<meta property="article:modified_time" content="2026-09-17T00:00:00Z"><h1>Roblox brand campaign</h1>' });
+  assert.equal(result.length, 0);
+});

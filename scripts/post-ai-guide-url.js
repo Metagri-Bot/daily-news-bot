@@ -232,12 +232,36 @@ async function logToGas(article, parsed) {
     forceOverwrite: FORCE_OVERWRITE
   };
 
-  const response = await axios.post(process.env.AI_GUIDE_GAS_URL, payload, {
+  // GAS側の doPost は lock.waitLock(30000) で最大30秒待つ。10秒では届く前に切れる。
+  const post = () => axios.post(process.env.AI_GUIDE_GAS_URL, payload, {
     headers: { 'Content-Type': 'application/json' },
-    timeout: 10000
+    timeout: 45000
   });
 
+  // GASは doPost 実行後、script.googleusercontent.com へのリダイレクト経由で応答を返す。
+  // 書き込みが終わっていても応答の取得だけが404などで失敗することがあるため、一度やり直す。
+  let response;
+  let transportFailure = null;
+  try {
+    response = await post();
+  } catch (error) {
+    transportFailure = error;
+    console.warn(`[AI Guide URL Post] GAS応答の取得に失敗しました（${error.message}）。書き込み済みの可能性があるため1回だけ再送します。`);
+    response = await post();
+  }
+
   const result = response.data || {};
+  if (transportFailure && result.status === 'busy') {
+    throw new Error('応答取得に失敗した直後にbusyが返りました。最初の書き込みは成功している可能性が高いです。\n'
+      + '  → 「原稿作成」A2 の記事URLを確認してください。今回の記事URLになっていれば転送済みです。\n'
+      + `  → 最初の失敗: ${transportFailure.message}`);
+  }
+  if (result.status === 'busy') {
+    // 上書きを拒否されただけで、障害ではない。前回の原稿を配信すれば通る。
+    throw new Error('「原稿作成」A1/A2 には未配信の原稿が残っているため、GASが上書きを拒否しました。\n'
+      + '  → 前回の原稿を配信して「アーカイブ」に記録するか、その原稿を取り下げてから再実行してください。\n'
+      + `  → GASの応答: ${JSON.stringify(result)}`);
+  }
   if (result.status !== 'success') {
     throw new Error(`GAS returned non-success response: ${JSON.stringify(result)}`);
   }

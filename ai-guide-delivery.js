@@ -100,4 +100,15 @@ async function deliver({ state, items, now = Date.now(), recover, save, prepare,
   return url;
 }
 
-module.exports = { canonicalUrl, loadState, saveState, discover, recoverHistory, deliver };
+// Discordには出たがスプレッドシートへ転送できていない記事。legacy_unknown は台帳が
+// 失われたあと復元された記事で、転送済みか判定できないため配信対象から外れる。
+// 放置すると二度と転送されないので、直近14日ぶんは必ず表に出す。
+function pendingGasTransfers(state, now = Date.now()) {
+  return Object.entries(state?.articles || {})
+    .filter(([, entry]) => entry.discord && (!entry.gas || entry.gas.status === 'legacy_unknown'))
+    .filter(([, entry]) => Date.parse(entry.publishedAt) >= now - 14 * DAY)
+    .sort((a, b) => Date.parse(a[1].publishedAt) - Date.parse(b[1].publishedAt))
+    .map(([url, entry]) => ({ url, status: entry.gas?.status || 'pending', publishedAt: entry.publishedAt }));
+}
+
+module.exports = { canonicalUrl, loadState, saveState, discover, recoverHistory, deliver, pendingGasTransfers };

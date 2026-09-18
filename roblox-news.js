@@ -36,8 +36,19 @@ function canonicalFeedUrl(value) {
   }
 }
 
-function getRobloxFeeds(configured = '') {
-  const custom = configured.split(',').map(s => s.trim()).filter(Boolean).map(value => {
+// 設定値にファイルパスなどURL以外が混ざると、その項目だけが静かに失敗し続ける。
+// 取り除いたうえで、何を捨てたかを必ず呼び出し側へ返す。
+function getRobloxFeedIssues(configured = '') {
+  return configured.split(',').map(value => value.trim()).filter(Boolean)
+    .filter(value => !/^https?:\/\//i.test(value));
+}
+
+function getRobloxFeeds(configured = '', { logger = console } = {}) {
+  for (const invalid of getRobloxFeedIssues(configured)) {
+    logger.error(`[Roblox News] RSS設定にURLでない値が含まれています（無視します）: ${invalid.slice(0, 160)}`);
+  }
+  const custom = configured.split(',').map(s => s.trim())
+    .filter(value => /^https?:\/\//i.test(value)).map(value => {
     try {
       const url = new URL(value);
       if (url.hostname === 'news.google.com') {
@@ -53,6 +64,17 @@ function getRobloxFeeds(configured = '') {
   ),
   `https://news.google.com/rss/search?q=${encodeURIComponent('Roblox site:licenseglobal.com (collection OR launches OR toys) when:7d')}&hl=en-US&gl=US&ceid=US:en`,
   ].map(canonicalFeedUrl))];
+}
+
+// フィードURL自体がRobloxを名指ししていれば専用フィード。それ以外は業界紙などの
+// 広域フィードで、大半が無関係なため1件ずつ元記事を取りに行く価値がない。
+function isRobloxScopedFeed(url) {
+  return /roblox/i.test(String(url || ''));
+}
+
+// scoreRobloxArticle と同じ単語境界で判定する。
+function mentionsRoblox(article) {
+  return /\broblox\b/i.test(`${article?.title || ''} ${article?.contentSnippet || ''}`);
 }
 
 function cleanText(text = '') {
@@ -235,19 +257,27 @@ function selectRobloxArticles(articles, { limit, ...options } = {}) {
 
 async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = console, now = new Date(), directSources, stats = {} }) {
   const articles = [];
+  let prefiltered = 0;
   // Bounded batches keep the extra search feeds from overwhelming the network.
   for (let i = 0; i < urls.length; i += 4) {
     const results = await Promise.all(urls.slice(i, i + 4).map(async url => {
       try {
         const feed = await fetchFeed(url);
-        logger.log(`[Roblox News] feed=${url} fetched=${feed.items?.length || 0}`);
-        return (feed.items || []).map(item => ({
+        const scoped = isRobloxScopedFeed(url);
+        const items = (feed.items || []).map(item => ({
           ...item,
           source: (typeof item.source === 'string' ? item.source : item.source?._)
             || (/^https?:\/\/news\.google\.com\//.test(item.link || '') ? item.title?.split(' - ').at(-1) : null) || feed.title,
           contentSnippet: cleanText(item.contentSnippet || item.content || item.summary || ''),
           published: getArticlePublishedDate(item),
         }));
+        // 広域フィードは、見出しか要約にRobloxが出ない項目をページ取得の前に落とす。
+        // 本文中盤で初めて触れる記事は取りこぼすが、1回の実行で数百件のページ取得を
+        // 発生させないための割り切り。
+        const kept = scoped ? items : items.filter(mentionsRoblox);
+        prefiltered += items.length - kept.length;
+        logger.log(`[Roblox News] feed=${url} fetched=${items.length} kept=${kept.length}${scoped ? '' : ' (broad)'}`);
+        return kept;
       } catch (error) {
         logger.error(`[Roblox News] feed failed: ${url}: ${error.message}`);
         return [];
@@ -260,8 +290,8 @@ async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = cons
     articles.push(...await collectDirectArticles({ fetchPage, logger, sources: directSources }));
   }
   const fresh = articles.filter(a => isNewsWithinFreshness(a, now, LOOKBACK_DAYS)).length;
-  Object.assign(stats, { collected: articles.length, fresh });
-  logger.log(`[Roblox News] collected=${articles.length} fresh=${fresh}`);
+  Object.assign(stats, { collected: articles.length, fresh, prefiltered });
+  logger.log(`[Roblox News] collected=${articles.length} fresh=${fresh} prefiltered=${prefiltered}`);
   const { verifyFreshArticles } = require('./roblox-news-sources');
   return verifyFreshArticles(articles, { fetchPage, now, logger, stats });
 }
@@ -290,6 +320,7 @@ function saveHistory(file, sent, articles, now = new Date()) {
   fs.renameSync(`${file}.tmp`, file);
 }
 
-module.exports = { LOOKBACK_DAYS, SEARCH_QUERIES, getRobloxFeeds, scoreRobloxArticle,
+module.exports = { LOOKBACK_DAYS, SEARCH_QUERIES, getRobloxFeeds, getRobloxFeedIssues, scoreRobloxArticle,
+  isRobloxScopedFeed, mentionsRoblox,
   articleKeys, selectRobloxArticles, collectRobloxArticles, loadHistory, saveHistory,
   adaptiveLimit, groupRobloxArticles, titleTokens, rankRobloxArticles, postedArticleContext };
