@@ -4730,8 +4730,12 @@ cron.schedule('0 9 * * 1,3,5', async () => {
 
   // === 日誌素案（週次 / 既定 毎週金曜 6:00 JST） ===
   // 前日ぶんの生ログを、01_input/discord-log_YYYY-MM-DD.md と同じ形式のまま日誌素案チャンネルへ流す。
-  // 要約も見解も入れない。日誌を書く人が素材をその場で読めるようにするのが目的なので、
+  // 要約や見解は入れない。日誌を書く人が素材をその場で読めるようにするのが目的なので、
   // 判断を挟むと「素案」でなく「下書き」になり、書く人の仕事を先に決めてしまう。
+  // 生ログの後ろには「事実」の補足だけ足す（diary-supplement.js）:
+  //   - 投稿に貼られたURLの実情報（タイトル・説明を機械的に取得。要約や見解はなし）
+  //   - Discord_Channel_Logスプレッドシートの実績と比べた件数の傾向
+  // どちらも取れなければ黙って省く。ここで判断はしない。
   if (process.env.DISABLE_DIARY_DRAFT !== 'true') {
     const schedule = process.env.DIARY_DRAFT_CRON || '0 6 * * 5';
     if (!cron.validate(schedule)) throw new Error('Invalid DIARY_DRAFT_CRON');
@@ -4819,11 +4823,17 @@ async function runDiaryDraftJob(targetChannelId, sourceChannelIds, options = {})
     const target = await client.channels.fetch(targetChannelId);
     if (!target?.isTextBased() || typeof target.send !== 'function') throw new Error('Diary draft channel is not sendable');
 
+    const gasUrl = process.env.DISCORD_CHANNEL_LOG_GAS_URL;
+
     const result = await runDiaryDraft({
       channelIds: sourceChannelIds,
       fetchChannel: id => client.channels.fetch(id),
       send: content => target.send({ content, allowedMentions: { parse: [] } }),
       offsetDays: Number(process.env.DIARY_DRAFT_OFFSET_DAYS || 1),
+      enableLinkSupplement: process.env.DIARY_DRAFT_LINK_SUPPLEMENT !== 'false',
+      enableTrendSupplement: process.env.DIARY_DRAFT_TREND_SUPPLEMENT !== 'false' && Boolean(gasUrl),
+      trendDays: Number(process.env.DIARY_DRAFT_TREND_DAYS || 14),
+      loadDailyCounts: gasUrl ? (({ days }) => discordChannelLogStore.loadDailyCounts({ gasUrl, days })) : undefined,
       ...options
     });
 

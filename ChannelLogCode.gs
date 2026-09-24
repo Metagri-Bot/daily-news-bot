@@ -10,6 +10,9 @@
  *        → { success:true, cursors:{ <channelId>: <lastMessageId> } }
  *   POST { type:'channelLog', records:[ {timestamp,date,messageId,...}, ... ] }
  *        → { success:true, appended:<n>, skipped:<n> }
+ *   POST { type:'channelLogDailyCounts', days:<n> }
+ *        → { success:true, counts:[ {date:'YYYY-MM-DD', channelId, channelName, count}, ... ] }
+ *        （日誌素案の「過去との比較」補足が使う。日付はJST基準で集計する）
  *
  * 設計上いちばん大事な点:
  *   Discordのsnowflake（Message ID / User ID / Channel ID）は19桁の数値文字列で、
@@ -61,6 +64,10 @@ function doPost(e) {
     if (type === 'channelLog') {
       var result = appendChannelLogRecords_(data.records || []);
       return jsonResponse_({ success: true, appended: result.appended, skipped: result.skipped });
+    }
+
+    if (type === 'channelLogDailyCounts') {
+      return jsonResponse_({ success: true, counts: getChannelLogDailyCounts_(data.days) });
     }
 
     return jsonResponse_({ success: false, error: 'unknown type: ' + type });
@@ -134,6 +141,39 @@ function getChannelLogCursors_() {
     }
   }
   return cursors;
+}
+
+/**
+ * 直近N日ぶんを、日付（JST）×チャンネルで件数集計する。
+ * 「日誌素案」の傾向メモ（過去平均との比較）が使う。ここでは集計だけ行い、
+ * 「薄い日かどうか」のような判断はNode側（discord-day-digest.js）に任せる。
+ */
+function getChannelLogDailyCounts_(days) {
+  var sheet = getLogSheet_();
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+
+  var values = sheet.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
+  var windowDays = Math.max(1, Number(days) || 30);
+  var cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  var map = {};
+
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var tsValue = row[TIMESTAMP_COLUMN - 1];
+    var dateObj = tsValue instanceof Date ? tsValue : new Date(tsValue);
+    if (isNaN(dateObj.getTime()) || dateObj < cutoff) continue;
+
+    var dateText = Utilities.formatDate(dateObj, 'Asia/Tokyo', 'yyyy-MM-dd');
+    var channelId = String(row[CHANNEL_ID_COLUMN - 1] || '');
+    if (!channelId) continue;
+    var channelName = String(row[8] || '');
+    var key = dateText + '|' + channelId;
+    if (!map[key]) map[key] = { date: dateText, channelId: channelId, channelName: channelName, count: 0 };
+    map[key].count++;
+  }
+
+  return Object.keys(map).map(function (key) { return map[key]; });
 }
 
 /** 記録済みMessage IDの集合（重複排除用） */
