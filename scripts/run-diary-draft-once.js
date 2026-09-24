@@ -10,7 +10,7 @@
  *   node scripts/run-diary-draft-once.js --date 2026-09-12 --to 2026-09-13   # 2日まとめ
  *   node scripts/run-diary-draft-once.js --to-channel 123456789               # 投稿先を一時的に上書き
  *
- * 本番の毎週木曜ジョブと同じ経路（discord-day-digest.js）を通る。
+ * 本番の毎週金曜ジョブと同じ経路（discord-day-digest.js）を通る。
  * ⚠ --dry-run を付けない限り、実行した時点でチャンネルへ投稿される。
  */
 

@@ -76,7 +76,7 @@ jobs:
           echo "DISCORD_CHANNEL_LOG_INITIAL_LOOKBACK_DAYS=${{ secrets.DISCORD_CHANNEL_LOG_INITIAL_LOOKBACK_DAYS }}" >> .env
           echo "DISCORD_CHANNEL_LOG_MAX_PER_RUN=${{ secrets.DISCORD_CHANNEL_LOG_MAX_PER_RUN }}" >> .env
           echo "DISABLE_DISCORD_CHANNEL_LOG=${{ secrets.DISABLE_DISCORD_CHANNEL_LOG }}" >> .env
-          # 日誌素案（週次・既定 毎週木曜6:00 JST / 前日ぶんの生ログをそのまま投稿）
+          # 日誌素案（週次・既定 毎週金曜6:00 JST / 前日ぶんの生ログをそのまま投稿）
           # DIARY_DRAFT_CHANNEL_ID が空のときはジョブ自体を登録しない
           # 収集対象は未設定なら DISCORD_CHANNEL_LOG_CHANNEL_IDS を流用する
           echo "DIARY_DRAFT_CHANNEL_ID=${{ secrets.DIARY_DRAFT_CHANNEL_ID }}" >> .env

@@ -160,18 +160,18 @@ snowflakeは時刻の昇順なので、これをカーソルにすると次の2�
 
 ## 8. 日誌素案チャンネルへの週次投稿（2026-09-18 追加）
 
-同じ生ログを、毎週木曜6:00 JSTに「日誌素案」チャンネルへも投稿します。
+同じ生ログを、毎週金曜6:00 JSTに「日誌素案」チャンネルへも投稿します。
 ローカルへ書き出す `scripts/export-discord-day.js` と**まったく同じ形式**です
 （形式の組み立ては `discord-day-digest.js` の1か所だけ。ファイルとDiscordで割れないようにしています）。
 
 ```env
 DIARY_DRAFT_CHANNEL_ID=1550442184916992000
-DIARY_DRAFT_CRON=0 6 * * 4
+DIARY_DRAFT_CRON=0 6 * * 5
 DIARY_DRAFT_OFFSET_DAYS=1
 DISABLE_DIARY_DRAFT=false
 ```
 
-- 対象は**前日ぶんの1日分**（木曜に走ると水曜ぶん）。`DIARY_DRAFT_OFFSET_DAYS` で変えられます
+- 対象は**前日ぶんの1日分**（金曜に走ると木曜ぶん）。`DIARY_DRAFT_OFFSET_DAYS` で変えられます
 - 2,000字を超える日は複数メッセージへ自動分割し、2通以上のときだけ `(1/3)` が付きます
 - `DIARY_DRAFT_CHANNEL_ID` が空だと起動ログに `- Diary Draft: skipped` と出てジョブは登録されません
 - 🔴 Botに、投稿先チャンネルでの**メッセージを送信**権限が必要です
