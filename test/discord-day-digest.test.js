@@ -170,6 +170,72 @@ test('runDiaryDraft: 前日ぶんを集めて送る。dryRunなら送らない',
   assert.strictEqual(dry.messages, 1);
 });
 
+test('runDiaryDraft: URLを含む投稿があれば補足セクションを付ける（fetchLinkInfoを注入）', async () => {
+  const channel = makeChannel({
+    id: '1',
+    name: '🎤｜音声日誌',
+    messages: [makeMessage({ at: '2026-09-17T01:00:00Z', content: '聞いてね https://open.spotify.com/episode/xyz' })]
+  });
+  const sent = [];
+
+  const result = await runDiaryDraft({
+    channelIds: ['1'],
+    fetchChannel: async () => channel,
+    send: async content => sent.push(content),
+    now: new Date('2026-09-18T00:00:00+09:00'),
+    fetchLinkInfo: async url => ({ url, title: 'Farmers Voices vol.161', description: '酪農×Astraの回' })
+  });
+
+  assert.strictEqual(sent.length, 1);
+  assert.match(sent[0], /### 🔗 投稿内リンクの実情報/);
+  assert.match(sent[0], /タイトル: Farmers Voices vol\.161/);
+  assert.match(result.markdown, /### 🔗 投稿内リンクの実情報/);   // dry-run表示用の本文にも同じ補足が入っている
+});
+
+test('runDiaryDraft: loadDailyCountsを渡すと傾向メモが付き、渡さなければ静かに省かれる', async () => {
+  const channel = makeChannel({
+    id: '1',
+    name: '💬｜雑談',
+    messages: [makeMessage({ at: '2026-09-17T01:00:00Z', content: '今日は静かでした' })]
+  });
+
+  const withTrend = await runDiaryDraft({
+    channelIds: ['1'],
+    fetchChannel: async () => channel,
+    dryRun: true,
+    now: new Date('2026-09-18T00:00:00+09:00'),
+    loadDailyCounts: async () => ([
+      { date: '2026-09-10', channelId: '1', channelName: '💬｜雑談', count: 10 },
+      { date: '2026-09-11', channelId: '1', channelName: '💬｜雑談', count: 10 }
+    ])
+  });
+  assert.match(withTrend.markdown, /### 📊 過去との比較/);
+
+  const withoutTrend = await runDiaryDraft({
+    channelIds: ['1'],
+    fetchChannel: async () => channel,
+    dryRun: true,
+    now: new Date('2026-09-18T00:00:00+09:00')
+  });
+  assert.doesNotMatch(withoutTrend.markdown, /過去との比較/);
+});
+
+test('runDiaryDraft: loadDailyCountsが失敗しても投稿は続行する（傾向メモだけ省かれる）', async () => {
+  const channel = makeChannel({ id: '1', name: '💬｜雑談', messages: [] });
+
+  const result = await runDiaryDraft({
+    channelIds: ['1'],
+    fetchChannel: async () => channel,
+    dryRun: true,
+    now: new Date('2026-09-18T00:00:00+09:00'),
+    loadDailyCounts: async () => { throw new Error('GAS unreachable'); },
+    logger: { error: () => {} }
+  });
+
+  assert.doesNotMatch(result.markdown, /過去との比較/);
+  assert.match(result.markdown, /取得: 0件/);
+});
+
 test('runDiaryDraft: 投稿ゼロの日でも「0件」のサマリを送る（静かに落とさない）', async () => {
   const channel = makeChannel({ id: '1', name: '💬｜雑談', messages: [] });
   const sent = [];

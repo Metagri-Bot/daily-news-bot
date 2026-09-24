@@ -84,6 +84,10 @@ jobs:
           echo "DIARY_DRAFT_OFFSET_DAYS=${{ secrets.DIARY_DRAFT_OFFSET_DAYS }}" >> .env
           echo "DIARY_DRAFT_SOURCE_CHANNEL_IDS=${{ secrets.DIARY_DRAFT_SOURCE_CHANNEL_IDS }}" >> .env
           echo "DISABLE_DIARY_DRAFT=${{ secrets.DISABLE_DIARY_DRAFT }}" >> .env
+          # 日誌素案への補足（URLの実情報／過去比較。事実のみ・省略可）
+          echo "DIARY_DRAFT_LINK_SUPPLEMENT=${{ secrets.DIARY_DRAFT_LINK_SUPPLEMENT }}" >> .env
+          echo "DIARY_DRAFT_TREND_SUPPLEMENT=${{ secrets.DIARY_DRAFT_TREND_SUPPLEMENT }}" >> .env
+          echo "DIARY_DRAFT_TREND_DAYS=${{ secrets.DIARY_DRAFT_TREND_DAYS }}" >> .env
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d

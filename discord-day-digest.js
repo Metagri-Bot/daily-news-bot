@@ -8,11 +8,17 @@
  *      まったく同じ形式を、この1か所だけで組み立てる（形式の正をファイルとBot投稿で割らない）
  *   2. その本文を Discord の1メッセージ上限（2,000字）へ収まる形へ分割する
  *
- * シートは経由しない。日誌の素材は「その日ぶんの生データ」であって通し記録ではないので、
- * GAS側の状態に関係なく取れる経路をここに持たせている（export-discord-day.js と同じ考え方）。
+ * 今日ぶんの収集はシートを経由しない。日誌の素材は「その日ぶんの生データ」であって
+ * 通し記録ではないので、GAS側の状態に関係なく取れる経路をここに持たせている
+ * （export-discord-day.js と同じ考え方）。
+ *
+ * runDiaryDraft() はこれに加えて、diary-supplement.js が組み立てる「事実の補足」
+ * （URLの実情報／Discord_Channel_Logスプレッドシートとの過去比較）を末尾へ足す。
+ * buildDayDigestMarkdown() 自体の出力（＝ローカル書き出しと同一の生ログ形式）は変えない。
  */
 
 const { snowflakeFromDate, compareSnowflake, toRow } = require('./discord-channel-log');
+const { buildDiaryDraftSupplement, DEFAULT_TREND_DAYS: DEFAULT_SUPPLEMENT_TREND_DAYS } = require('./diary-supplement');
 
 const LOG_PREFIX = '[Diary Draft]';
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -297,7 +303,10 @@ function formatDiaryDraftMessages(markdown, { limit = DEFAULT_CHUNK_LIMIT } = {}
 }
 
 /**
- * 収集 → 整形 → 送信までを1回分。送信は send() に任せる（テストで差し替えるため）。
+ * 収集 → 整形 → 補足 → 送信までを1回分。送信は send() に任せる（テストで差し替えるため）。
+ *
+ * 補足（diary-supplement.js）は2種類とも「取れなければ省く」設計。
+ * リンク1件の取得失敗やGAS未接続で、日誌素案の投稿そのものを止めない。
  *
  * @param {(content: string) => Promise<any>} send  1メッセージを送る関数
  * @returns {Promise<{dateText:string, rows:number, perChannel:Array, errors:Array, messages:number, sent:number}>}
@@ -311,13 +320,46 @@ async function runDiaryDraft({
   dateText = null,
   toDateText = null,
   limit = DEFAULT_CHUNK_LIMIT,
-  dryRun = false
+  dryRun = false,
+  enableLinkSupplement = true,
+  fetchLinkInfo,
+  linkSupplementConcurrency,
+  enableTrendSupplement = true,
+  loadDailyCounts,
+  trendDays = DEFAULT_SUPPLEMENT_TREND_DAYS,
+  logger = console
 } = {}) {
   const fromText = dateText || jstDateTextWithOffset(now, offsetDays);
   const toText = toDateText || fromText;
 
   const { rows, perChannel, errors, guildId } = await collectDayRows({ channelIds, fetchChannel, fromText, toText });
-  const markdown = buildDayDigestMarkdown({ fromText, toText, channelIds, rows, perChannel, errors, guildId });
+  const baseMarkdown = buildDayDigestMarkdown({ fromText, toText, channelIds, rows, perChannel, errors, guildId });
+
+  let dailyCounts = [];
+  if (enableTrendSupplement && typeof loadDailyCounts === 'function') {
+    try {
+      dailyCounts = await loadDailyCounts({ days: trendDays });
+    } catch (error) {
+      logger.error?.(`${LOG_PREFIX} 過去の件数取得に失敗（傾向メモは省略します）: ${error.message}`);
+    }
+  }
+
+  const supplement = await buildDiaryDraftSupplement({
+    rows,
+    sourceChannelIds: channelIds,
+    perChannelToday: perChannel,
+    fromText,
+    toText,
+    dailyCounts,
+    trendDays,
+    fetchLinkInfo,
+    concurrency: linkSupplementConcurrency,
+    enableLinkSupplement,
+    enableTrendSupplement: enableTrendSupplement && dailyCounts.length > 0,
+    logger
+  });
+
+  const markdown = supplement ? `${baseMarkdown}\n\n${supplement}` : baseMarkdown;
   const messages = formatDiaryDraftMessages(markdown, { limit });
 
   let sent = 0;

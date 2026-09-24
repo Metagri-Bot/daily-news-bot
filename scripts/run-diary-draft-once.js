@@ -9,8 +9,11 @@
  *   node scripts/run-diary-draft-once.js --date 2026-09-17    # 日付を指定（既定は前日）
  *   node scripts/run-diary-draft-once.js --date 2026-09-12 --to 2026-09-13   # 2日まとめ
  *   node scripts/run-diary-draft-once.js --to-channel 123456789               # 投稿先を一時的に上書き
+ *   node scripts/run-diary-draft-once.js --dry-run --no-supplement           # 生ログのみ（補足なし）で確認
  *
  * 本番の毎週金曜ジョブと同じ経路（discord-day-digest.js）を通る。
+ * 補足（URLの実情報／過去比較）も本番と同じ設定で動く。過去比較は DISCORD_CHANNEL_LOG_GAS_URL が
+ * 無ければ自動的に省かれる（エラーにはしない）。
  * ⚠ --dry-run を付けない限り、実行した時点でチャンネルへ投稿される。
  */
 
@@ -19,6 +22,7 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits, Partials } = require('discord.js');
 
 const { runDiaryDraft, jstDateTextWithOffset } = require('../discord-day-digest');
+const discordChannelLogStore = require('../discord-channel-log-store');
 
 function readFlag(name) {
   return process.argv.includes(`--${name}`);
@@ -32,6 +36,8 @@ function readValue(name, fallback) {
 
 async function main() {
   const dryRun = readFlag('dry-run');
+  const noSupplement = readFlag('no-supplement');
+  const gasUrl = process.env.DISCORD_CHANNEL_LOG_GAS_URL;
   const dateText = readValue('date', null);
   const toDateText = readValue('to', null);
   const targetChannelId = readValue('to-channel', process.env.DIARY_DRAFT_CHANNEL_ID || '');
@@ -73,7 +79,11 @@ async function main() {
       send: content => target.send({ content, allowedMentions: { parse: [] } }),
       dateText,
       toDateText,
-      dryRun
+      dryRun,
+      enableLinkSupplement: !noSupplement,
+      enableTrendSupplement: !noSupplement && Boolean(gasUrl),
+      trendDays: Number(process.env.DIARY_DRAFT_TREND_DAYS || 14),
+      loadDailyCounts: gasUrl ? (({ days }) => discordChannelLogStore.loadDailyCounts({ gasUrl, days })) : undefined
     });
 
     console.log(`[Diary Draft] 対象日: ${result.dateText}${result.toDateText !== result.dateText ? ` 〜 ${result.toDateText}` : ''}（既定は前日＝${jstDateTextWithOffset(new Date(), 1)}）`);

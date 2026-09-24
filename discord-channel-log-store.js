@@ -12,6 +12,7 @@
  * GAS側のエンドポイント（`ChannelLogCode.gs` 参照）:
  *   POST { type:'getChannelLogCursors' }            → { cursors: { <channelId>: <lastMessageId> } }
  *   POST { type:'channelLog', records:[...] }       → Message ID で重複排除して追記
+ *   POST { type:'channelLogDailyCounts', days:n }   → { counts:[{date,channelId,channelName,count}, ...] }
  *
  * 「正」はスプレッドシート。state/discord-channel-log.json はその写し（キャッシュ）で、
  * GASが落ちている日でも前回位置が分かるようにするためだけに置く。
@@ -119,6 +120,22 @@ async function loadCursors({ gasUrl, post = defaultPost, logger = console } = {}
   }
 }
 
+/**
+ * 直近N日ぶんの日付×チャンネル件数を取る（日誌素案の「過去との比較」補足が使う）。
+ * 取れなければ空配列を返す（GAS未設定・未デプロイは「傾向メモを出さない」で吸収する）。
+ */
+async function loadDailyCounts({ gasUrl, days = 30, post = defaultPost, logger = console } = {}) {
+  if (!gasUrl) return [];
+  try {
+    const data = await post(gasUrl, { type: 'channelLogDailyCounts', days });
+    if (data && data.success === false) throw new Error(data.error || 'GAS returned success:false');
+    return Array.isArray(data?.counts) ? data.counts : [];
+  } catch (error) {
+    logger.error?.(`${LOG_PREFIX} 過去の件数取得に失敗（傾向メモは省略します）: ${error.message}`);
+    return [];
+  }
+}
+
 function toRecord(row) {
   return RECORD_FIELDS.reduce((acc, field) => {
     const value = row[field];
@@ -169,6 +186,7 @@ module.exports = {
   writeLocalCursors,
   normalizeCursors,
   loadCursors,
+  loadDailyCounts,
   toRecord,
   saveRows
 };

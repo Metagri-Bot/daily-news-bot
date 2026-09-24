@@ -971,10 +971,12 @@ snowflakeは19桁の数値文字列なので、書式を当てないとスプレ
 
 | ファイル | 役割 |
 |----------|------|
-| `discord-day-digest.js` | 1日ぶんの収集・Markdown組み立て・2,000字分割。**形式の正はここ1か所** |
-| `scripts/export-discord-day.js` | 同じ形式をローカルへ書き出す（`.json` / `.md`） |
-| `scripts/run-diary-draft-once.js` | 手動で1回実行（`--dry-run` / `--date` / `--to-channel`） |
-| `test/discord-day-digest.test.js` | 日付境界・チャンネル失敗・分割・連番ラベルのテスト |
+| `discord-day-digest.js` | 1日ぶんの収集・Markdown組み立て・2,000字分割。**生ログ形式の正はここ1か所** |
+| `diary-supplement.js` | 生ログの後ろに足す「事実」の補足（URLの実情報／過去との比較） |
+| `scripts/export-discord-day.js` | 生ログと同じ形式をローカルへ書き出す（`.json` / `.md`） |
+| `scripts/run-diary-draft-once.js` | 手動で1回実行（`--dry-run` / `--date` / `--to-channel` / `--no-supplement`） |
+| `test/discord-day-digest.test.js` | 日付境界・チャンネル失敗・分割・連番ラベル・補足の付与のテスト |
+| `test/diary-supplement.test.js` | URL抽出・SSRFガード・リンク実情報・過去比較のテスト |
 
 ### 設定
 
@@ -985,6 +987,12 @@ snowflakeは19桁の数値文字列なので、書式を当てないとスプレ
 | `DIARY_DRAFT_OFFSET_DAYS` | `1` | 何日前を対象にするか（1＝前日。金曜に走ると木曜ぶん） |
 | `DIARY_DRAFT_SOURCE_CHANNEL_IDS` | （空） | 収集対象。空なら `DISCORD_CHANNEL_LOG_CHANNEL_IDS` を流用 |
 | `DISABLE_DIARY_DRAFT` | `false` | `true` で停止 |
+| `DIARY_DRAFT_LINK_SUPPLEMENT` | `true` | 投稿内URLの実情報（タイトル・説明）を機械的に取得して併記するか |
+| `DIARY_DRAFT_TREND_SUPPLEMENT` | `true` | 過去実績と比べた件数の傾向メモを付けるか（`DISCORD_CHANNEL_LOG_GAS_URL`未設定なら自動で省かれる） |
+| `DIARY_DRAFT_TREND_DAYS` | `14` | 傾向メモで遡る日数（対象日自体は平均から除外） |
+
+「過去との比較」を使うには、`ChannelLogCode.gs` の再デプロイが必要です（詳細は `CHANNEL_LOG_SETUP.md` の
+「9. 日誌素案への補足」を参照）。未デプロイでもエラーにはならず、その補足だけ省かれます。
 
 ```bash
 # 投稿せずに、送る本文をそのまま画面で確認する
