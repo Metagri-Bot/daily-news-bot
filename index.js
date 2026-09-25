@@ -38,8 +38,10 @@ const { runDiaryDraft } = require('./discord-day-digest');
 const { buildJsonCompletionParams } = require('./openai-chat');
 const { normalizeAiGuideResult } = require('./ai-guide-content');
 const aiGuideDelivery = require('./ai-guide-delivery');
+const { acquireAiGuideRunLock } = require('./ai-guide-run-lock');
 const { resolveMonitoringWebhookUrl } = require('./monitoring-webhook');
 const AI_GUIDE_STATE_FILE = path.join(__dirname, 'state', 'ai-guide-delivery.json');
+const AI_GUIDE_RUN_LOCK_FILE = path.join(__dirname, 'state', 'ai-guide-run.lock');
 let aiGuideRunning = false;
 
 // .envから設定を読み込む
@@ -743,9 +745,7 @@ const sendMonitoringNotification = async (title, description, level = 'info', de
   }
 
   try {
-    await axios.post(MONITORING_WEBHOOK_URL, {
-      embeds: [embed]
-    });
+    await axios.post(MONITORING_WEBHOOK_URL, { embeds: [embed] });
   } catch (error) {
     // Webhook送信エラーはコンソールにのみ出力（無限ループ防止）
     console.error('[Monitoring] Webhook送信に失敗しました:', error.message);
@@ -794,29 +794,9 @@ const reportAiGuideRun = async (state, deliveredUrl, error) => {
 
 // === Robloxビジネス速報の実行レポート ===
 // 成功・0件・失敗のいずれでも必ず1通送る。監視が届かないと沈黙＝正常に見える。
-const ROBLOX_REPORT_COLORS = { info: 0x2ECC71, warn: 0xF1C40F, error: 0xE74C3C, critical: 0xE74C3C };
-const ROBLOX_REPORT_EMOJIS = { info: ':white_check_mark:', warn: ':warning:', error: ':x:', critical: ':rotating_light:' };
-
-// 0件・失敗はRobloxニュースと同じチャンネルへ出す（配信が無い日に何が起きたかを、
-// ニュースを見に来た人がその場で分かるように）。配信できた日は速報そのものが結果なので、
-// 同じチャンネルに要約を重ねず監視Webhookへ送る。チャンネルに送れない場合も同様。
-const reportRobloxNewsRun = async (stats, error, channel) => {
+// 実行結果・内部エラーはニュースチャンネルへ出さず、監視先へまとめる。
+const reportRobloxNewsRun = async (stats, error) => {
   const report = describeRobloxNewsRun(stats, error);
-  if (channel && report.level !== 'info') {
-    try {
-      await channel.send({ embeds: [{
-        title: `${ROBLOX_REPORT_EMOJIS[report.level]} ${report.title}`,
-        description: report.description,
-        color: ROBLOX_REPORT_COLORS[report.level],
-        timestamp: new Date().toISOString(),
-        footer: { text: `daily-news-bot | ${report.level.toUpperCase()}` },
-        ...(report.details ? { fields: [{ name: '詳細', value: `\`\`\`\n${String(report.details).slice(0, 980)}\n\`\`\`` }] } : {}),
-      }] });
-      return;
-    } catch (sendError) {
-      console.error('[Roblox News] レポートのチャンネル投稿に失敗しました:', sendError.message);
-    }
-  }
   await sendMonitoringNotification(report.title, report.description, report.level, report.details);
 };
 
@@ -4454,11 +4434,9 @@ cron.schedule('0 6 * * *', async () => {
     const robloxStats = { feeds: ROBLOX_RSS_FEEDS.length, feedsInvalid: ROBLOX_FEED_ISSUES.length,
       invalidFeedSamples: ROBLOX_FEED_ISSUES.slice(0, 3) };
     let robloxFailure = null;
-    let robloxChannel = null;
     try {
       const channel = await client.channels.fetch(ROBLOX_NEWS_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Roblox通知用チャンネルが見つかりません。');
-      robloxChannel = channel;
       const sent = await recoverDiscordHistory(channel, client.user.id, loadHistory(ROBLOX_HISTORY_FILE));
       saveHistory(ROBLOX_HISTORY_FILE, sent, []);
       const recentArticles = await collectRobloxArticles({
@@ -4516,7 +4494,7 @@ cron.schedule('0 6 * * *', async () => {
     } finally {
       robloxNewsRunning = false;
       // 監視通知の失敗でタスク本体を落とさない。
-      try { await reportRobloxNewsRun(robloxStats, robloxFailure, robloxChannel); }
+      try { await reportRobloxNewsRun(robloxStats, robloxFailure); }
       catch (reportError) { console.error('[Roblox News] 実行レポートの送信に失敗しました:', reportError.message); }
     }
   }, {
@@ -4544,10 +4522,18 @@ cron.schedule('0 9 * * 1,3,5', async () => {
       // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
   if (aiGuideRunning) return;
   aiGuideRunning = true;
+  let releaseRunLock = null;
+  let skippedForLock = false;
   let aiGuideState = null;
   let aiGuideDelivered = null;
   let aiGuideFailure = null;
   try {
+    releaseRunLock = await acquireAiGuideRunLock(AI_GUIDE_RUN_LOCK_FILE);
+    if (!releaseRunLock) {
+      skippedForLock = true;
+      console.log('[AI Guide] 別プロセスが実行中のため、重複実行をスキップしました。');
+      return;
+    }
     const channel = await client.channels.fetch(AI_GUIDE_CHANNEL_ID);
     if (!channel || channel.type !== ChannelType.GuildText) throw new Error('AI Guide channel unavailable');
     const response = await axios.get(AI_GUIDE_RSS_URL, { timeout: 15000, headers: { 'User-Agent': 'Metagri-AI-Guide/1.0' } });
@@ -4658,11 +4644,13 @@ cron.schedule('0 9 * * 1,3,5', async () => {
   } catch (error) { aiGuideFailure = error; console.error('[AI Guide] Delivery failed:', error.message); }
   finally {
     aiGuideRunning = false;
+    try { await releaseRunLock?.(); }
+    catch (lockError) { console.error('[AI Guide] 実行ロックの解除に失敗しました:', lockError.message); }
     // 監視通知の失敗でタスク本体を落とさない。
-    try { await reportAiGuideRun(aiGuideState, aiGuideDelivered, aiGuideFailure); }
+    try { if (!skippedForLock) await reportAiGuideRun(aiGuideState, aiGuideDelivered, aiGuideFailure); }
     catch (reportError) { console.error('[AI Guide] 実行レポートの送信に失敗しました:', reportError.message); }
   }
-}, { timezone: 'Asia/Tokyo' });
+}, { timezone: 'Asia/Tokyo', noOverlap: true });
 
   // === 官公庁・自治体 公募モニタータスク（平日7:30 JST） ===
   cron.schedule(PUBLIC_OPPORTUNITY_CRON, async () => {
@@ -4700,10 +4688,8 @@ cron.schedule('0 9 * * 1,3,5', async () => {
         if (result.errors?.length) throw new Error(result.errors.join('; '));
       } catch (error) {
         console.error('[Farm Partner Radar]', error.message);
-        if (MONITORING_WEBHOOK_URL) {
-          await axios.post(MONITORING_WEBHOOK_URL, { content: '農家・食品パートナー案件レーダーの収集／配信に失敗しました。Botログを確認してください。', allowed_mentions: { parse: [] } }, { timeout: 10000 })
-            .catch(() => console.error('[Farm Partner Radar] Monitoring webhook failed'));
-        }
+        await sendMonitoringNotification('農家・食品パートナー案件レーダーの実行に失敗しました',
+          '収集／配信に失敗しました。Botログを確認してください。', 'error');
       }
     }, { timezone: 'Asia/Tokyo', noOverlap: true });
     console.log(`- Farm Partner Radar: ${schedule} JST`);
