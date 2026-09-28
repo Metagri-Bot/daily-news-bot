@@ -3820,13 +3820,6 @@ async function postChibaTenders() {
 client.once('clientReady', async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
 
-  // === BOT起動通知を送信 ===
-  await sendMonitoringNotification(
-    'BOT Login',
-    `ボットがログインしました: **${client.user.tag}**`,
-    'info'
-  );
-
   // ▼▼▼ この行を追加 ▼▼▼
   await syncPostedUrlsFromSheet();
   await syncPostedBooksFromSheet(); // 投稿済み書籍リストを同期
