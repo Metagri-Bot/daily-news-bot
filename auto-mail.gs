@@ -47,11 +47,11 @@ function onOpen() {
 }
 
 /**
- * 定期実行用の関数（月・水・金 10:00〜10:59 JSTにこれを呼ぶ）
+ * 定期実行用の関数（月・水・金 9:00〜10:59 JSTにこれを呼ぶ）
  */
 function scheduledDailyDraft() {
   if (!isMondayWednesdayFridayTestDraftWindow_()) {
-    console.log('scheduledDailyDraft skipped: outside Mon/Wed/Fri 10:00-10:59 JST window.');
+    console.log('scheduledDailyDraft skipped: outside Mon/Wed/Fri 09:00-10:59 JST window.');
     return;
   }
 
@@ -66,7 +66,7 @@ function isMondayWednesdayFridayTestDraftWindow_() {
   const now = new Date();
   const dayOfWeek = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'u')); // Mon=1, Sun=7
   const hour = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'H'));
-  return [1, 3, 5].includes(dayOfWeek) && hour === 10;
+  return [1, 3, 5].includes(dayOfWeek) && [9, 10].includes(hour);
 }
 
 function setupWeekdayTestDraftTrigger() {
@@ -82,13 +82,13 @@ function setupWeekdayTestDraftTrigger() {
     ScriptApp.newTrigger('scheduledDailyDraft')
       .timeBased()
       .onWeekDay(weekday)
-      .atHour(10)
+      .atHour(9)
       .nearMinute(30)
       .inTimezone(AUTOMATION_TIMEZONE)
       .create();
   });
 
-  console.log('Test draft triggers created: Mon/Wed/Fri, 10:00-11:00 JST.');
+  console.log('Test draft triggers created: Mon/Wed/Fri, 09:00-10:59 JST window (trigger near 09:30).');
 }
 
 function deleteTriggersByHandler_(handlerName) {
@@ -163,7 +163,7 @@ function generateDraftAndTestCore_(isAuto = false, options = {}) {
         'Content-Type': 'application/json'
       },
       payload: JSON.stringify({
-        model: 'gpt-5.1', // モデル
+        model: 'gpt-5.1',
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: "json_object" }
       })
@@ -172,7 +172,7 @@ function generateDraftAndTestCore_(isAuto = false, options = {}) {
     const json = JSON.parse(response.getContentText());
     const content = JSON.parse(json.choices[0].message.content);
 
-    // メルマガ用URL
+    // メルマガ用URL（単体用）
     const trackedUrl = addTrackingParams(articleUrl);
 
     // メルマガ本文組み立て
@@ -227,7 +227,6 @@ function getTodayAtJst_(hour, minute) {
   return Utilities.parseDate(dateStr + ' ' + timeStr, AUTOMATION_TIMEZONE, 'yyyy/MM/dd HH:mm');
 }
 
-
 /**
  * ★新規：コンテンツカタログシートの更新
  */
@@ -235,7 +234,6 @@ function updateContentCatalog(cat, title, url) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAME_CATALOG);
   
-  // シートがない場合は作成
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAME_CATALOG);
     sheet.appendRow(['content_id', 'title', 'url', 'content_type', 'category', 'target_types', 'tags', 'priority', 'read_time', 'reason_template']);
@@ -245,7 +243,6 @@ function updateContentCatalog(cat, title, url) {
   const lastRow = sheet.getLastRow();
   const cleanUrl = url.split('?utm')[0];
 
-  // URLによる重複チェック
   if (lastRow > 1) {
     const existingUrls = sheet.getRange(2, 3, lastRow - 1, 1).getValues().flat();
     if (existingUrls.includes(cleanUrl)) {
@@ -254,7 +251,6 @@ function updateContentCatalog(cat, title, url) {
     }
   }
 
-  // content_id の自動採番
   let nextId = 'c072';
   if (lastRow > 1) {
     const lastId = sheet.getRange(lastRow, 1).getValue().toString();
@@ -264,7 +260,6 @@ function updateContentCatalog(cat, title, url) {
     }
   }
 
-  // 行の追加
   sheet.appendRow([
     nextId,
     title,
@@ -288,21 +283,16 @@ function getXPostExamples() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAME_X_EXAMPLES);
   
-  if (!sheet) return ""; // シートがない場合は空文字を返す
+  if (!sheet) return "";
 
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return ""; // データがない場合
+  if (lastRow < 2) return "";
 
-  // A列（内容）、B列（分類）を取得
   const data = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
   
-  // AIに渡しやすいテキスト形式に整形
-  // 例：
-  // 分類：画像生成
-  // ポスト内容：(本文)...
   const examplesText = data.map(row => {
-    const postContent = row[0]; // A列
-    const category = row[1];    // B列
+    const postContent = row[0];
+    const category = row[1];
     if (!postContent) return "";
     return `【参考例】\n分類: ${category}\nポスト内容: ${postContent}`;
   }).join("\n\n");
@@ -312,9 +302,6 @@ function getXPostExamples() {
 
 /**
  * 1.5. 修正後にテスト送信する機能
- * 修正後にテスト送信する機能
- * @param {boolean} isFromAI AI作成直後か
- * @param {boolean} isAuto 自動実行かどうか
  */
 function sendManualTest(isFromAI = false, isAuto = false) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -333,6 +320,7 @@ function sendManualTest(isFromAI = false, isAuto = false) {
     return false;
   }
 }
+
 /**
  * 2. 読者へ一斉配信
  */
@@ -372,7 +360,6 @@ function scheduledBroadcast() {
  * 共通の送信処理 ＋ アーカイブ保存（X投稿対応版）
  */
 function executeBroadcastCore_(isAuto = false) {
-  // Old Gmail batch delivery has been replaced; no automatic Gmail fallback.
   if (isAuto) { brevoWorker(); return; }
   const id = brevoReserve_(new Date());
   SpreadsheetApp.getUi().alert('Brevo配信を受け付けました。準備後にトリガーで配信します。\n予約ID: ' + id);
@@ -385,14 +372,12 @@ function saveToArchive(subject, htmlBody, articleUrl, recipientCount, xPost) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let archiveSheet = ss.getSheetByName('アーカイブ');
   
-  // シートがなければ作成（ヘッダーにX投稿案を追加）
   if (!archiveSheet) {
     archiveSheet = ss.insertSheet('アーカイブ');
     archiveSheet.appendRow(['送信日時', '件名', '記事URL', '配信数', 'メルマガ本文', 'X投稿案']);
     archiveSheet.getRange(1, 1, 1, 6).setBackground('#eeeeee').setFontWeight('bold');
   }
 
-  // もし既存のシートにX投稿案のヘッダーがなければ、1行目を上書きして項目追加（メンテナンス用）
   if (archiveSheet.getLastColumn() < 6) {
     archiveSheet.getRange(1, 5, 1, 2).setValues([['メルマガ本文', 'X投稿案']]);
   }
@@ -403,7 +388,7 @@ function saveToArchive(subject, htmlBody, articleUrl, recipientCount, xPost) {
     articleUrl, 
     recipientCount, 
     htmlBody,
-    xPost // ★追加
+    xPost
   ]);
 }
 
@@ -419,10 +404,36 @@ function autoDeleteSubscriber(e) {
   for (let i = data.length - 1; i >= 1; i--) { 
     if (data[i][0] === targetEmail) listSheet.deleteRow(i + 1);
   }
-    // 2026-09-16: WordPress会員としてBrevoの会員用リストにも居る場合に備え、Brevo側でも配信停止にする
   if (typeof brevoBlockEmail_ === 'function') brevoBlockEmail_(targetEmail);
 }
 
+/**
+ * HTML本文中のすべての <a href="..."> に対し、GA4用UTMパラメータを付与する
+ */
+function appendUtmParamsToAllLinks_(html, targetDate) {
+  if (!html) return html;
+  const date = targetDate instanceof Date ? targetDate : new Date();
+  const dateStr = Utilities.formatDate(date, AUTOMATION_TIMEZONE, "yyyyMMdd");
+  const utmCampaign = "ai_guide_" + dateStr;
+
+  return html.replace(/<a\s+([^>]*?)href=(["'])(.*?)\2([^>]*?)>/gi, function(match, before, quote, url, after) {
+    if (!url.startsWith('http') || url.indexOf('{{') !== -1 || url.indexOf('unsubscribe') !== -1) {
+      return match;
+    }
+
+    const cleanUrl = url.split(/[?#]/)[0];
+    const domainOrSlug = cleanUrl.split('/').filter(String).pop() || "link";
+
+    const trackedUrl = addOrReplaceQueryParams_(url, {
+      utm_source: "newsletter",
+      utm_medium: "email",
+      utm_campaign: utmCampaign,
+      utm_content: domainOrSlug
+    });
+
+    return '<a ' + before + 'href=' + quote + trackedUrl + quote + after + '>';
+  });
+}
 
 /**
  * URLにGA4追跡用のUTMパラメータを付与する（日付は当日を設定）
@@ -430,11 +441,9 @@ function autoDeleteSubscriber(e) {
 function addTrackingParams(url) {
   if (!url || !url.startsWith('http')) return url;
 
-  // 1. 「当日」の日付を取得
   const now = new Date();
   const dateStr = Utilities.formatDate(now, AUTOMATION_TIMEZONE, "yyyyMMdd");
 
-  // 2. ドメイン名を抽出 (例: metagri-labo.com)
   let domain = "unknown";
   try {
     domain = url.split('/')[2];
@@ -442,11 +451,10 @@ function addTrackingParams(url) {
     console.error("ドメイン抽出エラー: " + e.message);
   }
 
-  // 3. パラメータの組み立て
   const utmSource = "newsletter";
   const utmMedium = "email";
-  const utmCampaign = "ai_guide_" + dateStr; // 例: ai_guide_20250131
-  const utmContent = url.split(/[?#]/)[0].split('/').filter(String).pop() || domain; // 記事単位で識別
+  const utmCampaign = "ai_guide_" + dateStr;
+  const utmContent = url.split(/[?#]/)[0].split('/').filter(String).pop() || domain;
 
   return addOrReplaceQueryParams_(url, {
     utm_source: utmSource,
@@ -461,7 +469,7 @@ function addOrReplaceQueryParams_(url, params) {
   const hash = hashIndex === -1 ? '' : url.slice(hashIndex);
   const urlWithoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
   const queryIndex = urlWithoutHash.indexOf('?');
-  const baseUrl = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(0, queryIndex);
+  const baseUrl = queryIndex === -1 ? urlWithoutHash : urlWithoutHash.slice(queryIndex + 1);
   const existingQuery = queryIndex === -1 ? '' : urlWithoutHash.slice(queryIndex + 1);
   const replaceKeys = Object.keys(params);
 
@@ -479,7 +487,6 @@ function addOrReplaceQueryParams_(url, params) {
   return baseUrl + '?' + queryParts.join('&') + hash;
 }
 
-// RSS配信の重複・原稿取り違え防止（2026-09-09）
 function aiGuideCanonicalUrl_(raw) {
   const base = String(raw || '').trim().split(/[?#]/)[0];
   return /^https:\/\/metagri-labo\.com\/ai-guide\/[^/]+\/?$/.test(base) ? base.replace(/\/?$/, '/') : '';
@@ -504,9 +511,7 @@ function executeBroadcast(isAuto = false) {
   return executeBroadcastCore_(isAuto);
 }
 
-// 農業AI通信: GAS予約 + Brevo Marketing Campaigns (2026-09-10)
-// Script properties: BREVO_API_KEY, BREVO_FOLDER_ID, BREVO_ENABLED=true
-// Optional: BREVO_SENDER_EMAIL (default OWNER_EMAIL), BREVO_MAX_RECIPIENTS (default 290)
+// 農業AI通信: GAS予約 + Brevo Marketing Campaigns
 const BREVO_JOBS_SHEET = 'Brevo配信管理';
 const BREVO_TERMINAL = ['SENT', 'CANCELLED', 'FAILED', 'REVIEW', 'SUSPENDED'];
 
@@ -528,7 +533,6 @@ function brevoApi_(method, path, payload) {
   try { response = UrlFetchApp.fetch('https://api.brevo.com/v3' + path, options); }
   catch (_) { throw new Error('Brevo通信結果不明。配信管理の状態を確認してください。'); }
   const status = response.getResponseCode();
-  // Never log provider bodies: they may contain addresses or credentials.
   if (status < 200 || status >= 300) {
     const error = new Error('Brevo HTTP ' + status + '。Brevo管理画面で認証・残量・配信状態を確認してください。');
     error.httpStatus = status;
@@ -538,7 +542,6 @@ function brevoApi_(method, path, payload) {
   return body ? JSON.parse(body) : {};
 }
 
-// Read-only connection check; does not send mail or upload contacts.
 function checkBrevoConnection() {
   const config = brevoConfig_();
   brevoApi_('get', '/account');
@@ -550,7 +553,6 @@ function checkBrevoConnection() {
   return true;
 }
 
-// Run once after domain authentication / API key setup. No mail is sent.
 function setupBrevoIntegration() {
   checkBrevoConnection();
   const lock = LockService.getScriptLock();
@@ -607,7 +609,6 @@ function brevoSave_(job) {
   if (!job.row) job.row = sheet.getLastRow() + 1;
   sheet.getRange(job.row, 1, 1, 12).setValues([[job.id, job.state, new Date(job.at), job.subject,
     job.url, job.campaignId || '', job.emails.length, job.note || '', new Date(), json, job.html, job.xPost].map(brevoCell_)]);
-  // Persist the intent BEFORE external operations (especially sendNow).
   SpreadsheetApp.flush();
 }
 
@@ -622,7 +623,6 @@ function brevoJobs_() {
 }
 
 function brevoEmails_() {
-  // 宛先 = シート「配信リスト」（フォーム登録者）＋ Brevoの会員用リスト（WordPress無料会員の希望者）
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('配信リスト');
   const sheetEmails = sheet && sheet.getLastRow() >= 2
     ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().flat().map(v => String(v).trim().toLowerCase()).filter(Boolean)
@@ -635,7 +635,6 @@ function brevoEmails_() {
   return emails;
 }
 
-// WordPress会員リストの連絡先（配信停止・退会の人も含む）。取得に失敗したら例外で止める。
 function brevoMemberContacts_() {
   const listId = Number(PropertiesService.getScriptProperties().getProperty('BREVO_MEMBER_LIST_ID'));
   if (!Number.isInteger(listId) || listId < 1) return [];
@@ -647,8 +646,7 @@ function brevoMemberContacts_() {
       if (!email || !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email)) return;
       const unsubscribed = (c.listUnsubscribed || []).map(Number).includes(listId);
       const wpStatus = String((c.attributes || {}).WP_MEMBER_STATUS || '').trim();
-      const active = !c.emailBlacklisted && !unsubscribed;
-      // 状態の優先順位：WordPressが記録した状態（退会申請など）＞Brevo上の配信可否
+      const active = !c.emailBlacklisted && !unsubscribed && wpStatus !== '未希望';
       const status = !active && (!wpStatus || wpStatus === '配信中') ? '配信停止' : (wpStatus || '配信中');
       const reason = active ? '' : String((c.attributes || {}).WP_WITHDRAW_REASON || '').trim();
       out.push({email: email, active: active, status: active ? '配信中' : status, created: c.createdAt || '', reason: reason});
@@ -658,16 +656,10 @@ function brevoMemberContacts_() {
   return out;
 }
 
-// WordPress会員の希望者＝配信対象だけ。配信停止（emailBlacklisted）とリスト解除済みは含めない。
 function brevoMemberEmails_() {
   return brevoMemberContacts_().filter(c => c.active).map(c => c.email);
 }
 
-// ---- WordPress会員をシートで管理する（2026-09-16 追加・6時間ごと）----
-// 正はBrevoの会員用リスト。シート「会員（WordPress）」は台帳で、行は消さずに状態を上書きする（物理削除しない）。
-//   状態：配信中／配信停止／退会申請／退会（削除）／リスト外（Brevoのリストから消えた）
-//   配信対象：TRUE のときだけ配信される（判定は配信のたびにBrevoから直接読む。シートを手で書き換えても配信は変わらない）
-//   退会理由：配信対象が FALSE の会員だけ、WordPressの退会申請で書かれた理由を入れる（配信中に戻ったら空にする）
 const BREVO_MEMBER_SHEET = '会員（WordPress）';
 const BREVO_MEMBER_HEADER = ['メール', '状態', '配信対象', '初回登録', '状態変更', '最終同期', '退会理由'];
 
@@ -690,7 +682,6 @@ function syncWpMembersToSheet() {
     rows.forEach((r, i) => {
       const email = String(r[0] || '').trim().toLowerCase();
       if (!email) return;
-      // 旧形式（メール／連携元／最終同期）の行は、状態を空にして読み替える
       if (r[1] === 'WordPress会員') { r[1] = ''; r[2] = ''; r[5] = r[5] || ''; }
       index[email] = i;
     });
@@ -708,7 +699,6 @@ function syncWpMembersToSheet() {
       r[5] = now;
       r[6] = c.active ? '' : (c.reason || r[6] || '');
     });
-    // Brevoのリストから消えた会員も行は残し、状態だけ「リスト外」にする
     Object.keys(index).forEach(email => {
       if (seen[email]) return;
       const r = rows[index[email]];
@@ -720,7 +710,6 @@ function syncWpMembersToSheet() {
   } finally { lock.releaseLock(); }
 }
 
-// 実行すると同期トリガーを「6時間ごと」に作り直し、すぐ1回同期する（何回実行してもトリガーは1つ）
 function setupWpMemberSync() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'syncWpMembersToSheet')
@@ -729,7 +718,6 @@ function setupWpMemberSync() {
   syncWpMembersToSheet();
 }
 
-// 解約フォームなどでシートから外した人を、Brevo側でも配信停止にする（会員用リスト経由で届き続けないように）
 function brevoBlockEmail_(email) {
   const p = PropertiesService.getScriptProperties();
   if (p.getProperty('BREVO_ENABLED') !== 'true' || !p.getProperty('BREVO_API_KEY')) return false;
@@ -743,7 +731,6 @@ function brevoBlockEmail_(email) {
   }
   return true;
 }
-
 
 function brevoSnapshot_() {
   const config = brevoRequireEnabled_();
@@ -776,7 +763,6 @@ function brevoEnsureWorker_() {
 
 function brevoCancelPending_() {
   brevoJobs_().forEach(job => {
-    // Never erase uncertainty about a request already sent to Brevo.
     if (['QUEUED', 'PREPARING', 'READY', 'FAILED'].includes(job.state) && !job.sendAttempted) {
       job.state = 'CANCELLED'; job.note = 'GAS予約をキャンセルしました。'; brevoSave_(job);
     }
@@ -796,21 +782,18 @@ function brevoReserve_(when) {
       throw new Error('この記事の配信記録が既にあります。Brevo配信管理で確認してください。');
     }
     job = Object.assign(snapshot, {id: Utilities.getUuid(), at: when.toISOString(), state: 'QUEUED', cursor: 0});
-    // Validate size before cancelling the previous reservation.
     if (JSON.stringify(job).length > 43000) throw new Error('原稿・配信リストの合計サイズが大きすぎます。');
     brevoEnsureWorker_();
     brevoCancelPending_();
     brevoSave_(job);
     ScriptApp.newTrigger('scheduledBroadcast').timeBased().at(new Date(Math.max(Date.now() + 60000, when.getTime()))).create();
   } finally { lock.releaseLock(); }
-  // Preparation only. Dispatch is performed by the timer after the due time.
   brevoWorker(true);
   return job.id;
 }
 
 function brevoWorker(prepareOnly) {
   if (SCRIPT_PROPERTIES.getProperty('BREVO_ENABLED') !== 'true') return;
-  // Timer event objects must NOT be treated as prepareOnly=true.
   prepareOnly = prepareOnly === true;
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return;
@@ -824,7 +807,6 @@ function brevoWorker(prepareOnly) {
       catch (error) {
         job.note = error.message;
         if (['SENDING', 'ACCEPTED'].includes(job.state)) {
-          // Keep polling a known campaign. Do not issue another send request.
         } else if (job.state === 'CREATING') { job.state = 'REVIEW'; }
         else { job.state = 'FAILED'; }
         brevoSave_(job);
@@ -849,7 +831,6 @@ function brevoStep_(job, deadline, prepareOnly) {
   while (job.cursor < job.emails.length && Date.now() < deadline - 15000) {
     const email = job.emails[job.cursor];
     if (current.has(email)) {
-      // Omit emailBlacklisted: never explicitly re-subscribe blocked contacts.
       brevoApi_('post', '/contacts', {email: email, listIds: [job.listId], updateEnabled: true});
       Utilities.sleep(120);
     }
@@ -859,7 +840,7 @@ function brevoStep_(job, deadline, prepareOnly) {
   if (job.cursor < job.emails.length) { brevoSave_(job); return; }
   job.state = 'READY'; job.note = '原稿・読者の準備完了。予約時刻を待っています。'; brevoSave_(job);
   if (prepareOnly || Date.now() < new Date(job.at).getTime() || Date.now() > deadline - 15000) return;
-  // A form unsubscribe or manual list deletion since preparation must take effect.
+  
   const remaining = new Set(brevoEmails_());
   const removed = job.emails.filter(e => !remaining.has(e));
   for (let i = 0; i < removed.length; i += 100) {
@@ -867,10 +848,17 @@ function brevoStep_(job, deadline, prepareOnly) {
   }
   if (!job.emails.some(e => remaining.has(e))) throw new Error('予約対象者が全員配信リストから外れています。');
   job.state = 'CREATING'; brevoSave_(job);
+
+  const sendDate = job.at ? new Date(job.at) : new Date();
   const campaign = brevoApi_('post', '/emailCampaigns', {
-    name: '農業AI通信 ' + job.id, type: 'classic', subject: job.subject,
-    sender: {email: job.sender, name: job.senderName}, replyTo: OWNER_EMAIL,
-    htmlContent: brevoHtml_(job.html), recipients: {listIds: [job.listId]}
+    name: '農業AI通信 ' + job.id,
+    type: 'classic',
+    subject: job.subject,
+    sender: {email: job.sender, name: job.senderName},
+    replyTo: OWNER_EMAIL,
+    htmlContent: brevoHtml_(job.html, sendDate),
+    recipients: {listIds: [job.listId]},
+    utmCampaign: 'ai_guide_' + Utilities.formatDate(sendDate, AUTOMATION_TIMEZONE, "yyyyMMdd")
   });
   if (!campaign.id) throw new Error('キャンペーンIDが取得できませんでした。');
   job.campaignId = campaign.id;
@@ -880,17 +868,17 @@ function brevoStep_(job, deadline, prepareOnly) {
     brevoApi_('post', '/emailCampaigns/' + job.campaignId + '/sendNow');
     job.state = 'ACCEPTED'; job.note = 'Brevo受付済み。配信完了を確認中です。';
   } catch (error) {
-    // Even explicit API rejections are left for review; there is no blind retry.
     job.note = error.message + ' キャンペーンID=' + job.campaignId;
   }
   brevoSave_(job);
 }
 
-function brevoHtml_(html) {
-  if (!html.includes('{{ unsubscribe }}')) {
-    html += '<p><a href="{{ unsubscribe }}">農業AI通信の配信停止</a></p>';
+function brevoHtml_(html, sendDate = new Date()) {
+  let processedHtml = appendUtmParamsToAllLinks_(html, sendDate);
+  if (!processedHtml.includes('{{ unsubscribe }}')) {
+    processedHtml += '<p><a href="{{ unsubscribe }}">農業AI通信の配信停止</a></p>';
   }
-  return html;
+  return processedHtml;
 }
 
 function brevoReconcile_(job) {
@@ -899,7 +887,6 @@ function brevoReconcile_(job) {
     const stats = (campaign.statistics || {}).globalStats || {};
     job.sentCount = typeof stats.sent === 'number' ? stats.sent : '';
     job.deliveredCount = typeof stats.delivered === 'number' ? stats.delivered : '';
-    // Archive before marking SENT; the archive write itself is idempotent.
     brevoArchive_(job);
     job.state = 'SENT'; job.note = 'Brevo配信処理完了。到達状況はBrevoで確認してください。';
   } else if (campaign.status === 'suspended') {
@@ -922,7 +909,6 @@ function brevoArchive_(job) {
   SpreadsheetApp.flush();
 }
 
-// Menu command: read-only provider checks, never sendNow.
 function refreshBrevoStatus() {
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {

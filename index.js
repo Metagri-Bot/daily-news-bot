@@ -4513,7 +4513,7 @@ cron.schedule('0 6 * * *', async () => {
   // === 農業AI通信（月水金9:00 JST、未配信記事を1件ずつ） ===
 cron.schedule('0 9 * * 1,3,5', async () => {
       // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
-  if (aiGuideRunning) return;
+  if (process.env.DISABLE_AI_GUIDE === 'true' || aiGuideRunning) return;
   aiGuideRunning = true;
   let releaseRunLock = null;
   let skippedForLock = false;

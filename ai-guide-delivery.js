@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const DAY = 86400000;
 
 function canonicalUrl(raw) {
@@ -86,7 +87,9 @@ async function deliver({ state, items, now = Date.now(), recover, save, prepare,
     save(state);
   }
   if (!entry.discord) {
-    const sent = await send(entry.message);
+    // Shared identity also protects simultaneous sends from separate state volumes.
+    const nonce = crypto.createHash('sha256').update(url).digest('hex').slice(0, 25);
+    const sent = await send({ ...entry.message, nonce, enforceNonce: true });
     entry.discord = { messageId: sent.id, at: new Date(now).toISOString() };
     save(state);
     log(`[AI Guide] discord_sent url=${url} messageId=${sent.id}`);

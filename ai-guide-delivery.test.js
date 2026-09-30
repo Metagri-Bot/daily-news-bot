@@ -51,6 +51,17 @@ test('send failure leaves prepared work retryable and does not invoke GAS', asyn
   assert.equal(h.recorded.length, 0);
   assert.equal(h.args.state.articles[url('a')].discord, undefined);
 });
+
+test('separate ledgers and tracking URLs use the same enforced Discord nonce', async () => {
+  const first = harness(fresh(), { items: [item('a')] });
+  const second = harness(fresh(), { items: [{ ...item('a'), link: url('a') }] });
+  const third = harness(fresh(), { items: [item('b')] });
+  await deliver(first.args); await deliver(second.args); await deliver(third.args);
+  assert.equal(first.sent[0].enforceNonce, true);
+  assert.equal(first.sent[0].nonce.length, 25);
+  assert.equal(first.sent[0].nonce, second.sent[0].nonce);
+  assert.notEqual(first.sent[0].nonce, third.sent[0].nonce);
+});
 test('recovers delivered messages after process failure, and distinguishes legacy GAS status', async () => {
   const state = fresh(); discover(state, [item('prepared'), item('legacy')], now);
   state.articles[url('prepared')].payload = { url: url('prepared') };

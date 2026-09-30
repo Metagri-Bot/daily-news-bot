@@ -8,6 +8,7 @@ const { normalizeAiGuideResult } = require('../ai-guide-content');
 
 const cliArgs = process.argv.slice(2);
 const GAS_ONLY = cliArgs.includes('--gas-only');
+const DISCORD_ONLY = cliArgs.includes('--discord-only');
 const FORCE_OVERWRITE = cliArgs.includes('--force-overwrite');
 const TARGET_URL = cliArgs.find((arg) => !arg.startsWith('--')) || process.env.AI_GUIDE_TARGET_URL;
 const AI_GUIDE_CHANNEL_ID = process.env.AI_GUIDE_CHANNEL_ID || '952206763539714088';
@@ -269,9 +270,10 @@ async function logToGas(article, parsed) {
 }
 
 async function main() {
+  if (GAS_ONLY && DISCORD_ONLY) throw new Error('--gas-only and --discord-only cannot be used together');
   requireValue('AI_GUIDE_TARGET_URL or first argument', TARGET_URL);
   if (!GAS_ONLY) requireValue('DISCORD_BOT_TOKEN', DISCORD_BOT_TOKEN);
-  if (GAS_ONLY || FORCE_OVERWRITE) requireValue('AI_GUIDE_GAS_URL', process.env.AI_GUIDE_GAS_URL);
+  if ((GAS_ONLY || FORCE_OVERWRITE) && !DISCORD_ONLY) requireValue('AI_GUIDE_GAS_URL', process.env.AI_GUIDE_GAS_URL);
   requireValue('OPENAI_API_KEY', OPENAI_API_KEY);
   openai = new OpenAI({ apiKey: OPENAI_API_KEY });
   if (FORCE_OVERWRITE) console.warn('[AI Guide URL Post] --force-overwrite is advisory: the bundled AIGuideCode.gs always overwrites A1/A2.');
@@ -289,7 +291,11 @@ async function main() {
     console.log('[AI Guide URL Post] Discord skipped (--gas-only).');
   }
 
-  if (await logToGas(article, parsed)) console.log('[AI Guide URL Post] GAS logged.');
+  if (DISCORD_ONLY) {
+    console.log('[AI Guide URL Post] GAS skipped (--discord-only).');
+  } else if (await logToGas(article, parsed)) {
+    console.log('[AI Guide URL Post] GAS logged.');
+  }
 }
 
 main().catch((error) => {
