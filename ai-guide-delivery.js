@@ -71,36 +71,43 @@ async function recoverHistory(channel, botId, state, now) {
   throw new Error('Discord history scan incomplete; refusing to risk duplicate delivery');
 }
 
-async function deliver({ state, items, now = Date.now(), recover, save, prepare, send, record, log = console.log }) {
+async function deliver({ state, items, now = Date.now(), recover, save, prepare, send, record, result = {}, log = console.log }) {
+  result.discordUrl = null;
+  result.gasUrl = null;
   discover(state, items, now);
   await recover(state);
   save(state);
   const entries = Object.entries(state.articles).sort((a, b) => Date.parse(a[1].publishedAt) - Date.parse(b[1].publishedAt));
-  // Retry an unfinished GAS transfer before selecting another article: A1/A2 is a single draft slot.
-  const selected = entries.find(([, e]) => e.discord && !e.gas && e.payload) || entries.find(([, e]) => !e.discord);
-  if (!selected) { log('[AI Guide] No undelivered articles'); return null; }
-  const [url, entry] = selected;
-  if (!entry.payload) {
-    const prepared = await prepare({ ...entry, link: url, isoDate: entry.publishedAt, contentSnippet: entry.snippet });
-    entry.payload = prepared.payload;
-    entry.message = prepared.message;
-    save(state);
-  }
-  if (!entry.discord) {
+  // Discord has its own queue. A pending single-slot GAS draft must not block new posts.
+  const selected = entries.find(([, e]) => !e.discord);
+  if (selected) {
+    const [url, entry] = selected;
+    if (!entry.payload) {
+      const prepared = await prepare({ ...entry, link: url, isoDate: entry.publishedAt, contentSnippet: entry.snippet });
+      entry.payload = prepared.payload;
+      entry.message = prepared.message;
+      save(state);
+    }
     // Shared identity also protects simultaneous sends from separate state volumes.
     const nonce = crypto.createHash('sha256').update(url).digest('hex').slice(0, 25);
     const sent = await send({ ...entry.message, nonce, enforceNonce: true });
     entry.discord = { messageId: sent.id, at: new Date(now).toISOString() };
+    result.discordUrl = url;
     save(state);
     log(`[AI Guide] discord_sent url=${url} messageId=${sent.id}`);
   }
-  if (!entry.gas) {
+  // Keep GAS FIFO and attempt only one draft per run, including older pending work.
+  const pending = entries.find(([, e]) => e.discord && !e.gas && e.payload);
+  if (pending) {
+    const [url, entry] = pending;
     await record(entry.payload);
     entry.gas = { status: 'recorded', at: new Date(now).toISOString() };
     save(state);
+    result.gasUrl = url;
     log(`[AI Guide] gas_recorded url=${url}`);
   }
-  return url;
+  if (!result.discordUrl && !result.gasUrl) log('[AI Guide] No undelivered articles');
+  return result.discordUrl || result.gasUrl || null;
 }
 
 // Discordには出たがスプレッドシートへ転送できていない記事。legacy_unknown は台帳が

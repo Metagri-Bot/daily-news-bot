@@ -755,19 +755,22 @@ const sendMonitoringNotification = async (title, description, level = 'info', de
 // === 農業AI通信の実行レポート ===
 // Discord投稿とスプレッドシート転送は別々に失敗しうる。転送だけ落ちた状態は
 // 読み手からは見えないため、必ず通知に出す。
-const reportAiGuideRun = async (state, deliveredUrl, error) => {
+const reportAiGuideRun = async (state, deliveredUrl, error, result = {}) => {
   const pending = aiGuideDelivery.pendingGasTransfers(state);
   const pendingLines = pending.map(item => `${item.url}（${item.status}）`);
+  const discordStatus = result.discordUrl
+    ? `今回のDiscord投稿は完了しました。\n${result.discordUrl}\n`
+    : '今回のDiscord新規投稿はありません。\n';
   if (error?.code === 'AI_GUIDE_GAS_UNCERTAIN') {
     await sendMonitoringNotification('農業AI通信：転送の成否が確定できません',
-      '「原稿作成」A2 の記事URLを確認してください。最新記事のURLになっていれば転送は成功しています。\n' +
+      discordStatus + '「原稿作成」A2 の記事URLを確認してください。再送対象の記事URLになっていれば転送は成功しています。\n' +
       'その場合、次回実行で同じ記事をもう一度書き込みますが、同じ内容の上書きなので実害はありません。',
       'warn', [error.message, ...pendingLines].join('\n'));
     return;
   }
   if (error?.code === 'AI_GUIDE_GAS_BUSY') {
     await sendMonitoringNotification('農業AI通信：前回の原稿が未配信のため保留中です',
-      'Discordには投稿済みですが、「原稿作成」A1/A2 は前回の原稿が未配信のため上書きしていません。\n' +
+      discordStatus + '「原稿作成」A1/A2 は前回の原稿が未配信のため上書きしていません。\n' +
       '原稿を配信して「アーカイブ」に記録されると、次回実行で自動的に最新記事へ更新されます。' +
       `${pending.length ? `\n未転送=${pending.length}件` : ''}`,
       'warn', [error.message, ...pendingLines].join('\n'));
@@ -775,20 +778,20 @@ const reportAiGuideRun = async (state, deliveredUrl, error) => {
   }
   if (error) {
     await sendMonitoringNotification('農業AI通信の配信に失敗しました',
-      `Discord投稿またはスプレッドシート転送が完了していません。次回実行で再試行します。${pending.length ? `\n未転送=${pending.length}件` : ''}`,
+      discordStatus + `Discord投稿またはスプレッドシート転送が完了していません。次回実行で再試行します。${pending.length ? `\n未転送=${pending.length}件` : ''}`,
       'error', [error.message, ...pendingLines].join('\n'));
     return;
   }
   if (pending.length) {
     await sendMonitoringNotification('農業AI通信：スプレッドシート未転送の記事があります',
-      `Discordには投稿済みですが「原稿作成」への転送が完了していません（${pending.length}件）。\n` +
+      discordStatus + `「原稿作成」への転送が完了していません（${pending.length}件）。\n` +
       'status=legacy_unknown は台帳の再構築で転送済みか判定できなくなった記事で、放置すると自動では転送されません。',
       'warn', pendingLines.join('\n'));
     return;
   }
   await sendMonitoringNotification(
     deliveredUrl ? '農業AI通信を配信しました' : '農業AI通信：未配信の記事はありません',
-    deliveredUrl ? `Discord投稿とスプレッドシート転送が完了しました。\n${deliveredUrl}` : '新しい記事がないため何も配信していません。',
+    deliveredUrl ? discordStatus + `スプレッドシート転送が完了しました。\n${result.gasUrl || deliveredUrl}` : '新しい記事がないため何も配信していません。',
     'info');
 };
 
@@ -3816,9 +3819,160 @@ async function postChibaTenders() {
   }
 }
 
+const runAiGuideTask = async () => {
+      // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+  if (process.env.DISABLE_AI_GUIDE === 'true' || aiGuideRunning) return;
+  aiGuideRunning = true;
+  let releaseRunLock = null;
+  let skippedForLock = false;
+  let aiGuideState = null;
+  let aiGuideDelivered = null;
+  const aiGuideResult = {};
+  let aiGuideFailure = null;
+  try {
+    releaseRunLock = await acquireAiGuideRunLock(AI_GUIDE_RUN_LOCK_FILE);
+    if (!releaseRunLock) {
+      skippedForLock = true;
+      console.log('[AI Guide] 別プロセスが実行中のため、重複実行をスキップしました。');
+      return;
+    }
+    const channel = await client.channels.fetch(AI_GUIDE_CHANNEL_ID);
+    if (!channel || channel.type !== ChannelType.GuildText) throw new Error('AI Guide channel unavailable');
+    const response = await axios.get(AI_GUIDE_RSS_URL, { timeout: 15000, headers: { 'User-Agent': 'Metagri-AI-Guide/1.0' } });
+    const feed = await parser.parseString(response.data);
+    const state = aiGuideDelivery.loadState(AI_GUIDE_STATE_FILE);
+    aiGuideState = state;
+    const now = Date.now();
+    aiGuideDelivered = await aiGuideDelivery.deliver({
+      state, items: feed.items || [], now, result: aiGuideResult,
+      recover: current => aiGuideDelivery.recoverHistory(channel, client.user.id, current, now),
+      save: current => aiGuideDelivery.saveState(AI_GUIDE_STATE_FILE, current),
+      prepare: async article => {
+        let content = article.contentSnippet || '';
+        try {
+          const response = await axios.get(article.link, { timeout: 15000 });
+          const $ = cheerio.load(response.data);
+          $('script,style,nav,header,footer,.agri-rss-cta,.metagri-article-cta,.metagri-topoffer').remove();
+          for (const selector of ['.entry-content', '.post-content', 'article .content', '.article-content', 'main article']) {
+            const text = $(selector).text().replace(/\s+/g, ' ').trim();
+            if (text.length > 200) { content = text; break; }
+          }
+        } catch { console.warn('[AI Guide] Article fetch failed; using RSS excerpt'); }
+        let parsed = { summary: content.slice(0, 500) || '記事の詳細はリンクをご覧ください。' };
+        let aiSummary = false;
+        if (OPENAI_API_KEY && content) {
+          try {
+        const systemPrompt = `あなたは農業とAI技術に詳しい専門家です。
+以下の本文に「書かれていることだけ」に基づいて要約してください。
+
+【厳守ルール】
+- 本文にない固有名詞・数値・制度名・製品名は作らない
+- 不明な場合は推測せず "不明" と書く
+- 断定は本文が断定している場合のみ。基本は「〜の可能性があります」「〜が有効な場合があります」
+- JSON以外は一切出力しない
+- evidence は重要度の高いものを原則2件、最大2件に絞る
+- evidence は単独で読んでも意味が分かる発言・事実を選び、数値や数量だけの項目（例: "約9000坪"）は含めない
+- evidence の文字列には外側の括弧・引用符（「」『』など）を付けない
+
+【出力JSON形式】
+{
+  "summary": "3〜4文の要約（農業従事者向け）",
+  "keyPoints": ["要点1", "要点2", "要点3"],
+  "actionable": "実践のヒント（1文・提案口調）",
+  "facts": ["本文から直接確認できた事実1", "事実2"],
+  "evidence": ["本文抜粋1", "本文抜粋2"]
+}`;
+            const completion = await openai.chat.completions.create(buildJsonCompletionParams({
+              model: DEFAULT_OPENAI_MODEL,
+              messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: `タイトル: ${article.title}\n\n本文: ${content.slice(0, 6000)}` }],
+              maxTokens: 2048
+            }));
+            const raw = completion.choices[0].message.content;
+            parsed = normalizeAiGuideResult(JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)));
+            aiSummary = true;
+          } catch (error) { console.warn('[AI Guide] AI summary failed; using excerpt:', error.message); }
+        }
+        const slug = new URL(article.link).pathname.split('/').filter(Boolean).pop();
+        const embed = new EmbedBuilder().setColor(0x2ECC71)
+          .setTitle(`🌾 ${article.title}`.slice(0, 256))
+          .setURL(addDiscordUtm(article.link, 'ai_guide', slug))
+          .setDescription(`${aiSummary ? '※AI要約です。正確な情報は原文をご確認ください。' : '※記事本文からの抜粋です。'}\n\n${parsed.summary || ''}`.slice(0, 2500))
+          .setFooter({ text: '農業AI通信 | metagri-labo.com' }).setTimestamp(new Date(article.isoDate));
+        const addField = (name, value) => { if (value) embed.addFields({ name, value: value.slice(0, 900) }); };
+        addField('📊 本文が伝える具体的な事実', (parsed.facts || []).map(f => `・${f}`).join('\n'));
+        addField('💡 明日から使えるヒント', parsed.actionable || '');
+        addField('🧾 記事中の注目キーワード・発言', (parsed.evidence || []).map(e => `「${e}」`).join('\n'));
+        return {
+          message: { content: '### 📡 農業AI通信 - 本日のピックアップ', embeds: [embed.toJSON()], allowedMentions: { parse: [] } },
+          payload: { type: 'aiGuide', title: article.title, url: article.link, summary: parsed.summary || '',
+            keyPoints: (parsed.keyPoints || []).join('\n'), facts: (parsed.facts || []).join('\n'),
+            actionable: parsed.actionable || '', evidence: (parsed.evidence || []).join('\n'), articleDate: article.isoDate }
+        };
+      },
+      send: message => channel.send(message),
+      record: async payload => {
+        if (!process.env.AI_GUIDE_GAS_URL) throw new Error('AI_GUIDE_GAS_URL missing; transfer remains pending');
+        // GAS側の doPost は lock.waitLock(30000) で最大30秒待つ。15秒で切ると
+        // 処理が正常でも必ず手前でタイムアウトする。ロック待ち＋処理時間を見込む。
+        const post = () => axios.post(process.env.AI_GUIDE_GAS_URL, payload,
+          { timeout: 45000, headers: { 'Content-Type': 'application/json' } });
+        // GASは doPost の実行後、script.googleusercontent.com へのリダイレクト経由で応答を返す。
+        // シートへの書き込みが終わっていても、この応答の取得だけが404などで失敗することがある
+        // （2026-09-18に実測）。同じ記事の再送は同じ内容の上書きなので、一度だけやり直す。
+        let response;
+        let transportFailure = null;
+        try {
+          response = await post();
+        } catch (error) {
+          transportFailure = error;
+          console.warn(`[AI Guide] GAS応答の取得に失敗しました（${error.message}）。書き込み済みの可能性があるため1回だけ再送します。`);
+          try { response = await post(); }
+          catch (retryError) { throw new Error(`GAS転送に失敗しました（再送も失敗）: ${retryError.message}`); }
+        }
+        // 本番のGASは「現在の原稿が未配信のうちは上書きしない」ガードを持ち、status='busy' を返す。
+        // これは障害ではなく意図的な待避なので、失敗と同じ扱いにすると原因を取り違える。
+        if (response.data?.status === 'busy') {
+          // 直前の応答取得に失敗していた場合、このbusyは自分の書き込みが原因かもしれず、
+          // 他人の未配信原稿と区別できない。人がA2を見るまで転送済みと断定しない。
+          const busy = new Error(transportFailure
+            ? `応答取得に失敗した直後にbusyが返りました。自分の書き込みが成功している可能性があります。「原稿作成」A2 の記事URLを確認してください（初回の失敗: ${transportFailure.message}）`
+            : `前回の原稿が未配信のため転送を保留しました（${response.data.message || 'busy'}）`);
+          busy.code = transportFailure ? 'AI_GUIDE_GAS_UNCERTAIN' : 'AI_GUIDE_GAS_BUSY';
+          throw busy;
+        }
+        if (response.data?.status !== 'success') throw new Error('GAS did not confirm success; transfer remains pending');
+      }
+    });
+  } catch (error) { aiGuideFailure = error; console.error('[AI Guide] Delivery failed:', error.message); }
+  finally {
+    aiGuideRunning = false;
+    try { await releaseRunLock?.(); }
+    catch (lockError) { console.error('[AI Guide] 実行ロックの解除に失敗しました:', lockError.message); }
+    // 監視通知の失敗でタスク本体を落とさない。
+    try { if (!skippedForLock) await reportAiGuideRun(aiGuideState, aiGuideDelivered, aiGuideFailure, aiGuideResult); }
+    catch (reportError) { console.error('[AI Guide] 実行レポートの送信に失敗しました:', reportError.message); }
+  }
+  return { result: aiGuideResult, error: aiGuideFailure, skipped: skippedForLock };
+};
+
 // Botが起動したときの処理
 client.once('clientReady', async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
+  if (process.env.AI_GUIDE_RUN_ONCE === 'true') {
+    try {
+      if (process.env.DISABLE_AI_GUIDE === 'true') throw new Error('AI Guide delivery is disabled');
+      const outcome = await runAiGuideTask();
+      console.log('[AI Guide] One-shot result:', JSON.stringify(outcome?.result || {}));
+      if (!outcome || outcome.skipped || outcome.error) process.exitCode = 1;
+    } catch (error) {
+      console.error('[AI Guide] One-shot failed:', error.message);
+      process.exitCode = 1;
+    } finally {
+      client.destroy();
+    }
+    return;
+  }
+
 
   // ▼▼▼ この行を追加 ▼▼▼
   await syncPostedUrlsFromSheet();
@@ -4511,139 +4665,7 @@ cron.schedule('0 6 * * *', async () => {
   });
 
   // === 農業AI通信（月水金9:00 JST、未配信記事を1件ずつ） ===
-cron.schedule('0 9 * * 1,3,5', async () => {
-      // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
-  if (process.env.DISABLE_AI_GUIDE === 'true' || aiGuideRunning) return;
-  aiGuideRunning = true;
-  let releaseRunLock = null;
-  let skippedForLock = false;
-  let aiGuideState = null;
-  let aiGuideDelivered = null;
-  let aiGuideFailure = null;
-  try {
-    releaseRunLock = await acquireAiGuideRunLock(AI_GUIDE_RUN_LOCK_FILE);
-    if (!releaseRunLock) {
-      skippedForLock = true;
-      console.log('[AI Guide] 別プロセスが実行中のため、重複実行をスキップしました。');
-      return;
-    }
-    const channel = await client.channels.fetch(AI_GUIDE_CHANNEL_ID);
-    if (!channel || channel.type !== ChannelType.GuildText) throw new Error('AI Guide channel unavailable');
-    const response = await axios.get(AI_GUIDE_RSS_URL, { timeout: 15000, headers: { 'User-Agent': 'Metagri-AI-Guide/1.0' } });
-    const feed = await parser.parseString(response.data);
-    const state = aiGuideDelivery.loadState(AI_GUIDE_STATE_FILE);
-    aiGuideState = state;
-    const now = Date.now();
-    aiGuideDelivered = await aiGuideDelivery.deliver({
-      state, items: feed.items || [], now,
-      recover: current => aiGuideDelivery.recoverHistory(channel, client.user.id, current, now),
-      save: current => aiGuideDelivery.saveState(AI_GUIDE_STATE_FILE, current),
-      prepare: async article => {
-        let content = article.contentSnippet || '';
-        try {
-          const response = await axios.get(article.link, { timeout: 15000 });
-          const $ = cheerio.load(response.data);
-          $('script,style,nav,header,footer,.agri-rss-cta,.metagri-article-cta,.metagri-topoffer').remove();
-          for (const selector of ['.entry-content', '.post-content', 'article .content', '.article-content', 'main article']) {
-            const text = $(selector).text().replace(/\s+/g, ' ').trim();
-            if (text.length > 200) { content = text; break; }
-          }
-        } catch { console.warn('[AI Guide] Article fetch failed; using RSS excerpt'); }
-        let parsed = { summary: content.slice(0, 500) || '記事の詳細はリンクをご覧ください。' };
-        let aiSummary = false;
-        if (OPENAI_API_KEY && content) {
-          try {
-        const systemPrompt = `あなたは農業とAI技術に詳しい専門家です。
-以下の本文に「書かれていることだけ」に基づいて要約してください。
-
-【厳守ルール】
-- 本文にない固有名詞・数値・制度名・製品名は作らない
-- 不明な場合は推測せず "不明" と書く
-- 断定は本文が断定している場合のみ。基本は「〜の可能性があります」「〜が有効な場合があります」
-- JSON以外は一切出力しない
-- evidence は重要度の高いものを原則2件、最大2件に絞る
-- evidence は単独で読んでも意味が分かる発言・事実を選び、数値や数量だけの項目（例: "約9000坪"）は含めない
-- evidence の文字列には外側の括弧・引用符（「」『』など）を付けない
-
-【出力JSON形式】
-{
-  "summary": "3〜4文の要約（農業従事者向け）",
-  "keyPoints": ["要点1", "要点2", "要点3"],
-  "actionable": "実践のヒント（1文・提案口調）",
-  "facts": ["本文から直接確認できた事実1", "事実2"],
-  "evidence": ["本文抜粋1", "本文抜粋2"]
-}`;
-            const completion = await openai.chat.completions.create(buildJsonCompletionParams({
-              model: DEFAULT_OPENAI_MODEL,
-              messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: `タイトル: ${article.title}\n\n本文: ${content.slice(0, 6000)}` }],
-              maxTokens: 2048
-            }));
-            const raw = completion.choices[0].message.content;
-            parsed = normalizeAiGuideResult(JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)));
-            aiSummary = true;
-          } catch (error) { console.warn('[AI Guide] AI summary failed; using excerpt:', error.message); }
-        }
-        const slug = new URL(article.link).pathname.split('/').filter(Boolean).pop();
-        const embed = new EmbedBuilder().setColor(0x2ECC71)
-          .setTitle(`🌾 ${article.title}`.slice(0, 256))
-          .setURL(addDiscordUtm(article.link, 'ai_guide', slug))
-          .setDescription(`${aiSummary ? '※AI要約です。正確な情報は原文をご確認ください。' : '※記事本文からの抜粋です。'}\n\n${parsed.summary || ''}`.slice(0, 2500))
-          .setFooter({ text: '農業AI通信 | metagri-labo.com' }).setTimestamp(new Date(article.isoDate));
-        const addField = (name, value) => { if (value) embed.addFields({ name, value: value.slice(0, 900) }); };
-        addField('📊 本文が伝える具体的な事実', (parsed.facts || []).map(f => `・${f}`).join('\n'));
-        addField('💡 明日から使えるヒント', parsed.actionable || '');
-        addField('🧾 記事中の注目キーワード・発言', (parsed.evidence || []).map(e => `「${e}」`).join('\n'));
-        return {
-          message: { content: '### 📡 農業AI通信 - 本日のピックアップ', embeds: [embed.toJSON()], allowedMentions: { parse: [] } },
-          payload: { type: 'aiGuide', title: article.title, url: article.link, summary: parsed.summary || '',
-            keyPoints: (parsed.keyPoints || []).join('\n'), facts: (parsed.facts || []).join('\n'),
-            actionable: parsed.actionable || '', evidence: (parsed.evidence || []).join('\n'), articleDate: article.isoDate }
-        };
-      },
-      send: message => channel.send(message),
-      record: async payload => {
-        if (!process.env.AI_GUIDE_GAS_URL) throw new Error('AI_GUIDE_GAS_URL missing; transfer remains pending');
-        // GAS側の doPost は lock.waitLock(30000) で最大30秒待つ。15秒で切ると
-        // 処理が正常でも必ず手前でタイムアウトする。ロック待ち＋処理時間を見込む。
-        const post = () => axios.post(process.env.AI_GUIDE_GAS_URL, payload,
-          { timeout: 45000, headers: { 'Content-Type': 'application/json' } });
-        // GASは doPost の実行後、script.googleusercontent.com へのリダイレクト経由で応答を返す。
-        // シートへの書き込みが終わっていても、この応答の取得だけが404などで失敗することがある
-        // （2026-09-18に実測）。同じ記事の再送は同じ内容の上書きなので、一度だけやり直す。
-        let response;
-        let transportFailure = null;
-        try {
-          response = await post();
-        } catch (error) {
-          transportFailure = error;
-          console.warn(`[AI Guide] GAS応答の取得に失敗しました（${error.message}）。書き込み済みの可能性があるため1回だけ再送します。`);
-          try { response = await post(); }
-          catch (retryError) { throw new Error(`GAS転送に失敗しました（再送も失敗）: ${retryError.message}`); }
-        }
-        // 本番のGASは「現在の原稿が未配信のうちは上書きしない」ガードを持ち、status='busy' を返す。
-        // これは障害ではなく意図的な待避なので、失敗と同じ扱いにすると原因を取り違える。
-        if (response.data?.status === 'busy') {
-          // 直前の応答取得に失敗していた場合、このbusyは自分の書き込みが原因かもしれず、
-          // 他人の未配信原稿と区別できない。人がA2を見るまで転送済みと断定しない。
-          const busy = new Error(transportFailure
-            ? `応答取得に失敗した直後にbusyが返りました。自分の書き込みが成功している可能性があります。「原稿作成」A2 の記事URLを確認してください（初回の失敗: ${transportFailure.message}）`
-            : `前回の原稿が未配信のため転送を保留しました（${response.data.message || 'busy'}）`);
-          busy.code = transportFailure ? 'AI_GUIDE_GAS_UNCERTAIN' : 'AI_GUIDE_GAS_BUSY';
-          throw busy;
-        }
-        if (response.data?.status !== 'success') throw new Error('GAS did not confirm success; transfer remains pending');
-      }
-    });
-  } catch (error) { aiGuideFailure = error; console.error('[AI Guide] Delivery failed:', error.message); }
-  finally {
-    aiGuideRunning = false;
-    try { await releaseRunLock?.(); }
-    catch (lockError) { console.error('[AI Guide] 実行ロックの解除に失敗しました:', lockError.message); }
-    // 監視通知の失敗でタスク本体を落とさない。
-    try { if (!skippedForLock) await reportAiGuideRun(aiGuideState, aiGuideDelivered, aiGuideFailure); }
-    catch (reportError) { console.error('[AI Guide] 実行レポートの送信に失敗しました:', reportError.message); }
-  }
-}, { timezone: 'Asia/Tokyo', noOverlap: true });
+cron.schedule('0 9 * * 1,3,5', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverlap: true });
 
   // === 官公庁・自治体 公募モニタータスク（平日7:30 JST） ===
   cron.schedule(PUBLIC_OPPORTUNITY_CRON, async () => {

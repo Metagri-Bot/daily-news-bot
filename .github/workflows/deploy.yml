@@ -5,6 +5,10 @@ on:
     branches: [ "main" ] # mainブランチにプッシュされたときに実行
   workflow_dispatch: # 手動でも実行できるようにする
     inputs:
+      send_ai_guide_once:
+        description: '農業AI通信を今すぐ1回配信（本番台帳・Discord履歴で重複抑止）'
+        type: boolean
+        default: false
       send_farm_partner_once:
         description: '農家・食品パートナー案件を今すぐ1回収集・配信（履歴で重複抑止）'
         type: boolean
@@ -91,6 +95,12 @@ jobs:
           # 4. SSH経由でサーバーにDocker Composeコマンドを送信してデプロイ
       - name: Deploy with Docker Compose
         run: docker compose up --build -d
+        env:
+          DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
+
+      - name: Send AI Guide once
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_ai_guide_once }}
+        run: docker compose exec -T -e AI_GUIDE_RUN_ONCE=true app node index.js
         env:
           DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
 

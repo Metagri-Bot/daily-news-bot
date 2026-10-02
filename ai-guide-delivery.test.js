@@ -35,16 +35,47 @@ test('delivers oldest first, one draft per run, then next item without duplicate
   assert.equal(await deliver(h.args), null);
   assert.equal(h.sent.length, 2); assert.equal(h.recorded.length, 2);
 });
-test('GAS failure retries transfer without reposting Discord or overwriting with a new article', async () => {
+test('GAS recovery retries the older draft while delivering the next Discord article', async () => {
   let fail = true;
-  const h = harness(fresh(), { items: [item('new', 1), item('old', 4)], record: async () => { if (fail) throw new Error('GAS unavailable'); } });
+  const result = {};
+  const attempted = [];
+  const h = harness(fresh(), { result, items: [item('new', 1), item('old', 4)], record: async p => { attempted.push(p.url); if (fail) throw new Error('GAS unavailable'); } });
   await assert.rejects(deliver(h.args), /GAS unavailable/);
   assert.equal(h.sent.length, 1);
   fail = false;
-  assert.equal(await deliver(h.args), url('old'));
-  assert.equal(h.sent.length, 1);
   assert.equal(await deliver(h.args), url('new'));
+  assert.equal(h.sent.length, 2);
+  assert.equal(result.discordUrl, url('new'));
+  assert.equal(result.gasUrl, url('old'));
+  assert.deepEqual(attempted, [url('old'), url('old')]);
+  assert.equal(await deliver(h.args), url('new'));
+  assert.equal(h.sent.length, 2);
+  assert.equal(result.discordUrl, null);
+  assert.equal(result.gasUrl, url('new'));
+  assert.equal(await deliver(h.args), null);
 });
+
+for (const code of ['AI_GUIDE_GAS_BUSY', 'AI_GUIDE_GAS_UNCERTAIN', 'ETIMEDOUT']) {
+  test(`${code} never blocks new Discord posts and keeps GAS FIFO across restart`, async () => {
+    const h = harness(fresh(), { result: {}, items: [item('new', 1), item('old', 4)],
+      record: async () => { const error = new Error(code); error.code = code; throw error; } });
+    await assert.rejects(deliver(h.args), { code });
+    // Simulate loading the persisted ledger in a fresh process.
+    h.args.state = JSON.parse(JSON.stringify(h.args.state));
+    await assert.rejects(deliver(h.args), { code });
+    assert.equal(h.sent.length, 2);
+    assert.equal(h.args.result.discordUrl, url('new'));
+    assert.equal(h.args.result.gasUrl, null);
+    assert.deepEqual(pendingGasTransfers(h.args.state, now).map(e => e.url), [url('old'), url('new')]);
+    await assert.rejects(deliver(h.args), { code });
+    assert.equal(h.sent.length, 2);
+    h.args.record = async p => h.recorded.push(p.url);
+    await deliver(h.args);
+    await deliver(h.args);
+    assert.deepEqual(h.recorded, [url('old'), url('new')]);
+    assert.equal(h.sent.length, 2);
+  });
+}
 test('send failure leaves prepared work retryable and does not invoke GAS', async () => {
   const h = harness(fresh(), { items: [item('a')], send: async () => { throw new Error('send failed'); } });
   await assert.rejects(deliver(h.args), /send failed/);
