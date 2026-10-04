@@ -4664,8 +4664,8 @@ cron.schedule('0 6 * * *', async () => {
     timezone: "Asia/Tokyo"
   });
 
-  // === 農業AI通信（月水金9:00 JST、未配信記事を1件ずつ） ===
-cron.schedule('0 9 * * 1,3,5', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverlap: true });
+  // === 農業AI通信（月木9:00 JST、未配信記事を1件ずつ） ===
+cron.schedule('0 9 * * 1,4', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverlap: true });
 
   // === 官公庁・自治体 公募モニタータスク（平日7:30 JST） ===
   cron.schedule(PUBLIC_OPPORTUNITY_CRON, async () => {
@@ -4762,7 +4762,7 @@ cron.schedule('0 9 * * 1,3,5', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverl
   console.log('- Roblox News Digest: 7:00 JST');
   console.log('- AgriTech Book Recommendation: 10:00 JST');
   console.log('- Popular Book Recommendation: 10:10 JST');
-  console.log('- AI Guide (農業AI通信): Mon/Wed/Fri 9:00 JST');
+  console.log('- AI Guide (農業AI通信): Mon/Thu 9:00 JST');
   console.log(`- Public Opportunity Monitor: ${PUBLIC_OPPORTUNITY_CRON} JST`);
   console.log(`- Chiba Tender Radar: ${CHIBA_TENDER_CRON} JST`);
 }); 
