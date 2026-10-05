@@ -179,9 +179,9 @@ GASだけへ手動転記する場合は `node scripts/post-ai-guide-url.js <URL>
 - 臨時配信はGitHub Actionsの「Deploy Daily News Bot」で `send_ai_guide_once` を有効にして実行できます。本番コンテナの台帳・実行ロック・Discord履歴を使って定期配信と同じ処理を1回実行します。`AI_GUIDE_RUN_ONCE=true node index.js` は他の定期ジョブを登録せず、農業AI通信の処理後に終了します。
 
 - 実行のたびに `MONITORING_WEBHOOK_URL` 経由でシステム稼働チャンネルへ1通送ります。配信成功・未配信なし＝info、**Discord投稿済みなのにスプレッドシートへ転送できていない記事が残っている＝warn**、例外＝error（スタックトレース付き）。内部報告先はニュースチャンネルと分けてください。
-- `status=legacy_unknown` は、台帳（`state/ai-guide-delivery.json`）が失われたあとDiscord履歴から復元した記事です。転送済みか判定できないため配信対象から外れ、**自動では二度と転送されません**。通知に出たら `node scripts/post-ai-guide-url.js <記事URL> --gas-only` で手動転記してください。
+- `status=legacy_unknown` はBotの転送台帳から完了履歴を確認できない記事です。実行時にGASの `aiGuideStatus` で「原稿作成」A2・「アーカイブ」と照合し、確認できたURLだけ転記済みに修復します。どちらにもない記事は未知のまま残し、必要に応じ `node scripts/post-ai-guide-url.js <記事URL> --gas-only` で手動転記してください。履歴だけの修復は `node scripts/reconcile-ai-guide-state.js`。Discord・メール・原稿は更新しません。
 - ローカル再現は `node scripts/diagnose-ai-guide.js`。モックGASとダミーDiscordで「正常」「GAS転送失敗」「台帳消失」の3パターンを再現します。外部ネットワーク・本番スプレッドシート・Discordには一切アクセスしません。`--state <台帳ファイル>` を付けると本番の台帳を読み、未転送の記事と手動転記コマンドを一覧します。
-- **`status: 'busy'` は障害ではありません**。本番のGASは「現在の原稿が未配信のうちは A1/A2 を上書きしない」ガードを持ち、未配信の原稿が残っている間は `{"status":"busy"}` を返します。Botはこれを転送未完了として扱い、同じ記事をDiscordに再投稿せずに次回実行で転送を再試行し、その間も新着記事のDiscord投稿を続けます。**原稿を配信して「アーカイブ」シートに記録されると、次の実行で自動的に最新記事へ更新されます**（`aiGuideArchived_` が記事URLの有無で判定）。監視通知では error ではなく warn として「前回の原稿が未配信のため保留中」と出します。
+- **`status: 'busy'` は前回原稿のアーカイブ記録がない状態です。メール未配信とは限りません。** BotはGAS転記だけを次回再試行し、新着記事のDiscord投稿は続けます。Brevoが `SUSPENDED` でも実際の送信数が正の整数ならGASは実績をアーカイブし、次の記事への転記を許可します。停止状態は保持し、未送信・実績不明の原稿は保護します。自動再送はしません。停止案件は1時間ごとに再照合し、メニュー「6. Brevo配信状況を更新」でもGETで照合できます。
 - ⚠ **リポジトリの `AIGuideCode.gs` は本番のデプロイと一致していません**。リポジトリ側の `handleAiGuide` はこのガードを持たず、無条件に A1/A2 を上書きして `success` を返します。**このままリポジトリの内容でデプロイすると、未配信の原稿を消します。** 本番のコードをGASエディタからリポジトリへ取り込んでから編集してください。
 - **クライアント側のタイムアウトは45秒**。GAS側の `doPost` は `lock.waitLock(30000)` で最大30秒スクリプトロックを待つため、それより短い設定だと処理が正常でも必ず手前で切れます（従来: Bot 15秒 / `post-ai-guide-url.js` 10秒）。`auto-mail.gs` も同じスクリプトロックを複数箇所で30秒待ちで取得するため、同一プロジェクトなら待ち合わせが発生します。
 - GAS接続の切り分けは `node scripts/check-ai-guide-gas.js`（`--timeout <ms>` で上限変更、GET疎通も併せて確認）。未知の `type` を送るのでGAS側は「Unknown request type」で弾き、**シートは書き換えません**。JSONが返ればURL・デプロイ・アクセス権はすべて正常と確定できます。`--send` を付けると実際にA1/A2をテスト内容で上書きします（現在の原稿は消えます）。

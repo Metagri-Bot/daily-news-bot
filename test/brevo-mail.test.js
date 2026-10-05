@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const autoMail = fs.readFileSync('auto-mail.gs', 'utf8');
+const autoMail = fs.readFileSync(process.env.BREVO_TEST_SOURCE || 'auto-mail.gs', 'utf8');
 // 本番の auto-mail.gs は Brevo 予約配信を統合済み。統合前の構成のときだけ BrevoMail.gs を足す
 const code = autoMail.includes('function brevoConfig_') ? autoMail : autoMail + '\n' + fs.readFileSync('BrevoMail.gs', 'utf8');
 
@@ -27,9 +27,10 @@ function harness(options = {}) {
           getValues: () => Array.from({length: nr}, (_, i) => Array.from({length: nc}, (_, j) => rows[r + i - 1]?.[c + j - 1] ?? '')),
           getValue: () => rows[r - 1]?.[c - 1] ?? '',
           setValues(values) { values.forEach((row, i) => { rows[r + i - 1] ||= []; row.forEach((v, j) => rows[r + i - 1][c + j - 1] = v); }); return range; },
-          setValue(v) { return range.setValues([[v]]); }, setBackground() { return range; }, setFontWeight() { return range; }
+          setValue(v) { return range.setValues([[v]]); }, setBackground() { return range; }, setFontWeight() { return range; },
+          setWrap() { return range; }, setVerticalAlignment() { return range; }
         }; return range;
-      }
+      }, setColumnWidth() {}
     };
   }
   const ss = {getSheetByName: name => data[name] ? sheet(name) : null,
@@ -38,8 +39,10 @@ function harness(options = {}) {
   const context = vm.createContext({Date, console: {log() {}, error() {}},
     PropertiesService: {getScriptProperties: () => ({getProperty: k => props[k] || null, setProperty: (k,v) => props[k] = v, deleteProperty: k => delete props[k]})},
     LockService: {getScriptLock: () => ({waitLock() {}, tryLock: () => true, releaseLock() {}})},
-    SpreadsheetApp: {getActiveSpreadsheet: () => ss, flush() {}, getUi: () => ({alert() {}})},
-    Utilities: {getUuid: () => 'job-' + nextId++, sleep() {}},
+    SpreadsheetApp: {getActiveSpreadsheet: () => ss, openById: () => ss, flush() {}, getUi: () => ({alert() {}})},
+    ContentService: {MimeType: {JSON: 'json'}, createTextOutput: text => ({text, setMimeType() { return this; }})},
+    Utilities: {getUuid: () => 'job-' + nextId++, sleep() {},
+      formatDate: date => new Date(date.getTime() + 9 * 3600000).toISOString().slice(0, 10).replace(/-/g, '')},
     ScriptApp: {getProjectTriggers: () => triggers.slice(), deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1),
       newTrigger(handler) { const t = {getHandlerFunction: () => handler}; const b = {timeBased: () => b, everyMinutes: () => b, everyHours: h => { t.hours = h; return b; }, at: () => b, create: () => {triggers.push(t);return t;}}; return b;}},
     GmailApp: {sendEmail() { throw new Error('Gmail must not be used'); }},
@@ -50,11 +53,12 @@ function harness(options = {}) {
       const custom = options.api?.(item, context);
       if (custom instanceof Error) throw custom;
       const result = custom || (path === '/contacts/lists' ? {body: {id: 10}} : path === '/emailCampaigns' ? {body: {id: 20}} :
-        path === '/emailCampaigns/20' ? {body: {status: options.remoteStatus || 'sent', statistics: {globalStats: {sent: 2, delivered: 1}}}} : {body: {}});
+        path.split('?')[0] === '/emailCampaigns/20' ? {body: {status: options.remoteStatus || 'sent', statistics: {globalStats: {sent: 2, delivered: 1}}}} : {body: {}});
       return {getResponseCode: () => result.status || 200, getContentText: () => JSON.stringify(result.body || {})};
     }}
   });
   vm.runInContext(code, context);
+  vm.runInContext(fs.readFileSync(process.env.AI_GUIDE_TEST_SOURCE || 'AIGuideCode.gs', 'utf8'), context);
   return {c: context, data, props, requests, triggers, jobs: () => context.brevoJobs_(),
     reserve: when => context.brevoReserve_(when || new Date(Date.now() - 1)),
     sends: () => requests.filter(r => r.path.endsWith('/sendNow'))};
@@ -157,6 +161,102 @@ test('archive recovery is idempotent and never causes resend', () => {
   const h = harness(); h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
   const job = h.jobs()[0]; job.state = 'ACCEPTED'; h.c.brevoSave_(job);
   h.c.brevoWorker(); assert.equal(h.data.アーカイブ.length, 2); assert.equal(h.sends().length, 1);
+});
+
+test('suspended campaign with real sends releases the next draft without declaring full delivery or resending', () => {
+  const h = harness({remoteStatus: 'suspended'});
+  h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
+  assert.equal(h.jobs()[0].state, 'SUSPENDED');
+  assert.equal(h.jobs()[0].deliveryRecorded, true);
+  assert.match(h.jobs()[0].note, /全員への配信完了を意味しません/);
+  assert.equal(h.data.アーカイブ[1][3], 2);
+  assert.equal(h.data.アーカイブ[1][7], 'suspended');
+  assert.equal(h.data.アーカイブ[1][8], 1);
+  const reply = h.c.handleAiGuide({url: 'https://metagri-labo.com/ai-guide/next/', summary: 'Next'});
+  assert.equal(JSON.parse(reply.text).status, 'success');
+  assert.equal(h.data.原稿作成[1][0], 'https://metagri-labo.com/ai-guide/next/');
+  h.c.brevoWorker(); h.c.refreshBrevoStatus();
+  assert.equal(h.data.アーカイブ.length, 2);
+  assert.equal(h.sends().length, 1);
+});
+
+for (const stats of [{sent: 0, delivered: 0}, {}, {sent: '144'}, {sent: -1}, {sent: 1.5}]) {
+  test(`suspended campaign without valid send evidence preserves the previous draft: ${JSON.stringify(stats)}`, () => {
+    const h = harness({api: r => r.path.startsWith('/emailCampaigns/20?')
+      ? {body: {status: 'suspended', statistics: {globalStats: stats}}} : null});
+    h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
+    assert.equal(h.jobs()[0].state, 'SUSPENDED');
+    assert.equal(h.data.アーカイブ, undefined);
+    const reply = JSON.parse(h.c.handleAiGuide({url: 'https://metagri-labo.com/ai-guide/next/'}).text);
+    assert.equal(reply.status, 'busy');
+    assert.equal(reply.currentUrl, 'https://metagri-labo.com/ai-guide/new/');
+    assert.equal(h.data.原稿作成[1][0], reply.currentUrl);
+    assert.equal(h.sends().length, 1);
+  });
+}
+
+test('suspended campaigns are polled hourly and recover to sent with one archive row and no sendNow', () => {
+  let status = 'suspended';
+  let stats = {sent: 0, delivered: 0};
+  const h = harness({api: r => r.path.startsWith('/emailCampaigns/20?')
+    ? {body: {status, statistics: {globalStats: stats}}} : null});
+  h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
+  const requestsBefore = h.requests.length;
+  h.c.brevoWorker(); assert.equal(h.requests.length, requestsBefore);
+  status = 'sent'; stats = {sent: 2, delivered: 2};
+  const job = h.jobs()[0]; job.lastCheckedAt = new Date(Date.now() - 3600001).toISOString(); h.c.brevoSave_(job);
+  h.c.brevoWorker();
+  assert.equal(h.jobs()[0].state, 'SENT');
+  assert.equal(h.data.アーカイブ[1][3], 2);
+  assert.equal(h.data.アーカイブ[1][8], 2);
+  h.c.refreshBrevoStatus();
+  assert.equal(h.data.アーカイブ.length, 2); assert.equal(h.sends().length, 1);
+  const checks = h.requests.filter(r => r.path.startsWith('/emailCampaigns/20?'));
+  assert.ok(checks.every(r => r.method === 'get' && r.path.includes('statistics=globalStats')));
+});
+
+test('archive upsert refreshes actual counts and preserves historical content, date, and missing counts', () => {
+  let stats = {sent: 1, delivered: 1};
+  const h = harness({api: r => r.path.startsWith('/emailCampaigns/20?')
+    ? {body: {status: 'suspended', statistics: {globalStats: stats}}} : null});
+  h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
+  const sentAt = h.data.アーカイブ[1][0]; h.data.アーカイブ[1][4] = 'Manually retained original';
+  stats = {sent: 2, delivered: 2}; h.c.refreshBrevoStatus();
+  assert.equal(h.data.アーカイブ.length, 2); assert.equal(h.data.アーカイブ[1][3], 2);
+  assert.equal(h.data.アーカイブ[1][0], sentAt); assert.equal(h.data.アーカイブ[1][4], 'Manually retained original');
+  stats = {}; h.c.refreshBrevoStatus();
+  assert.equal(h.data.アーカイブ[1][3], 2); assert.equal(h.data.アーカイブ[1][8], 2);
+});
+
+test('reconciliation failure keeps suspended state retryable and never sends again', () => {
+  let fail = false;
+  const h = harness({remoteStatus: 'suspended', api: r => fail && r.path.startsWith('/emailCampaigns/20?') ? {status: 503} : null});
+  h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
+  const job = h.jobs()[0]; job.lastCheckedAt = new Date(Date.now() - 3600001).toISOString(); h.c.brevoSave_(job);
+  fail = true; h.c.brevoWorker();
+  assert.equal(h.jobs()[0].state, 'SUSPENDED'); assert.equal(h.sends().length, 1);
+});
+
+test('archived article replay cannot replace the current draft; status inspection is read-only', () => {
+  const h = harness(); h.reserve(); h.c.brevoWorker(); h.c.brevoWorker();
+  h.c.handleAiGuide({url: 'https://metagri-labo.com/ai-guide/next/', summary: 'Next'});
+  const before = JSON.stringify(h.data); const requestsBefore = h.requests.length;
+  const replay = JSON.parse(h.c.handleAiGuide({url: 'https://metagri-labo.com/ai-guide/new/', summary: 'Old'}).text);
+  assert.equal(replay.disposition, 'archived');
+  const status = JSON.parse(h.c.handleAiGuideStatus({urls: ['https://metagri-labo.com/ai-guide/new/',
+    'https://metagri-labo.com/ai-guide/next/', 'https://metagri-labo.com/ai-guide/unknown/']}).text);
+  assert.deepEqual(status.articles.map(a => a.status), ['archived', 'recorded', 'unknown']);
+  assert.equal(JSON.stringify(h.data), before); assert.equal(h.requests.length, requestsBefore);
+  assert.throws(() => h.c.handleAiGuideStatus({urls: new Array(51).fill('x')}), /at most 50/);
+  assert.throws(() => h.c.handleAiGuideStatus({urls: ['https://evil.example/']}), /Invalid/);
+});
+
+test('standalone and integrated Brevo recovery functions stay identical', () => {
+  const standalone = fs.readFileSync('BrevoMail.gs', 'utf8');
+  for (const name of ['brevoWorker', 'brevoReconcile_', 'brevoArchive_']) {
+    const re = new RegExp('^function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm');
+    assert.equal(autoMail.match(re)[0].replace(/\r\n/g, '\n'), standalone.match(re)[0].replace(/\r\n/g, '\n'), name);
+  }
 });
 
 test('test preview goes only to owner through Brevo and does not reserve campaign', () => {

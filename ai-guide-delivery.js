@@ -71,12 +71,43 @@ async function recoverHistory(channel, botId, state, now) {
   throw new Error('Discord history scan incomplete; refusing to risk duplicate delivery');
 }
 
-async function deliver({ state, items, now = Date.now(), recover, save, prepare, send, record, result = {}, log = console.log }) {
+function reconcileGasTransfers(state, observations, now) {
+  let changed = 0;
+  for (const observation of Array.isArray(observations) ? observations : []) {
+    if (!observation || typeof observation !== 'object') continue;
+    const url = canonicalUrl(observation.url);
+    const entry = state.articles[url];
+    if (!entry?.discord || (entry.gas && entry.gas.status !== 'legacy_unknown')) continue;
+    if (!['archived', 'recorded'].includes(observation.status)) continue;
+    entry.gas = { status: 'recorded', at: new Date(now).toISOString(), reconciledFrom: observation.status };
+    changed++;
+  }
+  return changed;
+}
+
+async function deliver({ state, items, now = Date.now(), recover, save, prepare, send, record, inspect, result = {}, log = console.log }) {
   result.discordUrl = null;
   result.gasUrl = null;
   discover(state, items, now);
   await recover(state);
   save(state);
+  if (inspect) {
+    const urls = Object.entries(state.articles)
+      .filter(([, e]) => e.discord && (!e.gas || e.gas.status === 'legacy_unknown'))
+      .map(([url]) => url).slice(0, 50);
+    if (urls.length) {
+      try {
+        const observations = await inspect(urls);
+        const requested = new Set(urls);
+        const changed = reconcileGasTransfers(state,
+          (Array.isArray(observations) ? observations : []).filter(o => o && requested.has(canonicalUrl(o.url))), now);
+        if (changed) { save(state); log(`[AI Guide] gas_reconciled count=${changed}`); }
+      } catch (error) {
+        // 旧GASや照合APIの一時障害で、新規Discord投稿まで止めない。
+        log(`[AI Guide] GAS history reconciliation unavailable: ${error.message}`);
+      }
+    }
+  }
   const entries = Object.entries(state.articles).sort((a, b) => Date.parse(a[1].publishedAt) - Date.parse(b[1].publishedAt));
   // Discord has its own queue. A pending single-slot GAS draft must not block new posts.
   const selected = entries.find(([, e]) => !e.discord);
@@ -121,4 +152,4 @@ function pendingGasTransfers(state, now = Date.now()) {
     .map(([url, entry]) => ({ url, status: entry.gas?.status || 'pending', publishedAt: entry.publishedAt }));
 }
 
-module.exports = { canonicalUrl, loadState, saveState, discover, recoverHistory, deliver, pendingGasTransfers };
+module.exports = { canonicalUrl, loadState, saveState, discover, recoverHistory, deliver, pendingGasTransfers, reconcileGasTransfers };

@@ -769,9 +769,9 @@ const reportAiGuideRun = async (state, deliveredUrl, error, result = {}) => {
     return;
   }
   if (error?.code === 'AI_GUIDE_GAS_BUSY') {
-    await sendMonitoringNotification('農業AI通信：前回の原稿が未配信のため保留中です',
-      discordStatus + '「原稿作成」A1/A2 は前回の原稿が未配信のため上書きしていません。\n' +
-      '原稿を配信して「アーカイブ」に記録されると、次回実行で自動的に最新記事へ更新されます。' +
+    await sendMonitoringNotification('農業AI通信：前回原稿の配信記録がないため転記保留中です',
+      discordStatus + '前回原稿の「アーカイブ」記録を確認できないため、A1/A2を保護しています。\n' +
+      'Brevoで配信済みでも停止状態が残る場合があります。「6. Brevo配信状況を更新」で実績を照合してください。' +
       `${pending.length ? `\n未転送=${pending.length}件` : ''}`,
       'warn', [error.message, ...pendingLines].join('\n'));
     return;
@@ -3847,6 +3847,13 @@ const runAiGuideTask = async () => {
       state, items: feed.items || [], now, result: aiGuideResult,
       recover: current => aiGuideDelivery.recoverHistory(channel, client.user.id, current, now),
       save: current => aiGuideDelivery.saveState(AI_GUIDE_STATE_FILE, current),
+      inspect: async urls => {
+        if (!process.env.AI_GUIDE_GAS_URL) return [];
+        const response = await axios.post(process.env.AI_GUIDE_GAS_URL, { type: 'aiGuideStatus', urls },
+          { timeout: 45000, headers: { 'Content-Type': 'application/json' } });
+        if (response.data?.status !== 'success') throw new Error('GAS status endpoint unavailable');
+        return response.data.articles;
+      },
       prepare: async article => {
         let content = article.contentSnippet || '';
         try {
@@ -3936,7 +3943,7 @@ const runAiGuideTask = async () => {
           // 他人の未配信原稿と区別できない。人がA2を見るまで転送済みと断定しない。
           const busy = new Error(transportFailure
             ? `応答取得に失敗した直後にbusyが返りました。自分の書き込みが成功している可能性があります。「原稿作成」A2 の記事URLを確認してください（初回の失敗: ${transportFailure.message}）`
-            : `前回の原稿が未配信のため転送を保留しました（${response.data.message || 'busy'}）`);
+            : `前回原稿の配信記録を確認できないため転送を保留しました（${response.data.currentUrl || ''} ${response.data.message || 'busy'}）`);
           busy.code = transportFailure ? 'AI_GUIDE_GAS_UNCERTAIN' : 'AI_GUIDE_GAS_BUSY';
           throw busy;
         }

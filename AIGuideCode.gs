@@ -31,6 +31,11 @@ function doPost(e) {
     data.subscribe = data.subscribe || data.newsletter || 'はい';
     data.page_url  = data.page_url  || data.pageUrl    || '';
 
+    // 転送台帳の復旧用。記事URLの状態だけを返し、原稿・購読者情報は返さない。
+    if (data.type === 'aiGuideStatus') {
+      return handleAiGuideStatus(data);
+    }
+
     // --- 分岐1: 農業AI通信Bot (A1/A2 上書き) の場合 ---
     if (data.type === 'aiGuide') {
       return handleAiGuide(data);
@@ -145,6 +150,11 @@ function handleAiGuide(data) {
   const articleInfo = contentParts.join('\n').trim();
   const cleanUrl = aiGuideCanonicalUrl_(data.url);
   if (!cleanUrl) throw new Error('Invalid AI Guide article URL');
+  // 配信済み記事のリプレイで、現在の原稿を過去の記事に戻さない。
+  if (aiGuideArchived_(ss, cleanUrl)) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success', disposition: 'archived', url: cleanUrl }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   // 現在の原稿が未配信（アーカイブ未記録）なら上書きしない。
   // ただし同じ記事の再送だけは許可する。Botは応答の取得に失敗したときに再送するため、
   // ここで弾くと「書き込みは成功したのに失敗扱い」になり、同じ記事で足踏みする。
@@ -152,7 +162,8 @@ function handleAiGuide(data) {
   const currentUrl = aiGuideCanonicalUrl_(sheet.getRange('A2').getValue());
   if (currentUrl && currentUrl !== cleanUrl && !aiGuideArchived_(ss, currentUrl)) {
     return ContentService
-      .createTextOutput(JSON.stringify({ status: 'busy', message: 'Current draft has not been mailed yet' }))
+      .createTextOutput(JSON.stringify({ status: 'busy', currentUrl: currentUrl,
+        message: 'Current draft has no delivery archive record' }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -162,6 +173,21 @@ function handleAiGuide(data) {
 
   return ContentService
     .createTextOutput(JSON.stringify({ status: 'success' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Bot台帳が消失した場合や手動転記後に、シートを正として履歴を照合する。
+function handleAiGuideStatus(data) {
+  if (!Array.isArray(data.urls) || data.urls.length > 50) throw new Error('urls must be an array of at most 50 article URLs');
+  const ss = SpreadsheetApp.openById('1FVcqS0Ze2bouVIqHpHger3WaU5x8TSYqqHk8ZKAhSEU');
+  const sheet = ss.getSheetByName('原稿作成');
+  const currentUrl = sheet ? aiGuideCanonicalUrl_(sheet.getRange('A2').getValue()) : '';
+  const articles = data.urls.map(raw => {
+    const url = aiGuideCanonicalUrl_(raw);
+    if (!url) throw new Error('Invalid AI Guide article URL');
+    return { url: url, status: aiGuideArchived_(ss, url) ? 'archived' : url === currentUrl ? 'recorded' : 'unknown' };
+  });
+  return ContentService.createTextOutput(JSON.stringify({ status: 'success', articles: articles }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

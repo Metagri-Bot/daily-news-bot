@@ -139,3 +139,27 @@ test('すべて転送済みなら未転送は0件', () => {
     publishedAt: new Date().toISOString(), discord: {}, gas: { status: 'recorded' } } } };
   assert.equal(pendingGasTransfers(state).length, 0);
 });
+
+test('sheet reconciliation clears legacy and manually staged transfers without replaying Discord or GAS', async () => {
+  const state = fresh(); discover(state, [item('legacy'), item('manual', 2)], now);
+  state.articles[url('legacy')].discord = {messageId: '1'};
+  state.articles[url('legacy')].gas = {status: 'legacy_unknown'};
+  state.articles[url('manual')].discord = {messageId: '2'};
+  state.articles[url('manual')].payload = {url: url('manual')};
+  const h = harness(state, {inspect: async urls => {
+    assert.deepEqual(urls, [url('legacy'), url('manual')]);
+    return [{url: url('legacy'), status: 'archived'}, {url: url('manual'), status: 'recorded'}];
+  }});
+  await deliver(h.args);
+  assert.equal(pendingGasTransfers(state, now).length, 0);
+  assert.equal(h.sent.length, 0); assert.equal(h.recorded.length, 0);
+  assert.equal(state.articles[url('legacy')].gas.reconciledFrom, 'archived');
+});
+
+test('unknown sheet status and unsupported old GAS preserve pending work and new Discord delivery', async () => {
+  for (const inspect of [async () => [{url: url('a'), status: 'unknown'}], async () => {throw new Error('Unknown request type');}]) {
+    const h = harness(fresh(), {items: [item('a')], inspect});
+    await deliver(h.args);
+    assert.equal(h.sent.length, 1); assert.equal(h.recorded.length, 1);
+  }
+});

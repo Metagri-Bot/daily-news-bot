@@ -738,11 +738,15 @@ const BREVO_ALERT_STATES = ['SUSPENDED', 'REVIEW', 'FAILED'];
 
 function brevoAlert_(job) {
   try {
-    if (BREVO_ALERT_STATES.indexOf(job.state) === -1 || job.alertedState === job.state) return;
+    const alertKey = job.state + ':' + (job.deliveryRecorded ? 'recorded' : 'unrecorded');
+    if (BREVO_ALERT_STATES.indexOf(job.state) === -1 || job.alertedKey === alertKey ||
+        (!job.alertedKey && job.alertedState === job.state && !job.deliveryRecorded)) return;
     const config = brevoConfig_();
     const report = job.campaignId ? 'https://app.brevo.com/marketing-reports/email/' + job.campaignId + '/overview' : '';
     const guide = {
-      SUSPENDED: 'Brevoが配信を「停止」にしました。届いていても、この状態ではアーカイブ転記・配信数の記録が自動で行われません。Brevoのレポートで到達数を確認し、アーカイブへ手動で転記してください。',
+      SUSPENDED: job.deliveryRecorded
+        ? '停止中ですが、確認できた送信実績をアーカイブに記録しました。次の記事は作成できます。全員への配信完了を意味しません。未送信者・停止理由はBrevoで確認してください。自動再送はしません。'
+        : 'Brevoで停止中です。送信実績を確認できないため、前回の原稿を保護しています。1時間ごとに状態と実績を再確認します。',
       REVIEW: 'キャンペーンが作られたかどうか不明です。二重送信を防ぐため自動再送していません。Brevoの「Campaigns」でこの予約IDのキャンペーンがあるか確認してください。',
       FAILED: '配信の準備または送信でエラーになりました。Brevoの残量・認証と、Brevo配信管理シートの「詳細」を確認してください。'
     }[job.state];
@@ -755,6 +759,7 @@ function brevoAlert_(job) {
       to: [{email: OWNER_EMAIL}], subject: '【要確認】メルマガ配信が ' + job.state + ' です｜' + String(job.subject || '').slice(0, 30),
       htmlContent: html});
     job.alertedState = job.state; // 同じ状態では再通知しない（保存される）
+    job.alertedKey = alertKey;
   } catch (e) {
     console.error('異常通知に失敗しました（配信処理には影響しません）: ' + e.message);
   }
@@ -967,11 +972,14 @@ function brevoWorker(prepareOnly) {
     brevoRequireEnabled_();
     for (const job of brevoJobs_()) {
       if (Date.now() > deadline) break;
-      if (BREVO_TERMINAL.includes(job.state)) continue;
+      // 停止案件は送信せず1時間ごとに照合する。配信後もsuspendedが残る場合がある。
+      if (BREVO_TERMINAL.includes(job.state) && job.state !== 'SUSPENDED') continue;
+      if (job.state === 'SUSPENDED' && (!job.campaignId ||
+          Date.now() - Date.parse(job.lastCheckedAt || '') < 3600000)) continue;
       try { brevoStep_(job, deadline, prepareOnly); }
       catch (error) {
         job.note = error.message;
-        if (['SENDING', 'ACCEPTED'].includes(job.state)) {
+        if (['SENDING', 'ACCEPTED', 'SUSPENDED'].includes(job.state)) {
         } else if (job.state === 'CREATING') { job.state = 'REVIEW'; }
         else { job.state = 'FAILED'; }
         brevoSave_(job);
@@ -982,7 +990,7 @@ function brevoWorker(prepareOnly) {
 }
 
 function brevoStep_(job, deadline, prepareOnly) {
-  if (['SENDING', 'ACCEPTED'].includes(job.state)) { brevoReconcile_(job); return; }
+  if (['SENDING', 'ACCEPTED', 'SUSPENDED'].includes(job.state)) { brevoReconcile_(job); return; }
   if (job.state === 'CREATING') {
     job.state = 'REVIEW'; job.note = 'キャンペーン作成結果が不明です。Brevoで予約IDを検索してください。';
     brevoSave_(job); return;
@@ -1047,15 +1055,32 @@ function brevoHtml_(html, sendDate = new Date()) {
 }
 
 function brevoReconcile_(job) {
-  const campaign = brevoApi_('get', '/emailCampaigns/' + job.campaignId);
+  job.lastCheckedAt = new Date().toISOString();
+  // 統計は明示指定する。未取得を「送信0件」と取り違えない。
+  const campaign = brevoApi_('get', '/emailCampaigns/' + job.campaignId + '?statistics=globalStats&excludeHtmlContent=true');
+  const stats = (campaign.statistics || {}).globalStats || {};
+  const validCount = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && Number.isInteger(n);
+  job.remoteStatus = String(campaign.status || 'unknown');
+  if (validCount(stats.sent)) job.sentCount = stats.sent;
+  else if (job.sentCount === undefined) job.sentCount = '';
+  if (validCount(stats.delivered)) job.deliveredCount = stats.delivered;
+  else if (job.deliveredCount === undefined) job.deliveredCount = '';
+  if (campaign.sentDate && Number.isFinite(Date.parse(campaign.sentDate))) job.sentAt = campaign.sentDate;
   if (campaign.status === 'sent') {
-    const stats = (campaign.statistics || {}).globalStats || {};
-    job.sentCount = typeof stats.sent === 'number' ? stats.sent : '';
-    job.deliveredCount = typeof stats.delivered === 'number' ? stats.delivered : '';
     brevoArchive_(job);
+    job.deliveryRecorded = true;
     job.state = 'SENT'; job.note = 'Brevo配信処理完了。到達状況はBrevoで確認してください。';
   } else if (campaign.status === 'suspended') {
-    job.state = 'SUSPENDED'; job.note = 'Brevoで配信停止中。残量・審査・停止理由を確認してください。';
+    job.state = 'SUSPENDED';
+    if (validCount(stats.sent) && stats.sent > 0) {
+      // 部分配信も記録する。全員配信済みとは判断せず、未送信者を自動再送しない。
+      brevoArchive_(job);
+      job.deliveryRecorded = true;
+      job.note = 'Brevoで停止中ですが送信実績' + stats.sent + '件をアーカイブに記録しました。' +
+        '全員への配信完了を意味しません。到達数・未送信者・停止理由はBrevoで確認してください。自動再送はしません。';
+    } else {
+      job.note = 'Brevoで配信停止中。送信実績を確認できないため原稿を保護しています。1時間ごとに再確認します。';
+    }
   } else {
     job.note = 'Brevo状態: ' + campaign.status + '。自動再送はしません。';
   }
@@ -1067,10 +1092,19 @@ function brevoArchive_(job) {
   let sheet = ss.getSheetByName('アーカイブ');
   if (!sheet) sheet = ss.insertSheet('アーカイブ');
   if (sheet.getLastRow() === 0) sheet.appendRow(['送信日時', '件名', '記事URL', '配信数', 'メルマガ本文', 'X投稿案']);
-  sheet.getRange(1, 7).setValue('BrevoキャンペーンID');
-  if (sheet.getLastRow() > 1 && sheet.getRange(2, 7, sheet.getLastRow() - 1, 1).getValues()
-    .some(r => String(r[0]) === String(job.campaignId))) return;
-  sheet.appendRow([new Date(), job.subject, job.url, job.sentCount, job.html, job.xPost, job.campaignId].map(brevoCell_));
+  sheet.getRange(1, 7, 1, 3).setValues([['BrevoキャンペーンID', 'Brevo状態', '到達数']]);
+  const ids = sheet.getLastRow() > 1 ? sheet.getRange(2, 7, sheet.getLastRow() - 1, 1).getValues() : [];
+  const at = ids.findIndex(r => String(r[0]) === String(job.campaignId));
+  if (at >= 0) {
+    // 同じキャンペーンの実績は更新する。既存の原稿・記録日時は保持する。
+    const row = at + 2;
+    if (job.sentCount !== '') sheet.getRange(row, 4).setValue(job.sentCount);
+    sheet.getRange(row, 8).setValue(job.remoteStatus || 'sent');
+    if (job.deliveredCount !== '') sheet.getRange(row, 9).setValue(job.deliveredCount);
+  } else {
+    sheet.appendRow([job.sentAt ? new Date(job.sentAt) : new Date(), job.subject, job.url,
+      job.sentCount, job.html, job.xPost, job.campaignId, job.remoteStatus || 'sent', job.deliveredCount].map(brevoCell_));
+  }
   SpreadsheetApp.flush();
 }
 

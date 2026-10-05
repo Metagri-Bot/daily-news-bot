@@ -98,6 +98,12 @@ jobs:
         env:
           DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
 
+      # 配信せず、手動転記や台帳復元後のGAS状態を本番stateボリュームに反映する。
+      - name: Reconcile AI Guide transfer ledger
+        run: docker compose exec -T app node scripts/reconcile-ai-guide-state.js
+        env:
+          DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
+
       - name: Send AI Guide once
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_ai_guide_once }}
         run: docker compose exec -T -e AI_GUIDE_RUN_ONCE=true app node index.js
