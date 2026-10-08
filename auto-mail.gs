@@ -49,6 +49,8 @@ function onOpen() {
     .addItem('7.5 週末ダイジェスト：選定済みの行の一言を作る', 'weeklyDigestBuildNow')
     .addItem('8. 週末ダイジェスト自動運転をONにする', 'setupWeeklyDigestTrigger')
     .addItem('9. 週末ダイジェスト自動運転をOFFにする', 'removeWeeklyDigestTrigger')
+    .addSeparator()
+    .addItem('10. 原稿作成トリガーを月・木に作り直す', 'repairWeekdayTestDraftTrigger')
     .addToUi();
 }
 
@@ -58,6 +60,13 @@ function onOpen() {
 function scheduledDailyDraft() {
   if (!isMondayThursdayTestDraftWindow_()) {
     console.log('scheduledDailyDraft skipped: outside Mon/Thu 09:00-10:59 JST window.');
+    // 2026-10-08 追加：コードだけ月・木に替えてトリガーを作り直し忘れると、旧トリガー（水・金）で
+    // 起動しては止まり、木曜は起動すらしない。月・木以外の日に起動した＝旧トリガーなので、その場で作り直す。
+    const dayOfWeek = Number(Utilities.formatDate(new Date(), AUTOMATION_TIMEZONE, 'u'));
+    if (TEST_DRAFT_WEEKDAYS.indexOf(dayOfWeek) === -1) {
+      setupWeekdayTestDraftTrigger();
+      console.log('scheduledDailyDraft: stale trigger detected; rebuilt Mon/Thu triggers.');
+    }
     return;
   }
 
@@ -72,7 +81,20 @@ function isMondayThursdayTestDraftWindow_() {
   const now = new Date();
   const dayOfWeek = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'u')); // Mon=1, Sun=7
   const hour = Number(Utilities.formatDate(now, AUTOMATION_TIMEZONE, 'H'));
-  return [1, 4].includes(dayOfWeek) && [9, 10].includes(hour);
+  return TEST_DRAFT_WEEKDAYS.includes(dayOfWeek) && [9, 10].includes(hour);
+}
+
+const TEST_DRAFT_WEEKDAYS = [1, 4]; // Mon=1, Thu=4（Botの農業AI通信 cron '0 9 * * 1,4' と揃える）
+
+/**
+ * 10. 原稿作成トリガーを月・木に作り直す（GASエディタを開かずにメニューから実行できる）
+ */
+function repairWeekdayTestDraftTrigger() {
+  setupWeekdayTestDraftTrigger();
+  const days = ScriptApp.getProjectTriggers()
+    .filter(function(t) { return t.getHandlerFunction() === 'scheduledDailyDraft'; }).length;
+  SpreadsheetApp.getUi().alert('原稿作成トリガーを作り直しました（' + days + '本：月・木 9:30頃）。\n' +
+    '今日の分が出ていない場合は「1. AIで下書き作成 & テスト送信」を手動で実行してください。');
 }
 
 function setupWeekdayTestDraftTrigger() {
