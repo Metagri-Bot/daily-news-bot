@@ -98,6 +98,13 @@ jobs:
         env:
           DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
 
+      - name: Verify deployed Node.js security release
+        run: |
+          docker compose exec -T app node -e "const v = process.versions.node; console.log('Deployed Node.js:', v); if (v !== '24.22.1') process.exit(1);"
+          docker compose ps --status running
+        env:
+          DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
+
       # 配信せず、手動転記や台帳復元後のGAS状態を本番stateボリュームに反映する。
       - name: Reconcile AI Guide transfer ledger
         run: docker compose exec -T app node scripts/reconcile-ai-guide-state.js
