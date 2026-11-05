@@ -89,23 +89,35 @@ function toJstTimestamp(date) {
 /** 添付・スタンプしか無い投稿で Content が空にならないよう、本文が空のときだけ補う */
 function buildContent(message) {
   const base = typeof message.content === 'string' ? message.content : '';
-  if (base.trim() !== '') return base;
+  const hasBase = base.trim() !== '';
 
   const notes = [];
-  const attachments = message.attachments;
-  const files = attachments && typeof attachments.values === 'function'
-    ? [...attachments.values()]
-    : Array.isArray(attachments) ? attachments : [];
-  files.forEach(file => notes.push(`[attachment] ${file.url || file.name || ''}`.trim()));
+  // 添付は本文が空のときだけ補う（本文があれば従来どおり本文のみ）
+  if (!hasBase) {
+    const attachments = message.attachments;
+    const files = attachments && typeof attachments.values === 'function'
+      ? [...attachments.values()]
+      : Array.isArray(attachments) ? attachments : [];
+    files.forEach(file => notes.push(`[attachment] ${file.url || file.name || ''}`.trim()));
+  }
 
+  // embed は本文の有無に関わらず拾う。bot（ニュース紹介など）は本文が見出し1行で、
+  // 記事タイトル・URL・要約が embed に入っているため（2026-11-06 取りこぼしの修正）。
+  // 本文に同じURLがある通常のリンクプレビューは重複なので除く。
   const embeds = Array.isArray(message.embeds) ? message.embeds : [];
   embeds.forEach(embed => {
     const title = embed?.title || embed?.data?.title;
     const url = embed?.url || embed?.data?.url;
-    if (title || url) notes.push(`[embed] ${[title, url].filter(Boolean).join(' ')}`);
+    const description = embed?.description || embed?.data?.description;
+    if (hasBase && url && base.includes(url)) return;
+    if (title || url) {
+      notes.push(`[embed] ${[title, url].filter(Boolean).join(' ')}`);
+      if (hasBase && description) notes.push(`[embed-description] ${String(description).replace(/\s+/g, ' ').trim().slice(0, 300)}`);
+    }
   });
 
-  return notes.join('\n');
+  if (!hasBase) return notes.join('\n');
+  return notes.length ? `${base}\n${notes.join('\n')}` : base;
 }
 
 /** discord.js の Message を、スプレッドシート1行ぶんの素直なオブジェクトへ落とす */

@@ -71,6 +71,24 @@ test('本文が空の投稿は添付・埋め込みで補われる', () => {
   assert.match(content, /\[embed\] 記事タイトル https:\/\/example\.com\/news/);
 });
 
+test('本文がある投稿でも embed のタイトル・URL・要約を補う（ニュースbot）', () => {
+  const content = buildContent({
+    content: '### 📡 農業AI通信 - 本日のピックアップ',
+    embeds: [{ title: '【第1回】記事タイトル', url: 'https://example.com/ai-guide/1', description: '要約\nテキスト' }]
+  });
+  assert.match(content, /^### 📡 農業AI通信/);
+  assert.match(content, /\[embed\] 【第1回】記事タイトル https:\/\/example\.com\/ai-guide\/1/);
+  assert.match(content, /\[embed-description\] 要約 テキスト/);
+});
+
+test('本文に同じURLがあるリンクプレビューは重複させない', () => {
+  const content = buildContent({
+    content: 'これ見て https://example.com/x',
+    embeds: [{ title: 'ページ', url: 'https://example.com/x', description: 'd' }]
+  });
+  assert.strictEqual(content, 'これ見て https://example.com/x');
+});
+
 test('カーソル以降だけを古い順に集め、100件超はページングする', async () => {
   const base = BigInt(snowflakeFromDate(new Date('2025-08-20T00:00:00Z')));
   const messages = [];
