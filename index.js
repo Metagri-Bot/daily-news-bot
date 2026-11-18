@@ -4736,7 +4736,7 @@ cron.schedule('0 9 * * 1,4', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverlap
     }
   }
 
-  // === 日誌素案（週次 / 既定 毎週金曜 6:00 JST） ===
+  // === 日誌素案（週次 / 既定 毎週木曜 6:00 JST） ===
   // 前日ぶんの生ログを、01_input/discord-log_YYYY-MM-DD.md と同じ形式のまま日誌素案チャンネルへ流す。
   // 要約や見解は入れない。日誌を書く人が素材をその場で読めるようにするのが目的なので、
   // 判断を挟むと「素案」でなく「下書き」になり、書く人の仕事を先に決めてしまう。
@@ -4745,7 +4745,7 @@ cron.schedule('0 9 * * 1,4', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverlap
   //   - Discord_Channel_Logスプレッドシートの実績と比べた件数の傾向
   // どちらも取れなければ黙って省く。ここで判断はしない。
   if (process.env.DISABLE_DIARY_DRAFT !== 'true') {
-    const schedule = process.env.DIARY_DRAFT_CRON || '0 6 * * 5';
+    const schedule = process.env.DIARY_DRAFT_CRON || '0 6 * * 4';
     if (!cron.validate(schedule)) throw new Error('Invalid DIARY_DRAFT_CRON');
     const targetChannelId = process.env.DIARY_DRAFT_CHANNEL_ID || '';
     const sourceChannelIds = (process.env.DIARY_DRAFT_SOURCE_CHANNEL_IDS || process.env.DISCORD_CHANNEL_LOG_CHANNEL_IDS || '')

@@ -11,7 +11,7 @@
  *   node scripts/run-diary-draft-once.js --to-channel 123456789               # 投稿先を一時的に上書き
  *   node scripts/run-diary-draft-once.js --dry-run --no-supplement           # 生ログのみ（補足なし）で確認
  *
- * 本番の毎週金曜ジョブと同じ経路（discord-day-digest.js）を通る。
+ * 本番の毎週木曜ジョブと同じ経路（discord-day-digest.js）を通る。
  * 補足（URLの実情報／過去比較）も本番と同じ設定で動く。過去比較は DISCORD_CHANNEL_LOG_GAS_URL が
  * 無ければ自動的に省かれる（エラーにはしない）。
  * ⚠ --dry-run を付けない限り、実行した時点でチャンネルへ投稿される。
