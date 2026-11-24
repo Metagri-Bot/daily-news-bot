@@ -12,6 +12,8 @@ const parser = new Parser();
 const axios = require('axios');
 const OpenAI = require('openai'); // OpenAI APIを使用する場合
 const { filterGlobalArticles } = require('./global-news-selection');
+const { recoverGlobalHistory } = require('./global-news-history');
+const { newsUrlKey } = require('./news-selection');
 const { selectNewsHeadlines } = require('./news-selection');
 const { getHeadlineFeedUrls, collectHeadlineFeeds, readHeadlineHistory } = require('./news-headline-feeds');
 const { recoverHeadlineHistory } = require('./news-headline-history');
@@ -3878,11 +3880,12 @@ cron.schedule('0 6 * * *', async () => {
 }, { timezone: 'Asia/Tokyo', noOverlap: true });
 
 // === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
-  // ※ ユーザーリクエストにより無効化（2025年）
-  if (false) {
   cron.schedule('10 10,19 * * *', async () => {
     // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
     console.log('[Global Research] 海外文献収集タスクを開始します...');
+
+    // 再開日は2026年11月25日（日本時間）。前日の臨時配信に続けて投稿しない。
+    if (Date.now() < Date.parse('2026-11-25T00:00:00+09:00')) return;
 
     if (!GLOBAL_RESEARCH_CHANNEL_ID || GLOBAL_RSS_FEEDS.length === 0) {
       console.log('[Global Research] チャンネルIDまたはRSSフィードが設定されていません。');
@@ -3895,6 +3898,11 @@ cron.schedule('0 6 * * *', async () => {
         console.error('[Global Research] 海外文献投稿用チャンネルが見つかりません。');
         return;
       }
+
+      const history = await recoverGlobalHistory(
+        async before => [...(await channel.messages.fetch({ limit: 100, before })).values()],
+        client.user.id
+      );
 
      // 海外RSSフィードから記事を取得 (ヘッダー強化版)
       let allGlobalArticles = [];
@@ -3929,7 +3937,10 @@ cron.schedule('0 6 * * *', async () => {
 
       const recentGlobalArticles = allGlobalArticles.filter(article => isNewsWithinFreshness(article));
 
-      const newGlobalArticles = recentGlobalArticles.filter(a => !postedGlobalArticleUrls.has(a.link));
+      const newGlobalArticles = recentGlobalArticles.filter(a => {
+        const key = newsUrlKey(a.link);
+        return key && !history.has(key) && !postedGlobalArticleUrls.has(key);
+      });
 
       if (newGlobalArticles.length === 0) {
         console.log('[Global Research] 新しい海外文献がありません。');
@@ -3985,7 +3996,6 @@ cron.schedule('0 6 * * *', async () => {
           .setTimestamp(new Date(original.isoDate || original.pubDate));
 
         embeds.push(embed);
-        postedGlobalArticleUrls.add(original.link);
       }
 
       let technicalTermsSection = '\n**📚 今回の専門用語解説**\n';
@@ -4003,6 +4013,7 @@ cron.schedule('0 6 * * *', async () => {
 
       // メッセージを送信
       await channel.send({ content: postContent, embeds: embeds });
+      for (const { original } of translatedArticles) postedGlobalArticleUrls.add(newsUrlKey(original.link));
       console.log(`[Global Research] ${translatedArticles.length}件の海外文献を投稿しました。`);
 
       // ログを記録
@@ -4023,9 +4034,8 @@ cron.schedule('0 6 * * *', async () => {
       console.error('[Global Research] タスク実行中にエラーが発生しました:', error);
     }
   }, {
-    timezone: "Asia/Tokyo"
+    timezone: "Asia/Tokyo", noOverlap: true
   }); // ← cron.schedule の閉じ括弧
-  } // if (false) の閉じ括弧
 
 
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
