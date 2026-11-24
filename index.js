@@ -3791,22 +3791,10 @@ client.once('clientReady', async () => {
         return;
       }
 
-      const allFeeds = [...NEWS_RSS_FEEDS_AGRICULTURE, ...NEWS_RSS_FEEDS_WEB3];
-      let allArticles = [];
-      // axiosでXMLを取得し、parser.parseStringで解析する方式に変更
-      const feedPromises = allFeeds.map(async (url) => {
-        try {
-          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-          return await parser.parseString(response.data);
-        } catch (err) {
-          console.error(`[Daily News] RSSフィードの取得に失敗しました: ${url}`, err.message);
-          return null;
-        }
-      });
-      const feeds = await Promise.all(feedPromises);
-
-      for (const feed of feeds) {
-        if (feed && feed.items) { allArticles.push(...feed.items); }
+      const urls = getHeadlineFeedUrls(NEWS_RSS_FEEDS_AGRICULTURE.join(','), NEWS_RSS_FEEDS_WEB3.join(','));
+      const { articles: allArticles, feeds } = await collectHeadlineFeeds(urls);
+      for (const feed of feeds.filter(feed => feed.error)) {
+        console.warn('[Daily News] RSS取得失敗', feed.url, feed.error);
       }
 
       if (allArticles.length === 0) {
@@ -3852,6 +3840,7 @@ client.once('clientReady', async () => {
         })
         .map(({ article, editorialFit }) => ({
           ...article,
+          innovation: editorialFit.innovation,
           editorialScore: editorialFit.editorialScore,
           editorialReason: editorialFit.reasons.slice(0, 4).join('・')
         }));
@@ -3875,6 +3864,10 @@ client.once('clientReady', async () => {
       articlesToSelectFrom = editoriallyEligibleArticles.filter(isFarmerAiUseCase);
       if (articlesToSelectFrom.length > 0) {
         console.log(`[Daily News] 農家AI活用事例を ${articlesToSelectFrom.length} 件検知しました。特別優先します。`);
+      }
+
+      if (articlesToSelectFrom.length === 0) {
+        articlesToSelectFrom = editoriallyEligibleArticles.filter(article => article.innovation);
       }
 
       // --- 【最優先】一次産業 + 技術 + 活用事例 ---

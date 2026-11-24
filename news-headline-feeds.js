@@ -8,7 +8,15 @@ const MAFF_RSS = 'https://www.maff.go.jp/rss.xml';
 const OLD_MAFF_RSS = 'https://www.maff.go.jp/j/new/rss.xml';
 
 function getHeadlineFeedUrls(agriculture = '', technology = '') {
-  return [...new Set(`${agriculture},${technology}`.split(',')
+  const sources = [
+    agriculture, technology,
+    'https://smartagri-jp.com/rss',
+    'https://www.naro.go.jp/top_new_feed.xml',
+    'https://www.ffpri.go.jp/saizensen.xml',
+    'https://www.rinya.maff.go.jp/rss.xml',
+    'https://www.jfa.maff.go.jp/rss.xml'
+  ];
+  return [...new Set(sources.join(',').split(',')
     .map(value => value.trim())
     .filter(Boolean)
     .map(url => url === OLD_MAFF_RSS ? MAFF_RSS : url))];

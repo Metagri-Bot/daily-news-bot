@@ -3,6 +3,8 @@
 const { isFarmerAiUseCase } = require('./farmer-ai-usecase');
 const { normalizeNewsText, includesNewsKeyword } = require('./news-keywords');
 
+const { fieldInnovation } = require('./news-field-innovation');
+
 const EDITORIAL_DIMENSIONS = [
   {
     id: 'technology',
@@ -130,6 +132,7 @@ function evaluateEditorialFit(article) {
   const hasAction = includesAny(text, ACTION_KEYWORDS);
   const hasOutcome = includesAny(text, OUTCOME_KEYWORDS);
   const hasSolution = includesAny(text, SOLUTION_KEYWORDS);
+  const innovation = fieldInnovation(article);
   const farmerAiUseCase = isFarmerAiUseCase(article);
   const hardExclusions = HARD_EXCLUSIONS.filter(exclusion =>
     includesAny(text, exclusion.keywords)
@@ -152,11 +155,12 @@ function evaluateEditorialFit(article) {
   if (hasAction) editorialScore += 3;
   if (hasOutcome) editorialScore += 4;
   if (hasSolution) editorialScore += 3;
+  if (innovation) editorialScore += 9;
   if (farmerAiUseCase) editorialScore += 6;
   if (weakProfile) editorialScore -= 3;
 
   const meetsQualityGate =
-    farmerAiUseCase ||
+    innovation || farmerAiUseCase ||
     (dimensionCount >= 2 && hasAction) ||
     (dimensionCount >= 3) ||
     (hasAction && hasOutcome && dimensionCount >= 1);
@@ -167,12 +171,14 @@ function evaluateEditorialFit(article) {
     editorialScore >= 9;
 
   const reasons = dimensions.map(dimension => dimension.label);
+  if (innovation) reasons.unshift(innovation);
   if (hasAction) reasons.push('具体的な取り組み');
   if (hasOutcome) reasons.push('成果・展開');
 
   return {
     eligible,
     editorialScore,
+    innovation,
     dimensions: dimensions.map(dimension => dimension.id),
     reasons,
     exclusionReasons: excludedByTopic

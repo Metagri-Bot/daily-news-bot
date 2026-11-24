@@ -15,7 +15,9 @@ const observed = (title, link, fields = {}) => ({ title, link, pubDate: date, ..
 
 test('旧農水省RSSを差し替え、両方の設定にあるURLを一度だけ取得する', () => {
   const maff = 'https://www.maff.go.jp/rss.xml';
-  assert.deepEqual(getHeadlineFeedUrls(` https://www.maff.go.jp/j/new/rss.xml,${maff}`, `${maff}, ,`), [maff]);
+  const defaults = getHeadlineFeedUrls();
+  assert.ok(defaults.includes('https://www.jfa.maff.go.jp/rss.xml'));
+  assert.deepEqual(getHeadlineFeedUrls(` https://www.maff.go.jp/j/new/rss.xml,${maff}`, `${maff}, ,`), [maff, ...defaults]);
 });
 
 test('投稿履歴は旧APIのURL配列と新APIの日時・タイトル付き配列を読める', async () => {
@@ -125,4 +127,15 @@ test('GASはシートの旧形式、現形式、URLだけの履歴を読み取�
     { url: rows[1][1], title: '現形式', postedAt: new Date(date).toISOString() },
     { url: rows[2][0], title: '', postedAt: null }
   ]);
+});
+
+test('農林水産の技術実証と現場でのAI利用を拾い、一般AI記事や講習案内には加点しない', () => {
+  const titles = ['森林組合がLiDARで立木を計測', '漁協が機械学習で漁場を予測', '乳牛の行動を画像認識で推定'];
+  const articles = titles.map((title, i) => observed(title, 'https://local.example/' + i));
+  const other = ['生成AIで広告を自動化', '森林組合のドローン導入セミナー', '漁協がメールの運用を開始'];
+  const { selected } = selectNewsHeadlines([...articles, ...other.map((title, i) =>
+    observed(title, 'https://local.example/other/' + i))], { now });
+  assert.deepEqual(new Set(selected.map(a => a.title)), new Set(titles));
+  assert.deepEqual(new Set(selected.map(a => a.priorityLabel)),
+    new Set(['林業の先端技術', '水産のAI活用・研究', '農業のAI活用・研究']));
 });

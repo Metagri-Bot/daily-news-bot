@@ -4,6 +4,8 @@ const { evaluateEditorialFit } = require('./news-editorial-fit');
 const { getArticlePublishedDate, NEWS_FRESHNESS_DAYS } = require('./news-freshness');
 const { normalizeNewsText } = require('./news-keywords');
 
+const { fieldSector } = require('./news-field-innovation');
+
 const DAY = 24 * 60 * 60 * 1000;
 const PREFERRED_AGE = 2 * DAY;
 const HISTORY_TOPIC_AGE = NEWS_FRESHNESS_DAYS * DAY;
@@ -103,8 +105,13 @@ function selectNewsHeadlines(articles, { history = [], now = new Date(), limit =
     const summary = normalizeNewsText(article.contentSnippet || article.summary || article.content || '')
       .replace(/農林水産省|農林水産大臣/gu, ' ');
     const text = `${headline} ${summary}`;
-    const headlineIsAgriculture = AGRICULTURE.test(headline);
-    if (EXCLUDED.test(text) || (!headlineIsAgriculture && !(FIELD_VALUE.test(headline) && AGRICULTURE.test(summary)))) {
+    const headlineIsAgriculture = AGRICULTURE.test(headline) || Boolean(fieldSector(headline));
+    const fit = evaluateEditorialFit(article);
+    const fieldInSummary = AGRICULTURE.test(summary) || fieldSector(summary);
+    const technicalHeadline = /実証|運用|予測|推定|自動化|開発|計測/u.test(headline);
+    const related = headlineIsAgriculture || (FIELD_VALUE.test(headline) && fieldInSummary)
+      || (technicalHeadline && fit.innovation);
+    if (EXCLUDED.test(text) || !related) {
       reject('農業・現場との関連が薄い');
       continue;
     }
@@ -113,7 +120,6 @@ function selectNewsHeadlines(articles, { history = [], now = new Date(), limit =
       continue;
     }
 
-    const fit = evaluateEditorialFit(article);
     const primary = PRIMARY_HOST.test(new URL(article.link).hostname);
     const press = PRESS_HOST.test(new URL(article.link).hostname) || PRESS_HOST.test(article.feedHost || '');
     // 省庁・研究機関の対策や成果は、編集カテゴリ数が少なくても拾う。
@@ -140,7 +146,7 @@ function selectNewsHeadlines(articles, { history = [], now = new Date(), limit =
       age,
       press,
       score,
-      priorityLabel: fit.farmerAiUseCase ? '農家AI活用事例' : reasons[0] || 'コア農業',
+      priorityLabel: fit.farmerAiUseCase ? '農家AI活用事例' : fit.innovation || reasons[0] || 'コア農業',
       editorialReason: reasons.slice(0, 3).join('・') || '農業の現場への影響',
       isFarmerAiUseCase: fit.farmerAiUseCase
     });
