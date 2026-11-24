@@ -139,3 +139,27 @@ test('農林水産の技術実証と現場でのAI利用を拾い、一般AI記�
   assert.deepEqual(new Set(selected.map(a => a.priorityLabel)),
     new Set(['林業の先端技術', '水産のAI活用・研究', '農業のAI活用・研究']));
 });
+
+test('日次ニュースは配信履歴と転載を除き、短い見出しと冒頭要約、実測結果のある現場試験を拾う', () => {
+  const old = observed('農家がAIを導入して作業記録を改善', 'https://a.example/old', { pubDate: '2026-11-19' });
+  const past = observed('森林組合がドローンで立木を計測', 'https://b.example/reprint');
+  const trial = observed('３年目のマガキ試験養殖、生存率70％に手応え', 'https://c.example/oyster');
+  const forestry = observed('森林組合が調査結果を公開', 'https://d.example/forest', { summary: 'LiDARで計測し、作業時間を短縮した。' });
+  const { selected } = selectNewsHeadlines([old, past, trial, forestry], { now, dailyInsight: true,
+    history: [{ title: past.title, url: 'https://a.example/original', postedAt: date }] });
+  assert.deepEqual(new Set(selected.slice(0, 2).map(a => a.innovation)), new Set(['水産の実証成果', '林業の先端技術']));
+  assert.equal(selected[2].link, old.link);
+});
+
+test('海外文献は農林水産の実証を拾い、風力発電や無関係な部分一致、追跡URL違いを除く', () => {
+  const { filterGlobalArticles } = require('../global-news-selection');
+  const good = observed('AI predicts fish stocks in a field trial', 'https://research.example/1');
+  const items = [
+    good, { ...good, link: good.link + '?utm_medium=rss' },
+    observed('Satellite sensors evaluated in wind farms', 'https://research.example/2'),
+    observed('Charm of a farmhouse holiday', 'https://research.example/3'),
+    observed('Annual forestry picnic', 'https://research.example/4'),
+    observed('LiDAR trial results', 'https://research.example/5', { summary: 'The team tested a forest inventory method.' })
+  ];
+  assert.deepEqual(filterGlobalArticles(items).map(a => a.link), [good.link, items[5].link]);
+});

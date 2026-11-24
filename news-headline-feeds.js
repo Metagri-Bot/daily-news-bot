@@ -11,6 +11,8 @@ function getHeadlineFeedUrls(agriculture = '', technology = '') {
   const sources = [
     agriculture, technology,
     'https://smartagri-jp.com/rss',
+    'https://forest-journal.jp/feed/',
+    'https://suisan.jp/feed',
     'https://www.naro.go.jp/top_new_feed.xml',
     'https://www.ffpri.go.jp/saizensen.xml',
     'https://www.rinya.maff.go.jp/rss.xml',

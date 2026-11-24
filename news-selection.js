@@ -71,7 +71,7 @@ function historyEntry(value) {
   return typeof value === 'string' ? { url: value } : value;
 }
 
-function selectNewsHeadlines(articles, { history = [], now = new Date(), limit = 3 } = {}) {
+function selectNewsHeadlines(articles, { history = [], now = new Date(), limit = 3, dailyInsight = false } = {}) {
   const reference = new Date(now).getTime();
   const entries = history.map(historyEntry).filter(Boolean);
   const postedUrls = new Set(entries.map(entry => newsUrlKey(entry.url)).filter(Boolean));
@@ -125,7 +125,7 @@ function selectNewsHeadlines(articles, { history = [], now = new Date(), limit =
     // 省庁・研究機関の対策や成果は、編集カテゴリ数が少なくても拾う。
     const officialUpdate = primary && headlineIsAgriculture && FIELD_VALUE.test(headline)
       && fit.exclusionReasons.length === 0;
-    if (!fit.eligible && !officialUpdate) {
+    if (!fit.eligible && (dailyInsight || !officialUpdate)) {
       reject('具体性・編集基準');
       continue;
     }
@@ -145,6 +145,7 @@ function selectNewsHeadlines(articles, { history = [], now = new Date(), limit =
       topicKey,
       age,
       press,
+      innovation: fit.innovation,
       score,
       priorityLabel: fit.farmerAiUseCase ? '農家AI活用事例' : fit.innovation || reasons[0] || 'コア農業',
       editorialReason: reasons.slice(0, 3).join('・') || '農業の現場への影響',
@@ -153,6 +154,8 @@ function selectNewsHeadlines(articles, { history = [], now = new Date(), limit =
   }
 
   candidates.sort((a, b) => Number(b.age <= PREFERRED_AGE) - Number(a.age <= PREFERRED_AGE)
+    || (dailyInsight && (Number(b.isFarmerAiUseCase) - Number(a.isFarmerAiUseCase)
+      || Number(Boolean(b.innovation)) - Number(Boolean(a.innovation))))
     || b.score - a.score || a.age - b.age || a.urlKey.localeCompare(b.urlKey));
   const priority = candidates.find(article => article.isFarmerAiUseCase && article.age <= PREFERRED_AGE);
   const ordered = priority ? [priority, ...candidates.filter(article => article !== priority)] : candidates;
