@@ -33,15 +33,7 @@ function doPost(e) {
     }
 
     else if (type === 'addArticles') {
-      const sheet = getSheetByName(spreadsheet, "Posted_URLs");
-      if (sheet.getLastRow() === 0) {
-        sheet.appendRow(["投稿日時", "URL", "タイトル", "記事の日付", "優先度", "スコア"]);
-      }
-      const now = new Date();
-      const rows = data.articles.map(article => [now, article.url, article.title, new Date(article.pubDate), article.priority, article.score]);
-      if (rows.length > 0) {
-        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
-      }
+      appendPostedNewsArticles_(getSheetByName(spreadsheet, "Posted_URLs"), data.articles);
       return createSuccessResponse();
     }
 
@@ -175,20 +167,49 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    // === 投稿済みURLリストの取得（type指定なし or それ以外）===
-    else {
-      const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Posted_URLs");
-      if (!sheet || sheet.getLastRow() < 2) {
-        return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
-      }
-      const data = sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).getValues();
-      const urls = data.map(row => row[0]).filter(url => url);
-      return ContentService.createTextOutput(JSON.stringify(urls)).setMimeType(ContentService.MimeType.JSON);
-    }
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Posted_URLs");
+    const articles = readPostedNewsArticles_(sheet);
+    return createJsonResponse(e.parameter.type === 'getPostedNewsArticles' ? articles : articles.map(article => article.url));
 
   } catch (error) {
     Logger.log("Error in doGet: " + error.message);
     return ContentService.createTextOutput(JSON.stringify({ "result": "error", "message": error.message })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function readPostedNewsArticles_(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().flatMap(row => {
+    const legacy = typeof row[0] === 'string' && /^https?:\/\//i.test(row[0]);
+    const [postedAt, url, title] = legacy ? [row[2], row[0], row[1]] : row;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) return [];
+    const time = postedAt ? new Date(postedAt) : null;
+    return [{ url: url.trim(), title: title || '', postedAt: time && !isNaN(time) ? time.toISOString() : null }];
+  });
+}
+
+function appendPostedNewsArticles_(sheet, articles) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(["投稿日時", "URL", "タイトル", "記事の日付", "優先度", "スコア"]);
+    }
+    const existing = new Set(readPostedNewsArticles_(sheet).map(article => article.url));
+    const rows = [];
+    for (const article of articles) {
+      if (existing.has(article.url)) continue;
+      existing.add(article.url);
+      const date = article.postedAt && new Date(article.postedAt);
+      rows.push([date && !isNaN(date) ? date : new Date(), article.url, article.title,
+        new Date(article.pubDate), article.priority, article.score]);
+    }
+    if (rows.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+      SpreadsheetApp.flush();
+    }
+  } finally {
+    lock.releaseLock();
   }
 }
 

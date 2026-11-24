@@ -11,13 +11,12 @@ const Parser = require('rss-parser');
 const parser = new Parser();
 const axios = require('axios');
 const OpenAI = require('openai'); // OpenAI APIを使用する場合
-const {
-  isFarmerAiUseCase,
-  prioritizeFarmerAiUseCases
-} = require('./farmer-ai-usecase');
+const { isFarmerAiUseCase } = require('./farmer-ai-usecase');
+const { selectNewsHeadlines } = require('./news-selection');
+const { getHeadlineFeedUrls, collectHeadlineFeeds, readHeadlineHistory } = require('./news-headline-feeds');
+const { recoverHeadlineHistory } = require('./news-headline-history');
 const {
   NEWS_FRESHNESS_DAYS,
-  getArticlePublishedDate,
   isNewsWithinFreshness
 } = require('./news-freshness');
 const path = require('node:path');
@@ -814,230 +813,10 @@ const client = new Client({
 });
 
 // ▼▼▼ 重複投稿防止用のキャッシュを追加 ▼▼▼
-const postedArticleUrls = new Set();
+const postedNewsArticles = new Map();
+const pendingHeadlineLogs = new Map();
 const postedGlobalArticleUrls = new Set(); // ▼▼▼ この行を追加 ▼▼▼
 // ▲▲▲ ▲▲▲
-
-/**
- * スプレッドシートから投稿済みURLのリストを取得し、キャッシュを更新する
- */
-async function syncPostedUrlsFromSheet() {
-  if (!GOOGLE_APPS_SCRIPT_URL) return;
-  try {
-    console.log('[Info Gathering] Fetching posted URLs from sheet...');
-    const response = await axios.get(GOOGLE_APPS_SCRIPT_URL);
-    if (Array.isArray(response.data)) {
-      response.data.forEach(url => postedArticleUrls.add(url));
-      console.log(`[Info Gathering] Synced ${response.data.length} URLs from sheet.`);
-    }
-  } catch (error) {
-    console.error('[Info Gathering] Failed to fetch posted URLs from sheet:', error.message);
-    await sendMonitoringNotification(
-      '同期ジョブ初期化エラー',
-      '投稿済みURL一覧の同期に失敗しました',
-      'error',
-      error.message
-    );
-  }
-}
-
-/**
- * Google Sheetsから過去の議論データを取得し、記事ごとの反応メトリクスを計算
- * @returns {Promise<Map>} 記事URLをキーとした反応メトリクスのMap
- */
-async function getDiscussionMetricsFromSheet() {
-  if (!GOOGLE_APPS_SCRIPT_URL) return new Map();
-
-  try {
-    console.log('[Dynamic Scoring] Fetching discussion metrics from sheet...');
-    const response = await axios.post(GOOGLE_APPS_SCRIPT_URL, {
-      type: 'getDiscussionMetrics'
-    });
-
-    if (!response.data || !Array.isArray(response.data)) {
-      console.log('[Dynamic Scoring] No discussion data available.');
-      return new Map();
-    }
-
-    // 記事URLごとに議論メトリクスを集計
-    const metricsMap = new Map();
-
-    for (const row of response.data) {
-      const { newsUrl, content } = row;
-      if (!newsUrl) continue;
-
-      if (!metricsMap.has(newsUrl)) {
-        metricsMap.set(newsUrl, {
-          postCount: 0,
-          totalContentLength: 0,
-          avgContentLength: 0
-        });
-      }
-
-      const metrics = metricsMap.get(newsUrl);
-      metrics.postCount += 1;
-      metrics.totalContentLength += (content || '').length;
-    }
-
-    // 平均コメント長を計算
-    for (const [url, metrics] of metricsMap) {
-      if (metrics.postCount > 0) {
-        metrics.avgContentLength = Math.round(metrics.totalContentLength / metrics.postCount);
-      }
-    }
-
-    console.log(`[Dynamic Scoring] Loaded metrics for ${metricsMap.size} articles.`);
-    return metricsMap;
-
-  } catch (error) {
-    console.error('[Dynamic Scoring] Failed to fetch discussion metrics:', error.message);
-    return new Map();
-  }
-}
-
-/**
- * 過去の反応データとキーワードパターンから動的にスコアを調整
- * @param {object} article 記事オブジェクト
- * @param {number} baseScore 基本スコア
- * @param {Set} matchedCategories マッチしたカテゴリのSet
- * @param {Map} historicalMetrics 過去の記事の反応メトリクス
- * @returns {number} 調整後のスコア
- */
-function applyDynamicScoring(article, baseScore, matchedCategories, historicalMetrics) {
-  let adjustedScore = baseScore;
-
-  // 同じカテゴリパターンを持つ過去の記事の平均反応を計算
-  const categoryPattern = Array.from(matchedCategories).sort().join('+');
-
-  // historicalMetricsから同じようなキーワードパターンを持つ記事を探す
-  const similarArticles = [];
-
-  for (const [url, metrics] of historicalMetrics) {
-    // 簡易的に投稿数が多い記事を「良い記事」と判定
-    if (metrics.postCount >= 3) {
-      similarArticles.push(metrics);
-    }
-  }
-
-  if (similarArticles.length > 0) {
-    // 過去の反応が良かった記事の平均投稿数を計算
-    const avgPostCount = similarArticles.reduce((sum, m) => sum + m.postCount, 0) / similarArticles.length;
-    const avgContentLength = similarArticles.reduce((sum, m) => sum + m.avgContentLength, 0) / similarArticles.length;
-
-    // 投稿数が多いキーワードパターンにボーナス
-    if (avgPostCount >= 10) {
-      adjustedScore += Math.round(baseScore * 0.20); // +20%
-      console.log(`[Dynamic Scoring] High engagement pattern detected. Bonus: +20%`);
-    } else if (avgPostCount >= 5) {
-      adjustedScore += Math.round(baseScore * 0.15); // +15%
-      console.log(`[Dynamic Scoring] Good engagement pattern. Bonus: +15%`);
-    } else if (avgPostCount >= 3) {
-      adjustedScore += Math.round(baseScore * 0.10); // +10%
-      console.log(`[Dynamic Scoring] Moderate engagement. Bonus: +10%`);
-    }
-
-    // 長文コメントが多いキーワードパターンにもボーナス
-    if (avgContentLength >= 200) {
-      adjustedScore += Math.round(baseScore * 0.10); // +10%
-      console.log(`[Dynamic Scoring] Deep discussion pattern. Bonus: +10%`);
-    }
-  }
-
-  return adjustedScore;
-}
-
-/**
- * レーベンシュタイン距離を計算（文字列の類似度を測定）
- * @param {string} str1 比較する文字列1
- * @param {string} str2 比較する文字列2
- * @returns {number} 編集距離
- */
-function calculateLevenshteinDistance(str1, str2) {
-  const len1 = str1.length;
-  const len2 = str2.length;
-  const matrix = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
-
-  for (let i = 0; i <= len1; i++) matrix[i][0] = i;
-  for (let j = 0; j <= len2; j++) matrix[0][j] = j;
-
-  for (let i = 1; i <= len1; i++) {
-    for (let j = 1; j <= len2; j++) {
-      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
-      matrix[i][j] = Math.min(
-        matrix[i - 1][j] + 1,      // 削除
-        matrix[i][j - 1] + 1,      // 挿入
-        matrix[i - 1][j - 1] + cost // 置換
-      );
-    }
-  }
-
-  return matrix[len1][len2];
-}
-
-/**
- * タイトルの類似度を計算（0-100のパーセンテージ）
- * @param {string} title1 タイトル1
- * @param {string} title2 タイトル2
- * @returns {number} 類似度（0-100）
- */
-function calculateTitleSimilarity(title1, title2) {
-  const maxLen = Math.max(title1.length, title2.length);
-  if (maxLen === 0) return 100;
-
-  const distance = calculateLevenshteinDistance(title1, title2);
-  const similarity = ((maxLen - distance) / maxLen) * 100;
-  return Math.round(similarity);
-}
-
-/**
- * 記事リストから類似記事を検出してグループ化
- * @param {Array} articles 記事の配列
- * @param {number} threshold 類似度の閾値（デフォルト70%）
- * @returns {Array} 重複を除いた記事配列と類似記事グループの情報
- */
-function detectAndGroupSimilarArticles(articles, threshold = 70) {
-  const groups = [];
-  const processed = new Set();
-  const result = [];
-
-  for (let i = 0; i < articles.length; i++) {
-    if (processed.has(i)) continue;
-
-    const currentArticle = articles[i];
-    const group = {
-      representative: currentArticle,
-      similar: []
-    };
-
-    for (let j = i + 1; j < articles.length; j++) {
-      if (processed.has(j)) continue;
-
-      const similarity = calculateTitleSimilarity(
-        currentArticle.title,
-        articles[j].title
-      );
-
-      if (similarity >= threshold) {
-        group.similar.push({
-          article: articles[j],
-          similarity: similarity
-        });
-        processed.add(j);
-        console.log(`[Duplicate Detection] 類似記事を検出 (${similarity}%): "${currentArticle.title.substring(0, 40)}..." vs "${articles[j].title.substring(0, 40)}..."`);
-      }
-    }
-
-    groups.push(group);
-    result.push(currentArticle);
-    processed.add(i);
-  }
-
-  if (groups.some(g => g.similar.length > 0)) {
-    console.log(`[Duplicate Detection] ${groups.filter(g => g.similar.length > 0).length}件の類似記事グループを検出しました。`);
-  }
-
-  return { deduplicated: result, groups: groups };
-}
 
 /**
  * Google Sheetsから過去7日間のニュースを取得
@@ -3395,7 +3174,6 @@ async function postDailyPopularBook() {
 }
 
 // グローバル変数として議論メトリクスをキャッシュ
-let cachedDiscussionMetrics = new Map();
 let cachedRecentNews = [];
 let cachedTrendAnalysis = null;
 
@@ -3982,9 +3760,7 @@ client.once('clientReady', async () => {
 
 
   // ▼▼▼ この行を追加 ▼▼▼
-  await syncPostedUrlsFromSheet();
   await syncPostedBooksFromSheet(); // 投稿済み書籍リストを同期
-  cachedDiscussionMetrics = await getDiscussionMetricsFromSheet();
   cachedRecentNews = await getRecentNewsFromSheet();
   cachedTrendAnalysis = extractTrendKeywords(cachedRecentNews);
   // ▲▲▲ ▲▲▲
@@ -4008,7 +3784,6 @@ client.once('clientReady', async () => {
       // ★★★ トレンド分析を毎日リフレッシュ ★★★
       cachedRecentNews = await getRecentNewsFromSheet();
       cachedTrendAnalysis = extractTrendKeywords(cachedRecentNews);
-      cachedDiscussionMetrics = await getDiscussionMetricsFromSheet();
 
       const channel = await client.channels.fetch(NEWS_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) {
@@ -4238,182 +4013,88 @@ ${discussionQuestions}
 
 
 // --- 2. 情報収集ニュース投稿タスク (1日1回：朝6時) ---
-// 毎日 AM 6:00 JST に実行し、品質基準を満たす記事を最大3件届ける
-// cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
+async function flushHeadlineLogs() {
+  if (!GOOGLE_APPS_SCRIPT_URL || pendingHeadlineLogs.size === 0) return;
+  const articles = [...pendingHeadlineLogs.values()];
+  try {
+    const response = await axios.post(GOOGLE_APPS_SCRIPT_URL, { type: 'addArticles', articles }, { timeout: 15000 });
+    if (response.data?.result !== 'success') throw new Error('GASが書き込み成功を返しませんでした');
+    for (const article of articles) pendingHeadlineLogs.delete(article.url);
+  } catch (error) {
+    console.error(`[Info Gathering] 投稿履歴の記録に失敗 (${articles.length}件):`, error.code || error.message);
+  }
+}
+
 cron.schedule('0 6 * * *', async () => {
+  if (!INFO_GATHERING_CHANNEL_ID) return;
+  const now = new Date();
   console.log('[Info Gathering] 日刊・情報収集タスクを開始します...');
   try {
-    if (!INFO_GATHERING_CHANNEL_ID) { return; }
     const channel = await client.channels.fetch(INFO_GATHERING_CHANNEL_ID);
-    if (!channel || channel.type !== ChannelType.GuildText) { return; }
+    if (!channel || channel.type !== ChannelType.GuildText) return;
 
-    // Step 0: カテゴリ別に記事を並行取得
-    const fetchArticles = async (urls) => {
-      const promises = urls.map(async (url) => {
-        try {
-          const response = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 });
-          return await parser.parseString(response.data);
-        } catch (err) {
-          console.error(`RSS取得エラー: ${url}`);
-          return null;
-        }
+    await flushHeadlineLogs();
+    const urls = getHeadlineFeedUrls(NEWS_RSS_FEEDS_AGRICULTURE.join(','), NEWS_RSS_FEEDS_WEB3.join(','));
+    const [history, { articles, feeds }, discordHistory] = await Promise.all([
+      readHeadlineHistory(GOOGLE_APPS_SCRIPT_URL),
+      collectHeadlineFeeds(urls, { now }),
+      recoverHeadlineHistory(async before => [...(await channel.messages.fetch({ limit: 100, before })).values()], client.user.id, now)
+        .catch(error => {
+          console.warn('[Info Gathering] Discordの投稿履歴を取得できません:', error.code || error.message);
+          return [];
+        })
+    ]);
+    for (const entry of [...discordHistory, ...history]) {
+      const previous = postedNewsArticles.get(entry.url);
+      postedNewsArticles.set(entry.url, {
+        url: entry.url,
+        title: entry.title || previous?.title,
+        postedAt: entry.postedAt || previous?.postedAt
       });
-      const feeds = await Promise.all(promises);
-      return feeds.filter(f => f && f.items).flatMap(f => f.items);
-    };
-
-    const allAgriArticles = await fetchArticles(NEWS_RSS_FEEDS_AGRICULTURE);
-    const allTechArticles = await fetchArticles(NEWS_RSS_FEEDS_WEB3);
-
-    // Step 1: 公開から直近7日以内の記事のみを対象にする
-    const recentAgriArticles = allAgriArticles.filter(article => isNewsWithinFreshness(article));
-    const recentTechArticles = allTechArticles.filter(article => isNewsWithinFreshness(article));
-
-    // Step 2: 投稿済みの記事を除外する
-    const newAgriArticles = recentAgriArticles.filter(a => !postedArticleUrls.has(a.link));
-    const newTechArticles = recentTechArticles.filter(a => !postedArticleUrls.has(a.link));
-    console.log(`[Info Gathering] 新規記事候補: 農業関連=${newAgriArticles.length}件, 技術関連=${newTechArticles.length}件`);
-
-    // Step 3: フィルタリングと優先順位付け
-    // ▼▼▼ Step 3 & 4: スコアリング方式による新しい選定ロジック ▼▼▼
-    console.log('[Info Gathering] スコアリングを開始...');
-    const allNewArticles = [...newAgriArticles, ...newTechArticles];
-    const scoredArticles = [];
-    const uniqueUrls = new Set();
-    let excludedCount = 0; // 除外された記事数をカウント
-    let editorialExcludedCount = 0;
-
-    // すべての新規記事をスコアリング
-    for (const article of allNewArticles) {
-      if (!article.link || uniqueUrls.has(article.link)) continue;
-
-      const content = (article.title + ' ' + (article.contentSnippet || '')).toLowerCase();
-      let score = 0;
-      let matchedCategories = new Set();
-
-      // Helper function to check keywords and update score/labels
-      const checkKeywords = (keywords, categoryName, points) => {
-        if (keywords.some(k => content.includes(k.toLowerCase()))) {
-          score += points;
-          matchedCategories.add(categoryName);
-        }
-      };
-
-      // 除外キーワードチェック（誤検出を防止）
-      const hasExclusionKeyword = EXCLUSION_KEYWORDS.some(keyword => content.includes(keyword));
-      if (hasExclusionKeyword) {
-        excludedCount++;
-        continue; // 除外キーワードに該当する場合はスキップ
+    }
+    for (const feed of feeds) {
+      if (feed.error || feed.stale) {
+        console.warn(`[Info Gathering] RSS: ${feed.url} (${feed.error || `最新公開日 ${feed.latest?.toISOString() || '不明'}`})`);
       }
+    }
 
-      // 各カテゴリのキーワードをチェックしてスコアを加算
-      checkKeywords(CORE_AGRI_KEYWORDS, 'コア農業', 3);
-      checkKeywords(TECH_INNOVATION_KEYWORDS, '技術革新', 5);
-      checkKeywords(CONSUMER_EXPERIENCE_KEYWORDS, '消費者体験', 4);
-      checkKeywords(SOCIAL_SUSTAINABILITY_KEYWORDS, '社会課題', 4);
-      checkKeywords(HUMAN_STORY_KEYWORDS, 'ヒト物語', 4);
-      checkKeywords(BUSINESS_POLICY_KEYWORDS, 'ビジネス政策', 3);
-      checkKeywords(BUZZ_KEYWORDS, 'ボーナス', 2);
+    const { selected, rejected, candidates } = selectNewsHeadlines(articles, {
+      history: [...postedNewsArticles.values()],
+      now
+    });
+    console.log('[Info Gathering] RSS:', feeds.length, '受信:', articles.length,
+      '候補:', candidates.length, '採用:', selected.length, '除外:', rejected);
+    if (selected.length === 0) return;
 
-      // 農家本人によるAI実利用は、一般的な技術発表と分けて強く加点する。
-      const farmerAiUseCase = isFarmerAiUseCase(article);
-      if (farmerAiUseCase) {
-        score += 12;
-        matchedCategories.add('農家AI活用事例');
-      }
+    const lines = selected.flatMap((article, index) => [
+      `**${index + 1}. ${article.title.replace(/\s+/gu, ' ').slice(0, 150)}**`,
+      ...(article.isFarmerAiUseCase ? ['🌾🤖 **農家AI活用事例**'] : []),
+      `✨ **厳選理由:** ${article.editorialReason}`,
+      `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\``,
+      article.link,
+      ''
+    ]);
+    await channel.send({
+      content: [`### 🚀 最新情報ヘッドライン（${selected.length}件）`, '---', ...lines].join('\n').trim(),
+      allowedMentions: { parse: [] }
+    });
 
-      const editorialFit = evaluateEditorialFit(article);
-      if (!editorialFit.eligible) {
-        editorialExcludedCount++;
-        const reasons = editorialFit.exclusionReasons.join('・') || '価値軸・具体性が基準未満';
-        console.log(`[Info Gathering] 編集品質ゲートで除外: ${article.title} (${reasons})`);
-        continue;
-      }
-      score += editorialFit.editorialScore;
-
-      // 「コア農業」カテゴリにマッチしない記事は除外（最低限の関連性を担保）
-      if (score > 0 && (matchedCategories.has('コア農業') || farmerAiUseCase)) {
-        // ★★★ 動的スコアリングを適用 ★★★
-        const dynamicScore = applyDynamicScoring(article, score, matchedCategories, cachedDiscussionMetrics);
-
-        scoredArticles.push({
-          ...article,
-          baseScore: score,
-          score: dynamicScore,
-          priorityLabel: Array.from(matchedCategories).join(' + '),
-          isFarmerAiUseCase: farmerAiUseCase,
-          editorialScore: editorialFit.editorialScore,
-          editorialReason: editorialFit.reasons.slice(0, 4).join('・')
+    const postedAt = new Date().toISOString();
+    for (const article of selected) {
+      const entry = { url: article.link, title: article.title, postedAt };
+      postedNewsArticles.set(entry.url, entry);
+      if (GOOGLE_APPS_SCRIPT_URL) {
+        pendingHeadlineLogs.set(entry.url, {
+          ...entry, pubDate: article.isoDate, priority: article.priorityLabel, score: article.score
         });
-        uniqueUrls.add(article.link);
       }
     }
-
-    console.log(
-      `[Info Gathering] 除外キーワード: ${excludedCount}件, 編集品質ゲート除外: `
-      + `${editorialExcludedCount}件, 厳選候補: ${scoredArticles.length}件`
-    );
-
-    // スコアの高い順、次に日付の新しい順でソート
-    scoredArticles.sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-      return new Date(b.isoDate) - new Date(a.isoDate);
-    });
-
-    // ★★★ Step 4.5: 類似記事検出と重複除去 ★★★
-    console.log('[Info Gathering] 類似記事の検出を開始...');
-    const { deduplicated: uniqueArticles, groups: similarGroups } = detectAndGroupSimilarArticles(scoredArticles);
-
-    // Step 5: 上位3件を基本とし、農家AI活用事例があれば1枠を保証
-    const finalArticles = prioritizeFarmerAiUseCases(uniqueArticles, 3);
-
-    if (finalArticles.length === 0) {
-      console.log('[Info Gathering] 投稿対象の記事がありませんでした。');
-      return;
-    }
-
-    console.log('[Info Gathering] 最終選考記事リスト (スコア順):');
-    finalArticles.forEach((article, index) => {
-      console.log(`  ${index + 1}. [Score: ${article.score}] [${article.priorityLabel}] ${article.title}`);
-    });
-    // ▲▲▲ 新しいロジックここまで ▲▲▲
-
-    let postContent = `### 🚀 最新情報ヘッドライン（${finalArticles.length}件）\n---\n`;
-    const articlesToLog = [];
-
-    finalArticles.forEach((article, index) => {
-      postContent += `**${index + 1}. ${article.title}**\n`;
-      if (article.isFarmerAiUseCase) {
-        postContent += `🌾🤖 **農家AI活用事例**\n`;
-      }
-      postContent += `✨ **厳選理由:** ${article.editorialReason}\n`;
-      postContent += `📊 **評点: ${article.score}点** | カテゴリ: \`${article.priorityLabel}\`\n`;
-      postContent += `${article.link}\n\n`;
-      postedArticleUrls.add(article.link);
-      articlesToLog.push({
-        url: article.link,
-        title: article.title,
-        pubDate: article.isoDate,
-        priority: article.priorityLabel,
-        score: article.score
-      });
-    });
-
-    await channel.send({ content: postContent });
-    console.log(`[Info Gathering] ${finalArticles.length}件の厳選ニュースを投稿しました。`);
-
-    if (articlesToLog.length > 0) {
-      await logToSpreadsheet('addArticles', { articles: articlesToLog });
-    }
-
+    await flushHeadlineLogs();
+    console.log(`[Info Gathering] ${selected.length}件の記事を投稿しました。`);
   } catch (error) {
-    console.error('[Info Gathering] タスク実行中にエラーが発生しました:', error);
+    console.error('[Info Gathering] ヘッドラインの処理に失敗:', error.code || error.message);
   }
-}, {
-  timezone: "Asia/Tokyo"
-});
+}, { timezone: 'Asia/Tokyo', noOverlap: true });
 
 // === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
   // ※ ユーザーリクエストにより無効化（2025年）

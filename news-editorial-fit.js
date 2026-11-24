@@ -1,6 +1,7 @@
 'use strict';
 
 const { isFarmerAiUseCase } = require('./farmer-ai-usecase');
+const { normalizeNewsText, includesNewsKeyword } = require('./news-keywords');
 
 const EDITORIAL_DIMENSIONS = [
   {
@@ -106,20 +107,18 @@ const WEAK_PROFILE_KEYWORDS = [
 ];
 
 function articleText(article = {}) {
-  return [
+  return normalizeNewsText([
     article.title,
     article.contentSnippet,
     article.content,
     article.summary
   ]
     .filter(Boolean)
-    .join(' ')
-    .normalize('NFKC')
-    .toLowerCase();
+    .join(' '));
 }
 
 function includesAny(text, keywords) {
-  return keywords.some(keyword => text.includes(keyword.toLowerCase()));
+  return keywords.some(keyword => includesNewsKeyword(text, keyword));
 }
 
 function evaluateEditorialFit(article) {

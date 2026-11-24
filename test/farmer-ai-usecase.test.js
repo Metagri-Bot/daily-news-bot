@@ -48,6 +48,17 @@ test('AIを含まない農家の省力化記事は対象外にする', () => {
   assert.equal(isFarmerAiUseCase(article), false);
 });
 
+test('提供者の行動、検討段階、英単語内の ai を実利用から除外する', () => {
+  const articles = [
+    { title: '生産者向け生成AIサービスを提供開始', contentSnippet: '農家の業務効率化を目指し、提供企業が顧客向けの資料を作成した。' },
+    { title: '農家が生成AI導入を検討' },
+    { title: '農家がSAITAMAの販促資料を作成' },
+    { title: '農家がイベントを企画', contentSnippet: 'メーカーがAIを使って資料を作成した。' },
+    { title: '農家がデータを記録。企業がAIを導入した。' }
+  ];
+  for (const article of articles) assert.equal(isFarmerAiUseCase(article), false, article.title);
+});
+
 test('該当事例があれば評点順位にかかわらず通知枠を確保する', () => {
   const general1 = { title: '農業政策ニュース1' };
   const general2 = { title: '農業政策ニュース2' };
