@@ -399,3 +399,32 @@ POST { "type": "publicOpportunities", "records": [ { "id": "...", "signature": "
 ## 履歴のリセット
 
 テスト後に通知履歴を消す場合は、`Public_Opportunities` シートの該当行を削除し、Bot側の `state/public-opportunities.json` も削除してください（片方だけ消してもシート側が正として復元されます）。
+
+# 朝の農業ニュース音声配信
+
+独立のApps Scriptプロジェクト「毎日ニュース｜農業ニュース音声配信」で [`MorningPodcast.gs`](MorningPodcast.gs) を実行します。朝6時のDiscord投稿後に更新される「毎日ニュース」の `Posted_URLs` を入力とし、Geminiで作った音声をDriveに保存して、実行アカウント本人にGmailで知らせます。定期処理はApps Scriptの時間トリガーで動きます。 [選定・配信の機能仕様](SPECIFICATION.md#朝の農業ニュース音声配信)
+
+## セットアップと時刻変更
+
+1. 音声配信用の独立Apps Scriptを開き、`MorningPodcast.gs` の内容を保存します。別の台帳を使うときは `PODCAST.spreadsheetId` を対象のIDに変更します。
+2. Google AI Studioで「無料枠」と表示されるプロジェクトのAPIキーを用意します。Apps Scriptの「プロジェクトの設定」→「スクリプト プロパティ」に `GEMINI_API_KEY` として直接登録します。キーはスクリプト本文やGitに置かず、GASの設定で管理します。 [AI Studioのプロジェクト](https://aistudio.google.com/projects)
+3. `checkPodcastSources` を実行し、初回はSheets、Drive、外部URLへのアクセス、メール送信、トリガー操作に必要な権限を確認して承認します。
+4. `testPodcastDelivery` を実行して、テスト音声と本人宛てメールを確認します。Gmailの「今日の音声を聴く」を開くとDriveで再生できます。
+5. `installMorningPodcast` を実行します。「トリガー」画面で `runMorningPodcast` と `retryMorningPodcast` が1本ずつあることを確認します。時刻を変更したらコードを保存し、この関数を再実行します。現行は毎朝6:20ごろと6:40ごろ（日本時間）です。 [Apps Scriptの時刻指定](https://developers.google.com/apps-script/reference/script/clock-trigger-builder#nearMinute(Integer))
+
+## 手動で確認できる処理
+
+| 関数 | 確認内容 |
+| --- | --- |
+| `checkPodcastSources` | 実際の台帳と出典ページから候補を抽出し、件数を実行ログに表示。Gemini呼び出し、Driveへの保存、メール送信なし |
+| `createPodcastPreview` | `試聴_` が付いた台本JSONとWAVをDriveに保存。メール送信なし |
+| `testPodcastDelivery` | `テスト_` が付いた台本JSONとWAVをDriveに保存し、`【テスト｜毎日ニュース音声】` の件名で本人に送信。同日の送信済みテストは再送しない |
+| `runMorningPodcast` | 当日分の通常配信。手動で実行した場合も本番と同様に本人に送信する |
+
+## 保存先と確認順
+
+- 実行アカウントのDriveに `毎日ニュース｜農業ニュース音声` フォルダを作成します。`PODCAST_FOLDER_ID` は初回作成時に保存されます。配信日は `YYYY-MM-DD_農業ニュース.json` と `.wav` を照合できます。
+- メールが見つからない場合は、Apps Scriptの「実行数」で出典の有無、API応答、音声URL、送信結果の順に確認します。`sending` は送信の成否が確定する前に実行が止まった可能性があるため、再送の前に本人のGmailで件名を検索します。
+- `PODCAST_API_TEXT` と `PODCAST_API_AUDIO` は太平洋時間の日付で呼び出し数を管理します。各モデルの処理回数は通常・試聴では同日合計2回まで、手動の通しテストを含める場合は4回までです。API側でHTTP 429になった日は該当モデルを保留します。 [Gemini APIのレート制限](https://aistudio.google.com/docs/rate-limits)
+
+2026-11-24の手動テストで、3件のニュースから1分36秒の音声を生成し、Driveでの再生とGmailの受信トレイへの到着を確認しました。朝6時台のトリガーは2本の登録を確認済みです。変更後の時刻での初回自動実行とAndroidの画面消灯中の再生は未確認です。
