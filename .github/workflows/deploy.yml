@@ -13,6 +13,10 @@ on:
         description: '農家・食品パートナー案件を今すぐ1回収集・配信（履歴で重複抑止）'
         type: boolean
         default: false
+      send_global_news_once:
+        description: '海外文献ダイジェストを今すぐ1回配信（Discord履歴で重複抑止）'
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -114,6 +118,12 @@ jobs:
       - name: Send AI Guide once
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_ai_guide_once }}
         run: docker compose exec -T -e AI_GUIDE_RUN_ONCE=true app node index.js
+        env:
+          DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
+
+      - name: Send global research digest once
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_global_news_once }}
+        run: docker compose exec -T -e GLOBAL_NEWS_RUN_ONCE=true app node index.js
         env:
           DOCKER_HOST: 'ssh://${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}'
 

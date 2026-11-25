@@ -59,8 +59,9 @@ const NEWS_RSS_FEEDS_AI_TOOLS = [
 const INFO_GATHERING_CHANNEL_ID = process.env.INFO_GATHERING_CHANNEL_ID;
 
 // === 海外文献用の新しい環境変数 ===
-const GLOBAL_RESEARCH_CHANNEL_ID = process.env.GLOBAL_RESEARCH_CHANNEL_ID;
-const GLOBAL_RSS_FEEDS = process.env.GLOBAL_RSS_FEEDS ? process.env.GLOBAL_RSS_FEEDS.split(',') : [];
+const GLOBAL_RESEARCH_CHANNEL_ID = (process.env.GLOBAL_RESEARCH_CHANNEL_ID || '').trim();
+const GLOBAL_RSS_FEEDS = (process.env.GLOBAL_RSS_FEEDS || '').split(',').map(feed => feed.trim()).filter(Boolean);
+const GLOBAL_NEWS_RUN_LOCK_FILE = path.join(__dirname, 'state', 'global-news-run.lock');
 
 // === Robloxニュース用の新しい環境変数 ===
 const ROBLOX_NEWS_CHANNEL_ID = process.env.ROBLOX_NEWS_CHANNEL_ID;
@@ -3644,6 +3645,18 @@ const runAiGuideTask = async () => {
 // Botが起動したときの処理
 client.once('clientReady', async () => {
   console.log(`Bot is ready! Logged in as ${client.user.tag}`);
+  if (process.env.GLOBAL_NEWS_RUN_ONCE === 'true') {
+    try {
+      const result = await runGlobalResearch();
+      console.log('[Global Research] One-shot result:', JSON.stringify(result));
+    } catch (error) {
+      console.error('[Global Research] One-shot failed:', error.message);
+      process.exitCode = 1;
+    } finally {
+      client.destroy();
+    }
+    return;
+  }
   if (process.env.AI_GUIDE_RUN_ONCE === 'true') {
     try {
       if (process.env.DISABLE_AI_GUIDE === 'true') throw new Error('AI Guide delivery is disabled');
@@ -3876,24 +3889,21 @@ cron.schedule('0 6 * * *', async () => {
   }
 }, { timezone: 'Asia/Tokyo', noOverlap: true });
 
-// === 3. 新機能：海外文献の収集・翻訳・投稿（1日2回: 朝10時と夕方19時） ===
-  cron.schedule('10 10,19 * * *', async () => {
-    // cron.schedule('* * * * *', async () => { // テスト用に1分ごとに実行
-    console.log('[Global Research] 海外文献収集タスクを開始します...');
-
-    // 再開日は2026年11月25日（日本時間）。前日の臨時配信に続けて投稿しない。
-    if (Date.now() < Date.parse('2026-11-25T00:00:00+09:00')) return;
-
-    if (!GLOBAL_RESEARCH_CHANNEL_ID || GLOBAL_RSS_FEEDS.length === 0) {
-      console.log('[Global Research] チャンネルIDまたはRSSフィードが設定されていません。');
-      return;
+  // 海外文献の定期投稿と手動投稿に同じ処理を使う。
+  async function runGlobalResearch() {
+    if (!GLOBAL_RESEARCH_CHANNEL_ID || GLOBAL_RSS_FEEDS.length === 0 || !OPENAI_API_KEY) {
+      throw new Error('GLOBAL_RESEARCH_CHANNEL_ID、GLOBAL_RSS_FEEDS、OPENAI_API_KEY の設定を確認してください。');
     }
 
+    // 手動実行は定期Botと別プロセスで動くため、同じ共有ボリュームで競合を防ぐ。
+    const release = await acquireAiGuideRunLock(GLOBAL_NEWS_RUN_LOCK_FILE);
+    if (!release) return { posted: 0, reason: 'already-running' };
+
     try {
+      console.log('[Global Research] 海外文献収集タスクを開始します。');
       const channel = await client.channels.fetch(GLOBAL_RESEARCH_CHANNEL_ID);
       if (!channel || channel.type !== ChannelType.GuildText) {
-        console.error('[Global Research] 海外文献投稿用チャンネルが見つかりません。');
-        return;
+        throw new Error('海外文献投稿用チャンネルが見つからないか、テキストチャンネルではありません。');
       }
 
       const history = await recoverGlobalHistory(
@@ -3920,6 +3930,9 @@ cron.schedule('0 6 * * *', async () => {
         }
       });
       const feeds = await Promise.all(feedPromises);
+      const fetchedCount = feeds.filter(Boolean).length;
+      console.log(`[Global Research] RSS取得成功 ${fetchedCount}/${GLOBAL_RSS_FEEDS.length}件。`);
+      if (!fetchedCount) throw new Error('すべての海外文献RSSの取得に失敗しました。');
 
       for (const feed of feeds) {
         if (feed && feed.items) {
@@ -3929,7 +3942,7 @@ cron.schedule('0 6 * * *', async () => {
 
       if (allGlobalArticles.length === 0) {
         console.log('[Global Research] 海外文献が取得できませんでした。');
-        return;
+        return { posted: 0, reason: 'empty-feeds' };
       }
 
       const recentGlobalArticles = allGlobalArticles.filter(article => isNewsWithinFreshness(article));
@@ -3941,14 +3954,14 @@ cron.schedule('0 6 * * *', async () => {
 
       if (newGlobalArticles.length === 0) {
         console.log('[Global Research] 新しい海外文献がありません。');
-        return;
+        return { posted: 0, reason: 'no-fresh-unposted-articles' };
       }
 
       const filteredArticles = filterGlobalArticles(newGlobalArticles);
 
       if (filteredArticles.length === 0) {
         console.log('[Global Research] 条件に合致する海外文献が見つかりませんでした。');
-        return;
+        return { posted: 0, reason: 'no-eligible-articles' };
       }
 
       const selectedArticles = filteredArticles.slice(0, 3);
@@ -3966,8 +3979,7 @@ cron.schedule('0 6 * * *', async () => {
       }
 
       if (translatedArticles.length === 0) {
-        console.log('[Global Research] 翻訳に失敗しました。');
-        return;
+        throw new Error('選定した海外文献を要約できませんでした。');
       }
 
       // Discord投稿用のメッセージを作成
@@ -4009,7 +4021,7 @@ cron.schedule('0 6 * * *', async () => {
       postContent += `\n**【議論・質問歓迎】**\nこれらの研究成果について、ご意見やご質問があればお気軽にコメントください！🌱`;
 
       // メッセージを送信
-      await channel.send({ content: postContent, embeds: embeds });
+      const message = await channel.send({ content: postContent, embeds: embeds });
       for (const { original } of translatedArticles) postedGlobalArticleUrls.add(newsUrlKey(original.link));
       console.log(`[Global Research] ${translatedArticles.length}件の海外文献を投稿しました。`);
 
@@ -4025,14 +4037,19 @@ cron.schedule('0 6 * * *', async () => {
           publishDate: original.isoDate || original.pubDate
         });
       }
-      // ▲▲▲ 補完ここまで ▲▲▲
-
-    } catch (error) {
-      console.error('[Global Research] タスク実行中にエラーが発生しました:', error);
+      return { posted: translatedArticles.length, url: message.url };
+    } finally {
+      await release();
     }
-  }, {
-    timezone: "Asia/Tokyo", noOverlap: true
-  }); // ← cron.schedule の閉じ括弧
+  }
+
+  cron.schedule('10 10,19 * * *', async () => {
+    try {
+      await runGlobalResearch();
+    } catch (error) {
+      console.error('[Global Research] タスク実行中にエラーが発生しました:', error.message);
+    }
+  }, { timezone: 'Asia/Tokyo', noOverlap: true });
 
 
    // ▼▼▼ 以下をまるごと追加 ▼▼▼
@@ -4234,7 +4251,7 @@ cron.schedule('0 9 * * 1,4', runAiGuideTask, { timezone: 'Asia/Tokyo', noOverlap
   console.log('All scheduled jobs initialized:');
   console.log('- Metagri Daily Insight: 8:00 JST');
   console.log('- Info Gathering: 6:00 JST');
-  console.log('- Global Research Digest: 10:00, 19:00 JST');
+  console.log('- Global Research Digest: 10:10, 19:10 JST');
   console.log('- Roblox News Digest: 7:00 JST');
   console.log('- AgriTech Book Recommendation: 10:00 JST');
   console.log('- Popular Book Recommendation: 10:10 JST');
