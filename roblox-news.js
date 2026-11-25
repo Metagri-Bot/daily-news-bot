@@ -5,6 +5,8 @@ const path = require('node:path');
 const { getArticlePublishedDate, isNewsWithinFreshness } = require('./news-freshness');
 
 const LOOKBACK_DAYS = 7;
+const DEVFORUM_ANNOUNCEMENTS_FEED = 'https://devforum.roblox.com/c/updates/announcements/36.rss';
+const ROBLOX_MENTION = /\broblox\b|ロブロックス/i;
 // US English search is independent of the deployment machine's locale.
 const SEARCH_QUERIES = [
   'Roblox (brand OR partnership OR integration OR activation OR campaign)',
@@ -63,18 +65,20 @@ function getRobloxFeeds(configured = '', { logger = console } = {}) {
     `https://news.google.com/rss/search?q=${encodeURIComponent(`${query} when:${LOOKBACK_DAYS}d`)}&hl=en-US&gl=US&ceid=US:en`
   ),
   `https://news.google.com/rss/search?q=${encodeURIComponent('Roblox site:licenseglobal.com (collection OR launches OR toys) when:7d')}&hl=en-US&gl=US&ceid=US:en`,
-  ].map(canonicalFeedUrl))];
+  ].map(canonicalFeedUrl).concat(DEVFORUM_ANNOUNCEMENTS_FEED))];
 }
 
 // フィードURL自体がRobloxを名指ししていれば専用フィード。それ以外は業界紙などの
 // 広域フィードで、大半が無関係なため1件ずつ元記事を取りに行く価値がない。
 function isRobloxScopedFeed(url) {
-  return /roblox/i.test(String(url || ''));
+  const raw = String(url || '');
+  try { return /roblox|ロブロックス/i.test(decodeURIComponent(raw)); }
+  catch { return /roblox|ロブロックス/i.test(raw); }
 }
 
 // scoreRobloxArticle と同じ単語境界で判定する。
 function mentionsRoblox(article) {
-  return /\broblox\b/i.test(`${article?.title || ''} ${article?.contentSnippet || ''}`);
+  return ROBLOX_MENTION.test(cleanText(`${article?.title || ''} ${article?.contentSnippet || ''}`).normalize('NFKC'));
 }
 
 function cleanText(text = '') {
@@ -173,28 +177,33 @@ function postedArticleContext(articles, sent, now = new Date()) {
 function scoreRobloxArticle(article) {
   // Never match feed title or source domain: broad business feeds contain unrelated news.
   // Long press releases can mention Roblox only in an unrelated biography/footer.
-  const snippet = cleanText(article.contentSnippet || '');
-  const title = cleanText(article.title || '');
+  const snippet = cleanText(article.contentSnippet || '').normalize('NFKC');
+  const title = cleanText(article.title || '').normalize('NFKC');
   // If Roblox is absent from the headline, require it near the start of the body.
   // Boilerplate, company histories, and executive bios are normally at the end.
   const leadSnippet = snippet.slice(0, 3000);
-  if (!/\broblox\b/i.test(title) && !/\broblox\b/i.test(leadSnippet)) {
+  const isForum = /^https?:\/\/devforum\.roblox\.com\//i.test(article.link || '');
+  const officialAnnouncement = isForum && article.officialAnnouncement === true;
+  if (!officialAnnouncement && !ROBLOX_MENTION.test(title) && !ROBLOX_MENTION.test(leadSnippet)) {
     return { score: 0, label: '', business: false };
   }
-  const relevantSentences = leadSnippet.split(/(?<=[.!?])\s+/).filter(sentence => /\broblox\b/i.test(sentence)).join(' ');
-  const text = cleanText(`${article.title || ''} ${relevantSentences}`).toLowerCase();
-  if (!/\broblox\b/.test(text)) return { score: 0, label: '', business: false };
-  const isForum = /^https?:\/\/devforum\.roblox\.com\//i.test(article.link || '');
+  const relevantSentences = officialAnnouncement ? leadSnippet : leadSnippet.split(/(?<=[.!?])\s+|(?<=[。！？])/)
+    .filter(sentence => ROBLOX_MENTION.test(sentence)).join(' ');
+  const text = `${title} ${relevantSentences}`.toLowerCase();
   const business = !isForum && (/\b(brands?|partnerships?|collaborations?|campaigns?|activations?|integrations?|retail|e-?commerce|licensing|licensed|beauty|haircare|toys?|blind boxes|gamification|salon)\b/.test(text)
-    || /\blaunch(?:es|ed|ing)?\b.*\b(collection|experience|game|world)\b/.test(text));
+    || /\blaunch(?:es|ed|ing)?\b.*\b(collection|experience|game|world)\b/.test(text)
+    || /コラボ|タイアップ|共同(?:開発|制作|企画)|ブランド|キャンペーン|連携|提携|ライセンス|商品連動|公認|玩具|出店|体験|リリース|提供開始|プログラミング/.test(text));
   const categories = [];
   let score = 0;
   if (business) { score += 10; categories.push('Business/Brand'); }
-  if (business && /\b(pr newswire|business wire|license global|geeiq)\b/i.test(article.source || '')) score += 3;
-  if (/\b(updates?|features?|engine|studio|developers?|creators?|economy|monetization|marketplace|immersive ads|ugc|evaluation|age verification)\b/.test(text)) {
+  if (business && /\b(pr newswire|pr times|business wire|license global|geeiq)\b/i.test(article.source || '')) score += 3;
+  if (/\b(updates?|features?|engine|studio|developers?|creators?|economy|monetization|marketplace|immersive ads|ugc|evaluation|age verification)\b/.test(text)
+    || /開発者|クリエイター|収益化|マーケットプレイス|年齢確認|広告配信/.test(text)
+    || officialAnnouncement && /\b(pass free trials|web play|publishing requirements?|devex|paid access|revenue share)\b/.test(text)) {
     score += 5; categories.push('Platform Update');
   }
-  if (/\b(earnings|revenue|stock|shares|investment|acquisition|ipo|financial|quarterly|growth|mau|dau)\b/.test(text)) {
+  if (/\b(earnings|revenue|stock|shares|investment|acquisition|ipo|financial|quarterly|growth|mau|dau)\b/.test(text)
+    || /決算|売上|資金調達|買収|出資|利用者数/.test(text)) {
     score += 4; categories.push('Finance/Market');
   }
   if (/\b(ai|generative ai|metaverse|avatars?|vr|ar|physics|rendering|phygital|virtual goods|digital twin|shopify)\b/.test(text)) {
@@ -233,15 +242,18 @@ function rankRobloxArticles(articles, { now = new Date(), sent = {}, logger, sta
   for (const key of [...seen]) if (key.startsWith('url:')) {
     articleKeys({ link: key.slice(4) }).forEach(normalized => seen.add(normalized));
   }
+  const compareArticles = (a, b) => b.score - a.score
+    || Number(Boolean(b.officialAnnouncement)) - Number(Boolean(a.officialAnnouncement))
+    || getArticlePublishedDate(b) - getArticlePublishedDate(a);
   const candidates = articles.filter(a => isNewsWithinFreshness(a, now, LOOKBACK_DAYS))
     .map(a => ({ ...a, ...scoreRobloxArticle(a) }))
     .filter(a => a.score >= 4)
-    .sort((a, b) => b.score - a.score || getArticlePublishedDate(b) - getArticlePublishedDate(a));
+    .sort(compareArticles);
   const groups = groupRobloxArticles(candidates.filter(a => articleKeys(a).length));
   const unique = groups.filter(group => !group.articles.some(a => matchesKeys(a, seen)))
-    .map(group => ({ ...group.articles.sort((a, b) => b.score - a.score || getArticlePublishedDate(b) - getArticlePublishedDate(a))[0],
+    .map(group => ({ ...group.articles.sort(compareArticles)[0],
       duplicateKeys: [...group.keys], relatedArticleCount: group.articles.length }))
-    .sort((a, b) => b.score - a.score || getArticlePublishedDate(b) - getArticlePublishedDate(a));
+    .sort(compareArticles);
   Object.assign(stats, { eligible: candidates.length, topics: groups.length, unseen: unique.length });
   logger?.log(`[Roblox News] eligible=${candidates.length} topics=${groups.length} unseen=${unique.length}`);
   return unique;
@@ -270,6 +282,8 @@ async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = cons
             || (/^https?:\/\/news\.google\.com\//.test(item.link || '') ? item.title?.split(' - ').at(-1) : null) || feed.title,
           contentSnippet: cleanText(item.contentSnippet || item.content || item.summary || ''),
           published: getArticlePublishedDate(item),
+          officialAnnouncement: url === DEVFORUM_ANNOUNCEMENTS_FEED
+            && /^https:\/\/devforum\.roblox\.com\/t\/[^/]+\/\d+\/?$/i.test(item.link || ''),
         }));
         // 広域フィードは、見出しか要約にRobloxが出ない項目をページ取得の前に落とす。
         // 本文中盤で初めて触れる記事は取りこぼすが、1回の実行で数百件のページ取得を
@@ -290,7 +304,7 @@ async function collectRobloxArticles({ urls, fetchFeed, fetchPage, logger = cons
     articles.push(...await collectDirectArticles({ fetchPage, logger, sources: directSources }));
   }
   const fresh = articles.filter(a => isNewsWithinFreshness(a, now, LOOKBACK_DAYS)).length;
-  Object.assign(stats, { collected: articles.length, fresh, prefiltered });
+  Object.assign(stats, { feeds: urls.length, collected: articles.length, fresh, prefiltered });
   logger.log(`[Roblox News] collected=${articles.length} fresh=${fresh} prefiltered=${prefiltered}`);
   const { verifyFreshArticles } = require('./roblox-news-sources');
   return verifyFreshArticles(articles, { fetchPage, now, logger, stats });

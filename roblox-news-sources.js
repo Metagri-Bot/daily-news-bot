@@ -8,6 +8,8 @@ const DIRECT_SOURCES = [
   { name: 'Roblox Newsroom', url: 'https://about.roblox.com/newsroom', pattern: /^\/newsroom\/\d{4}\/\d{2}\/[^/]+$/ },
   { name: 'PR Newswire', url: 'https://www.prnewswire.com/search/news/?keyword=roblox', pattern: /\/news-releases\/[^/]+\.html$/ },
   { name: 'GEEIQ', url: 'https://geeiq.com/resources/blog', pattern: /\/resources\/blog\/[^/]+$/ },
+  ...['ROBLOX', 'ロブロックス'].map(keyword => ({ name: 'PR TIMES',
+    url: `https://prtimes.jp/topics/keywords/${encodeURIComponent(keyword)}`, pattern: /^\/main\/html\/rd\/p\/\d+\.\d+\.html$/ })),
   // 2026-09-18時点でこのサーバーのIP/UAからは一覧・RSSともに403。毎回失敗ログだけ出るため
   // 止めている。Google Newsの site:licenseglobal.com 検索が同じ媒体を拾っている。
   { name: 'License Global', url: 'https://www.licenseglobal.com/entertainment', pattern: /\/entertainment\/[^/]+$/, enabled: false },
@@ -62,7 +64,10 @@ function parseArticle(html, link, source) {
   // Never use dateModified or the collection time as a publication date.
   const title = $('h1').first().text().trim() || $('meta[property="og:title"]').attr('content') || $('title').text();
   $('script, style, nav, header, footer, aside').remove();
-  const body = $('article').first().text() || $('main').first().text();
+  const main = $('article').first().length ? $('article').first() : $('main').first();
+  main.find('br').replaceWith(' ');
+  main.find('p, li, h2, h3, h4, blockquote').append(' ');
+  const body = main.text();
   const contentSnippet = (body || $('meta[name="description"]').attr('content') || '').replace(/\s+/g, ' ').trim().slice(0, 8000);
   return { title, link, source, published, contentSnippet, publicationVerified: !!published };
 }
@@ -159,7 +164,7 @@ async function resolveRelayArticle(article, { fetchPage }) {
   const destination = extractRelayDestination(html);
   // The fetcher follows redirects, so the relay body can already be the article.
   const direct = parseArticle(html, destination || article.link, article.source);
-  if (direct.publicationVerified) return { page: direct, via: destination ? 'redirect' : 'relay' };
+  if (direct.publicationVerified && destination) return { page: direct, via: 'redirect' };
   if (!destination) return null;
   return { page: parseArticle(await fetchPage(destination), destination, article.source), via: 'page' };
 }
@@ -169,14 +174,14 @@ async function verifyFreshArticles(articles, { fetchPage, now = new Date(), logg
   const cache = new Map();
   const relayCache = new Map();
   let old = 0, unknown = 0, resolved = 0, unresolved = 0, skipped = 0, relayDated = 0;
-  let undatedStreak = 0;
+  let relayFailureStreak = 0;
   // 解決できても公開日が読めなければ候補にならない。どの媒体で落ちているかを残す。
   const landings = new Map();
   for (let i = 0; i < articles.length; i += 4) {
     const batch = await Promise.all(articles.slice(i, i + 4).map(async article => {
       try {
         let page = article;
-        let relayLink;
+        let relayLink, newRelay;
         if (!article.publicationVerified) {
           const url = new URL(article.link);
           // Aggregators provide discovery dates, not reliable original publication
@@ -188,13 +193,19 @@ async function verifyFreshArticles(articles, { fetchPage, now = new Date(), logg
           const feedDate = getArticlePublishedDate(article);
           if (feedDate && feedDate.getTime() < new Date(now).getTime() - 7 * 86400000) { old++; return null; }
           if (isRelayLink(url.href)) {
-            if (undatedStreak >= RELAY_FAILURE_STREAK_LIMIT) { skipped++; return null; }
+            if (relayFailureStreak >= RELAY_FAILURE_STREAK_LIMIT && !decodeRelayArticleId(url.href)) { skipped++; return null; }
             if (!relayCache.has(url.href) && relayCache.size >= relayLimit) { skipped++; return null; }
             relayLink = url.href;
-            if (!relayCache.has(url.href)) relayCache.set(url.href, resolveRelayArticle(article, { fetchPage })
+            newRelay = !relayCache.has(url.href);
+            if (newRelay) relayCache.set(url.href, resolveRelayArticle(article, { fetchPage })
               .catch(error => { logger.error(`[Roblox News] relay resolution failed: ${url.href}: ${error.message}`); return null; }));
             const relayed = await relayCache.get(url.href);
-            if (!relayed) { unresolved++; unknown++; return null; }
+            if (!relayed) {
+              if (newRelay) relayFailureStreak++;
+              unresolved++;
+              unknown++;
+              return null;
+            }
             resolved++;
             page = relayed.page;
           } else {
@@ -207,15 +218,20 @@ async function verifyFreshArticles(articles, { fetchPage, now = new Date(), logg
             let host = '(不明)';
             try { host = new URL(page.link).hostname; } catch { /* 解決先が不正 */ }
             landings.set(host, (landings.get(host) || 0) + 1);
-            undatedStreak++;
+            if (newRelay) relayFailureStreak++;
           }
           unknown++; return null;
         }
-        if (relayLink) { relayDated++; undatedStreak = 0; }
+        if (relayLink) {
+          relayDated++;
+          if (newRelay) relayFailureStreak = 0;
+        }
         // Do not copy isoDate/pubDate from the RSS item: shared date helpers give
         // those fields priority over published and could otherwise re-admit old news.
         if (!isNewsWithinFreshness({ published: page.published }, now, 7)) { old++; return null; }
         return { ...page, title: page.title || article.title, source: article.source,
+          ...(article.officialAnnouncement ? { officialAnnouncement: true,
+            contentSnippet: article.contentSnippet || page.contentSnippet } : {}),
           // Keep the relay URL: history written before resolution only holds that spelling.
           ...(relayLink ? { relayLinks: [relayLink] } : {}),
           rssPublished: article.isoDate || article.pubDate || article.published };
@@ -234,7 +250,7 @@ async function verifyFreshArticles(articles, { fetchPage, now = new Date(), logg
     relayLandings: topLandings });
   logger.log(`[Roblox News] publication verified=${verified.length} outside7days=${old} unverified=${unknown} relay=${resolved} relayDated=${relayDated} relayFailed=${unresolved} relaySkipped=${skipped}`);
   if (topLandings) logger.log(`[Roblox News] 公開日を読めなかった解決先: ${topLandings}`);
-  if (undatedStreak >= RELAY_FAILURE_STREAK_LIMIT) {
+  if (relayFailureStreak >= RELAY_FAILURE_STREAK_LIMIT) {
     logger.log(`[Roblox News] 中継URLの解決が${RELAY_FAILURE_STREAK_LIMIT}件連続で空振りしたため、以降の解決を打ち切りました。`);
   }
   return verified;
@@ -242,9 +258,11 @@ async function verifyFreshArticles(articles, { fetchPage, now = new Date(), logg
 
 async function collectDirectArticles({ fetchPage, logger = console, sources = DIRECT_SOURCES }) {
   const articles = [];
+  const visited = new Set();
   for (const source of sources.filter(source => source.enabled !== false)) {
     try {
-      const links = discoverLinks(await fetchPage(source.url), source);
+      const links = discoverLinks(await fetchPage(source.url), source).filter(link => !visited.has(link));
+      for (const link of links) visited.add(link);
       let succeeded = 0;
       for (let i = 0; i < links.length; i += 4) {
         const batch = await Promise.all(links.slice(i, i + 4).map(async link => {

@@ -251,8 +251,12 @@ function brevoSnapshot_() {
   const subject = String(sheet.getRange('B1').getValue()).trim();
   const html = String(sheet.getRange('B2').getValue());
   if (!url || !subject || !html) throw new Error('記事URL・件名・本文を確認してください。');
-  if (SCRIPT_PROPERTIES.getProperty('AI_GUIDE_DRAFT_URL') !== url) {
-    throw new Error('記事URLと原稿が一致しません。AIで下書きを作り直してください。');
+  // 手で仕上げた原稿は、関連記事ではなく本文の主記事リンクで照合する。
+  const articleLinks = Array.from(html.matchAll(/(?:^|<br\s*\/?>|<p>)\s*(?:記事はこちら\s*[:：]\s*|記事は\s*)<a\b[^>]*?\s+href\s*=\s*(["'])([^"']+)\1/gi));
+  const draftUrl = articleLinks.length === 1 ? aiGuideCanonicalUrl_(articleLinks[0][2]) :
+    articleLinks.length === 0 ? SCRIPT_PROPERTIES.getProperty('AI_GUIDE_DRAFT_URL') : '';
+  if (draftUrl !== url) {
+    throw new Error('記事URLと原稿が一致しません。A2と、B2の「記事はこちら：」に続く主記事リンクを確認してください。');
   }
   const legacy = SCRIPT_PROPERTIES.getProperty('AI_GUIDE_SEND_IN_FLIGHT');
   if (legacy && aiGuideCanonicalUrl_(JSON.parse(legacy).url) === url) {

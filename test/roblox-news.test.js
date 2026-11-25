@@ -99,6 +99,25 @@ test('フォーラムの広告相談を企業事例にしない', () => {
   assert.equal(scoreRobloxArticle(article('Roblox brand campaign developer', { link: 'https://devforum.roblox.com/t/help/1' })).business, false);
 });
 
+test('国内企業のRoblox活用を日本語表記でも候補にする', () => {
+  const items = ['ロブロックスで玩具IPとのコラボ体験を開始', '新作Robloxゲームをリリース', 'ロブロックス開発会社を買収']
+    .map((title, i) => article(title, { link: `https://prtimes.jp/main/html/rd/p/${i}.000000123.html`, source: 'PR TIMES' }));
+  assert.equal(selectRobloxArticles(items, { now }).length, 3);
+});
+
+test('公式AnnouncementsのRSS本文があれば明示のない収益化告知を候補にする', async () => {
+  const feed = getRobloxFeeds().find(url => url.endsWith('/announcements/36.rss'));
+  const item = { title: 'Introducing Pass Free Trials', link: 'https://devforum.roblox.com/t/introducing-pass-free-trials/12345',
+    pubDate: '2026-09-03', contentSnippet: 'Creators can opt in to free trials starting today.' };
+  const fetched = { now, directSources: [], logger: { log() {} }, fetchFeed: async () => ({ items: [item] }),
+    fetchPage: async () => '<meta property="article:published_time" content="2026-09-03"><h1>Introducing Pass Free Trials</h1>' };
+  const articles = await collectRobloxArticles({ ...fetched, urls: [feed] });
+  assert.equal(articles[0].contentSnippet, item.contentSnippet);
+  assert.equal(selectRobloxArticles(articles, { now }).length, 1);
+  const otherFeed = await collectRobloxArticles({ ...fetched, urls: ['https://devforum.roblox.com/latest.rss'] });
+  assert.equal(selectRobloxArticles(otherFeed, { now }).length, 0);
+});
+
 test('見出しが異なっても引用された体験名で重複を除く', () => {
   const items = [article('The Doux launches "My Salon Empire" on Roblox'), article('Roblox beauty with ‘My Salon Empire’')];
   assert.equal(selectRobloxArticles(items, { now }).length, 1);

@@ -66,6 +66,15 @@ test('評価の不正は1度だけ再評価し、再失敗なら採用しない'
   assert.equal(attempts, 2);
 });
 
+test('再評価しても根拠が一致しない候補を外し、根拠が一致した別候補を採用する', async () => {
+  const stats = {};
+  const selected = await curateRobloxArticles({ candidates: candidates.slice(0, 2), sent: {}, now, stats,
+    logger: { log() {} }, evaluate: async () => ({ evaluations: [evaluation(0, 90, { evidence: 'invented KPI' }), evaluation(1)] }) });
+  assert.deepEqual(selected.map(article => article.title), [candidates[1].title]);
+  assert.equal(stats.editorialRetried, 1);
+  assert.equal(stats.evidenceRejected, 1);
+});
+
 test('モデルが高得点でも新規性を確認できない使い方解説を投稿しない', () => {
   const articles = [{ ...candidates[0], title: 'Optimize Testing with Roblox Analytics', contentSnippet: 'Optimize Testing with Roblox Analytics' }];
   const response = { evaluations: [evaluation(0, 90, { evidence: articles[0].title })] };

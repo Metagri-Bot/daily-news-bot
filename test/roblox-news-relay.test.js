@@ -184,3 +184,13 @@ test('解決が連続で空振りしたら以降の中継解決を打ち切る',
   assert.ok(stats.relaySkipped >= 5, `打ち切り件数が計上されていない: ${stats.relaySkipped}`);
   assert.equal(stats.relayVerified, 0);
 });
+
+test('元URLを特定できない中継が続いても、旧形式の中継や原文の検証は続ける', async () => {
+  const opaque = Array.from({ length: 24 }, (_, i) => relayItem(`https://news.google.com/rss/articles/O${i}?oc=5`));
+  const stats = {};
+  const result = await verifyFreshArticles([...opaque, relayItem(legacyRelayUrl(ORIGIN)), { ...relayItem(), link: 'https://example.com/news' }],
+    { now, logger, stats, fetchPage: async url => url.includes('news.google.com') ? '<h1>Redirecting...</h1>' : articleHtml() });
+  assert.equal(stats.relayUnresolved, 20);
+  assert.equal(stats.relaySkipped, 4);
+  assert.equal(result.length, 2);
+});

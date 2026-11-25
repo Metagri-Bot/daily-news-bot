@@ -410,21 +410,36 @@ POST { "type": "publicOpportunities", "records": [ { "id": "...", "signature": "
 2. Google AI Studioで「無料枠」と表示されるプロジェクトのAPIキーを用意します。Apps Scriptの「プロジェクトの設定」→「スクリプト プロパティ」に `GEMINI_API_KEY` として直接登録します。キーはスクリプト本文やGitに置かず、GASの設定で管理します。 [AI Studioのプロジェクト](https://aistudio.google.com/projects)
 3. `checkPodcastSources` を実行し、初回はSheets、Drive、外部URLへのアクセス、メール送信、トリガー操作に必要な権限を確認して承認します。
 4. `testPodcastDelivery` を実行して、テスト音声と本人宛てメールを確認します。Gmailの「今日の音声を聴く」を開くとDriveで再生できます。
-5. `installMorningPodcast` を実行します。「トリガー」画面で `runMorningPodcast` と `retryMorningPodcast` が1本ずつあることを確認します。時刻を変更したらコードを保存し、この関数を再実行します。現行は毎朝6:20ごろと6:40ごろ（日本時間）です。 [Apps Scriptの時刻指定](https://developers.google.com/apps-script/reference/script/clock-trigger-builder#nearMinute(Integer))
+5. 新規の設定時は `installMorningPodcast` を実行します。「トリガー」画面で `runMorningPodcast` と `retryMorningPodcast` が1本ずつあることを確認します。現行は毎朝6:20ごろと6:40ごろ（日本時間）です。時刻を変更する場合は `PODCAST.schedule` を変更して保存し、インストール関数を再実行します。曜日は `schedule.days` を編集して保存すると切り替えられます（月曜が1、日曜が7）。 [Apps Scriptの時刻指定](https://developers.google.com/apps-script/reference/script/clock-trigger-builder#nearMinute(Integer))
 
 ## 手動で確認できる処理
 
 | 関数 | 確認内容 |
 | --- | --- |
 | `checkPodcastSources` | 実際の台帳と出典ページから候補を抽出し、件数を実行ログに表示。Gemini呼び出し、Driveへの保存、メール送信なし |
-| `createPodcastPreview` | `試聴_` が付いた台本JSONとWAVをDriveに保存。メール送信なし |
-| `testPodcastDelivery` | `テスト_` が付いた台本JSONとWAVをDriveに保存し、`【テスト｜毎日ニュース音声】` の件名で本人に送信。同日の送信済みテストは再送しない |
+| `createPodcastPreview` | `試聴_v3_` が付いた台本JSONとWAVをDriveに保存。実行ログで件数と実測尺を確認できる。メール送信なし |
+| `testPodcastDelivery` | `テスト_v3_` が付いた台本JSONとWAVをDriveに保存し、`【テスト｜毎日ニュース音声】` の件名で本人に送信。同日の送信済みテストは再送しない |
 | `runMorningPodcast` | 当日分の通常配信。手動で実行した場合も本番と同様に本人に送信する |
 
 ## 保存先と確認順
 
 - 実行アカウントのDriveに `毎日ニュース｜農業ニュース音声` フォルダを作成します。`PODCAST_FOLDER_ID` は初回作成時に保存されます。配信日は `YYYY-MM-DD_農業ニュース.json` と `.wav` を照合できます。
+- 実行ログに「未紹介の話題」「採用できる独立した話題」が3件未満と出た日は、朝の予備枠で再確認します。「音声尺」で保留した場合は、同日の再実行で台本を使い回し、読み上げ速度を調整します。
 - メールが見つからない場合は、Apps Scriptの「実行数」で出典の有無、API応答、音声URL、送信結果の順に確認します。`sending` は送信の成否が確定する前に実行が止まった可能性があるため、再送の前に本人のGmailで件名を検索します。
-- `PODCAST_API_TEXT` と `PODCAST_API_AUDIO` は太平洋時間の日付で呼び出し数を管理します。各モデルの処理回数は通常・試聴では同日合計2回まで、手動の通しテストを含める場合は4回までです。API側でHTTP 429になった日は該当モデルを保留します。 [Gemini APIのレート制限](https://aistudio.google.com/docs/rate-limits)
+- `PODCAST_API_TEXT` と `PODCAST_API_AUDIO` は太平洋時間の日付で呼び出し数を管理します。各モデルの処理回数は定期実行では同日合計2回まで、試聴・手動テストを含める場合は4回までです。API側でHTTP 429になった日は該当モデルを保留します。 [Gemini APIのレート制限](https://aistudio.google.com/docs/rate-limits)
 
 2026-11-24の手動テストで、3件のニュースから1分36秒の音声を生成し、Driveでの再生とGmailの受信トレイへの到着を確認しました。朝6時台のトリガーは2本の登録を確認済みです。変更後の時刻での初回自動実行とAndroidの画面消灯中の再生は未確認です。
+
+## Metagri Voices 火曜版
+
+[`WeeklyVoices.gs`](WeeklyVoices.gs) と [`MorningPodcast.gs`](MorningPodcast.gs) を同じプロジェクトで実行します。両方のコードを一つのスクリプトファイルに連結して配置することもできます。既存の `GEMINI_API_KEY` と台帳を使います。週刊の成果物はDriveの `Metagri Voices｜火曜・週刊農業ニュース` フォルダに作ります。
+
+- `installWeeklyVoices` で、火曜8:20ごろと9:20ごろの日本時間トリガーを登録します。曜日や時刻を変更するときは `WEEKLY_VOICES` を変更して保存し、同じ関数を再実行します。
+- `createWeeklyVoicesPreview` で、直近の火曜号を手動生成できます。準備済みの回は同じファイルを返します。
+- `createWeeklyVoicesTransitionPreview` は5本を短く読み上げる手動試聴です。2本目以降はグリの短い話題見出しから始めます。前に短い間を取り、番号と主題を明瞭に読む指示は通常の週刊版と共通です。同日の試聴音声があれば再利用します。新規生成には音声生成の枠を使います。ログのDriveリンクから聴けます。
+- 週刊の音声生成は `GEMINI_API_KEY` を優先します。Geminiが無料の日次枠の上限、または利用可能枠ゼロを返したときに限り、スクリプトプロパティ `GEMINI_API_KEY_bk` の別キーで1回試します。GAS内の回数制限や無料キーの認証エラー、短時間のレート制限だけでは切り替えません。短い手動試聴では、GAS内の上限に達していてもGemini側を無料キーで1回確認できます。
+- 週刊版を仕上げるときは、[ニュース調のオリジナルBGM](assets/weekly-voices/Weekly_Agri_News_Bed.wav) をループし、2本目以降の発話直前に [短い2音の合図](assets/weekly-voices/Weekly_Agri_News_Cue.wav) を計4か所重ねます。合図の間だけBGMを少し下げ、次の見出しまで自然な間を残します。既定の概要には `BGM オリジナル（週刊農業ニュース）` が入ります。別の曲で仕上げた場合は、公開前にクレジットを合わせます。
+- 火曜を含む直近7日の記事から独立した5件を選びます。直近8週の週刊版と出典・話題を照合し、記事が5件そろわない日は予備枠で再確認します。
+- 選定した5件だけを台本生成に渡し、話題ごとに出典URL、本文の根拠、要約と発話に出る固有の語句を照合します。選定後に台本が保留になった場合は、同日の再実行で確認済みの候補を使います。
+- グリをErinome、メタをOrusで読み上げます。WAVの実測が5〜7分に収まった回に、Speaker 1/2形式の台本と出典付きの配信概要を添えます。生成したWAVを確認し、BGMと合図を重ねてからSpotify for Creatorsに入稿します。 [Spotifyの音声エピソード公開手順](https://support.spotify.com/sr-en/creators/article/publishing-audio-episodes/)
+- 定期実行の上限は太平洋時間同日で台本用4回、音声用2回です。日刊と週刊の呼び出し数は個別に記録し、Gemini側のプロジェクト割当を共用します。

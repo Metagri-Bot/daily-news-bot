@@ -26,7 +26,7 @@ const { getRobloxFeeds, getRobloxFeedIssues, collectRobloxArticles, rankRobloxAr
 const { curateRobloxArticles } = require('./roblox-news-editorial');
 const { recoverDiscordHistory, deliverDigest } = require('./roblox-news-delivery');
 const { BROWSER_HEADERS } = require('./roblox-news-sources');
-const { describeRobloxNewsRun } = require('./roblox-news-report');
+const { buildRobloxNewsSummary, describeRobloxNewsRun } = require('./roblox-news-report');
 let robloxNewsRunning = false;
 const ROBLOX_HISTORY_FILE = path.join(__dirname, 'state', 'roblox-news-sent.json');
 const { runPublicOpportunityMonitor } = require('./public-opportunity-monitor');
@@ -287,7 +287,7 @@ async function scrapeArticleContent(url) {
   
 
 /**
- * Roblox関連の英語ニュースを日本語に翻訳・要約する (ロジック緩和版)
+ * Roblox関連のニュースを日本語で要約する
  * @param {object} article 記事オブジェクト
  * @returns {Promise<object|null>} 翻訳結果、または失敗時にnull
  */
@@ -298,16 +298,12 @@ async function translateAndSummarizeRobloxArticle(article) {
   }
 
   try {
-    // スクレイピングを試みるのは海外文献と同様
-    const isSearchLink = new URL(article.link).hostname === 'news.google.com';
-    const fullContent = isSearchLink ? null : await scrapeArticleContent(article.link);
-    // 記事全文があればそれを使い、なければRSSの概要、それもなければ空文字
-    const contentForAI = fullContent || article.contentSnippet || '';
+    const contentForAI = article.contentSnippet || await scrapeArticleContent(article.link) || '';
 
     // ▼▼▼ ここからが重要な変更点 ▼▼▼
     const prompt = `
 あなたは、メタバースとゲーム業界を専門とするアナリストです。
-以下のRoblox関連の英語ニュースを日本語に翻訳し、ビジネスパーソン向けに要点をまとめてください。
+以下のRoblox関連ニュースを、原文の言語にかかわらず日本語でビジネスパーソン向けに要約してください。
 
 【記事タイトル】
 ${article.title}
@@ -703,7 +699,8 @@ const reportAiGuideRun = async (state, deliveredUrl, error, result = {}) => {
 // 実行結果・内部エラーはニュースチャンネルへ出さず、監視先へまとめる。
 const reportRobloxNewsRun = async (stats, error) => {
   const report = describeRobloxNewsRun(stats, error);
-  await sendMonitoringNotification(report.title, report.description, report.level, report.details);
+  console.log(`[Roblox News] ${report.title} | ${buildRobloxNewsSummary(stats)}`);
+  await sendMonitoringNotification(report.title, report.description, report.level, report.details?.slice(0, 1016));
 };
 
 // Discordクライアントを初期化

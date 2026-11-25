@@ -45,7 +45,8 @@ test('Google検索リンクの日付だけでは採用せず、直接取得で�
 
 test('環境設定のGoogle検索を含め全検索がwhen:7dになる', () => {
   assert.equal(LOOKBACK_DAYS, 7);
-  const feeds = getRobloxFeeds('https://news.google.com/rss/search?q=Roblox+when:21d,https://news.google.com/rss/search?q=Roblox');
+  const feeds = getRobloxFeeds('https://news.google.com/rss/search?q=Roblox+when:21d,https://news.google.com/rss/search?q=Roblox')
+    .filter(feed => new URL(feed).hostname === 'news.google.com');
   assert.ok(feeds.every(feed => /\bwhen:7d\b/.test(new URL(feed).searchParams.get('q'))));
   assert.ok(feeds.every(feed => !decodeURIComponent(feed).includes('when:21d')));
 });

@@ -105,6 +105,29 @@ test('mismatched article and historical partial send block only the affected art
   h.reserve(); assert.equal(h.jobs()[0].state, 'READY');
 });
 
+test('hand-edited draft reserves using the main article link with tracking parameters', () => {
+  const h = harness();
+  h.props.AI_GUIDE_DRAFT_URL = 'https://metagri-labo.com/ai-guide/old/';
+  const html = '<br><br>記事はこちら：<a href="https://metagri-labo.com/ai-guide/new/?utm_source=newsletter">本編</a>' +
+    '<br>P.S. <a href="https://metagri-labo.com/ai-guide/old/">前回の記事</a>';
+  h.data.原稿作成[1][1] = html;
+  h.reserve();
+  assert.equal(h.jobs()[0].html, html);
+  assert.equal(h.jobs()[0].state, 'READY');
+  assert.equal(h.sends().length, 0);
+});
+
+test('a related link or saved URL cannot override a different or ambiguous main article link', () => {
+  const h = harness();
+  const wrongLink = '記事は<a href="https://metagri-labo.com/ai-guide/old/">こちら</a>から';
+  const currentLink = '<a href="https://metagri-labo.com/ai-guide/new/">本編</a>';
+  h.data.原稿作成[1][1] = wrongLink + '<br>P.S. ' + currentLink;
+  assert.throws(() => h.reserve(), /一致/);
+  h.data.原稿作成[1][1] = wrongLink + '<br>記事はこちら：' + currentLink;
+  assert.throws(() => h.reserve(), /一致/);
+  assert.equal(h.requests.length, 0);
+});
+
 test('send timeout is persisted before network call; reconciliation never resends', () => {
   let attempted = false;
   const h = harness({api: (r, c) => {
