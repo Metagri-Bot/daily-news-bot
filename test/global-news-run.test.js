@@ -49,3 +49,19 @@ test('別プロセスで海外文献を配信中は、手動・定期ともに�
   assert.equal(result.posted, 0);
   assert.equal(result.reason, 'already-running');
 });
+
+test('公開RSSは短いdescriptionよりもHTML付きの抄録を優先する', () => {
+  const start = source.indexOf('function getGlobalNewsRssText(');
+  const end = source.indexOf('// === 海外文献の翻訳・要約関数 ===', start);
+  const readRssText = vm.runInNewContext(source.slice(start, end) + '\ngetGlobalNewsRssText;', {
+    cheerio: require('cheerio'),
+  });
+  const abstract = 'We compared methods for tracking stored crop quality across multiple conditions. '.repeat(4).trim();
+  const article = {
+    'content:encoded': '<h3>Abstract</h3><p>' + abstract + '</p><br><p>Conclusion.</p><script>ignore this code</script>',
+    contentSnippet: 'Follow this link to download the article.',
+  };
+  assert.equal(readRssText(article), 'Abstract ' + abstract + ' Conclusion.');
+  assert.equal(readRssText({ 'content:encoded': '<p>Short</p>', summary: abstract }), abstract);
+  assert.equal(readRssText({ contentSnippet: article.contentSnippet }), '');
+});

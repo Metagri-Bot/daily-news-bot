@@ -149,6 +149,8 @@ sequenceDiagram
 
 毎日10:10・19:10（日本時間）に収集、フィルタリング、スクレイピング、AI分析を実行します。2026年11月25日から再開し、直近7日間のDiscord投稿履歴を確認して重複を防ぎます。履歴が取得できない場合は投稿を見送ります。
 
+公開RSSに十分な抄録や本文がある場合は要約に使い、情報が足りない記事は次の候補へ進みます。
+
 手動で一度配信する場合は、GitHub Actionsの「Deploy Daily News Bot」で `send_global_news_once` を選びます。定期配信と同じ投稿先、RSS、履歴照合を使います。必要なActions Secretsは `DISCORD_BOT_TOKEN`、`GLOBAL_RESEARCH_CHANNEL_ID`、`GLOBAL_RSS_FEEDS`、`OPENAI_API_KEY` です。
 
 ```mermaid
