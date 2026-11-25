@@ -25,8 +25,10 @@ test('号の日付は日本時間の日付を基準に火曜へ揃える', () =>
 
 test('独立した5件で台本と概要を作り、グリをSpeaker 1、メタをSpeaker 2にする', () => {
   const gas = loadWeeklyVoices();
+  const topics = ['水位センサー', '温室ロボット', 'もみの乾燥施設', 'ナガイモ収穫', '就農支援'];
+  const evidence = '実証先では設置場所や作業手順を確認しました。';
   const sources = Array.from({ length: 5 }, (_, index) => ({
-    id: index + 1, title: '独立した記事' + index, url: 'https://example.jp/news/' + index, evidence: '資料の本文',
+    id: index + 1, title: topics[index], url: 'https://example.jp/news/' + index, evidence,
   }));
   const draft = {
     headline: '水田管理の変化',
@@ -34,9 +36,11 @@ test('独立した5件で台本と概要を作り、グリをSpeaker 1、メタ�
     openingQuestion: '田んぼの見回りはどう変わるんですか？',
     takeaway: '見回りに何分かかるか、一度測ってみませんか？',
     stories: sources.map(source => ({
-      id: source.id, event: '別の出来事' + source.id, summary: '出典の要約',
+      id: source.id, sourceUrl: source.url, anchor: source.title, factQuote: evidence, event: '別の出来事' + source.id,
+      summary: source.title + 'を紹介します。',
+      previewTopic: source.id === 4 ? '無関係な記事の見出し' : source.title + 'の取り組み',
       turns: [
-        { speaker: 'Analyst', text: (source.id === 2 ? '五つ目は、' : '') + '確認した話題について説明する文章です。'.repeat(8) },
+        { speaker: 'Analyst', text: (source.id === 2 ? '五つ目は、' : '') + '確認した話題は' + source.title + 'です。' + '本文に基づき説明する文章です。'.repeat(8) },
         { speaker: 'Host', text: '具体的に確かめたい内容についての質問です。'.repeat(8) },
       ],
     })),
@@ -45,6 +49,11 @@ test('独立した5件で台本と概要を作り、グリをSpeaker 1、メタ�
   const plan = gas.weeklyVoicesValidate_(draft, sources, [], period);
   assert.equal(plan.stories.length, 5);
   assert.match(gas.weeklyVoicesTranscript_(plan), /^Speaker 1:\nこの放送は[^\n]+\n\nSpeaker 2:\nはい、どうも〜！ メタです！/u);
+  assert.equal(plan.turns[2].speaker, 'Analyst');
+  assert.equal(plan.turns[2].text, '今週は、水位センサーの取り組み、温室ロボットの取り組み、もみの乾燥施設の取り組み。さらに、ナガイモ収穫と、就農支援の取り組みを取り上げます。');
+  assert.equal(plan.turns[3].text, 'それでは、最初のニュースです。グリさん、田んぼの見回りはどう変わるんですか？');
+  assert.equal(plan.turns[4].startsFirstNews, true);
+  assert.match(gas.weeklyVoicesTranscript_(plan), /Speaker 1:\n今週は、水位センサー[^\n]+\n\nSpeaker 2:\nそれでは、最初のニュースです。/u);
   assert.match(gas.weeklyVoicesTranscript_(plan), /Speaker 2:\nまた火曜日に。バイバーイ！$/u);
   const openings = plan.turns.filter(turn => turn.speaker === 'Analyst' && turn.text.includes('確認した話題'));
   assert.deepEqual(Array.from(openings, turn => turn.text.split('確認した話題')[0]), [
@@ -56,13 +65,35 @@ test('独立した5件で台本と概要を作り、グリをSpeaker 1、メタ�
     '水位センサーを使った水田の見回りを取り上げます。メタとグリが今週の農業ニュース5本をお届けします🌾',
     '対象期間：2026年11月19日〜25日', '',
     sources.map((source, index) => [
-      (index + 1) + '. ' + source.title, '出典の要約', source.url,
+      (index + 1) + '. ' + source.title, source.title + 'を紹介します。', source.url,
     ].join('\n')).join('\n\n'), '',
     '出演 グリ・メタ（AI音声） ／ 制作 Metagri研究所',
     'BGM オリジナル（週刊農業ニュース）',
   ].join('\n'));
   assert.equal(gas.weeklyVoicesValidate_({ ...draft, stories: draft.stories.slice(0, 4) }, sources, [], period), null);
   assert.throws(() => gas.weeklyVoicesValidate_(draft, sources, [sources[0]], period), /すでに紹介/);
+});
+
+test('冒頭改修前に生成済みの週刊号は既存の音声と台本を再利用する', () => {
+  const stem = '2026-11-24_MetagriVoices_週刊農業ニュース';
+  const plan = { version: 2, durationSeconds: 327, stories: [{}] };
+  const folder = { getUrl: () => 'https://example.jp/folder' };
+  const gas = loadWeeklyVoices({
+    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
+  });
+  gas.podcastKey_ = () => 'test-key';
+  gas.weeklyVoicesFolder_ = () => folder;
+  gas.weeklyVoicesArchiveDraft_ = () => assert.fail('完成済みの号が移動されました');
+  gas.podcastSelectSources_ = () => assert.fail('完成済みの号の候補が再選定されました');
+  gas.weeklyVoicesSynthesize_ = () => assert.fail('完成済みの号の音声が再生成されました');
+  const files = new Map([
+    [stem + '.wav', { getUrl: () => 'https://example.jp/audio' }],
+    [stem + '.json', { getBlob: () => ({ getDataAsString: () => JSON.stringify(plan) }) }],
+    [stem + '_台本.txt', {}],
+    [stem + '_配信概要.txt', {}],
+  ]);
+  gas.podcastFindFile_ = (_folder, name) => files.get(name);
+  assert.doesNotThrow(() => gas.weeklyVoicesRun_('2026-11-24', true));
 });
 
 test('既存の概要データでも、年・月をまたぐ期間と出典URLを表示できる', () => {

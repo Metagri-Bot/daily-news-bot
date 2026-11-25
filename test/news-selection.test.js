@@ -140,6 +140,7 @@ test('農林水産の技術実証と現場でのAI利用を拾い、一般AI記�
     new Set(['林業の先端技術', '水産のAI活用・研究', '農業のAI活用・研究']));
 });
 
+
 test('日次ニュースは配信履歴と転載を除き、短い見出しと冒頭要約、実測結果のある現場試験を拾う', () => {
   const old = observed('農家がAIを導入して作業記録を改善', 'https://a.example/old', { pubDate: '2026-11-19' });
   const past = observed('森林組合がドローンで立木を計測', 'https://b.example/reprint');
